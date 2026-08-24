@@ -96,11 +96,17 @@ See:
 
 `docs/ROADMAP.md`
 
-## Upstream
+## Upstream Runtime
 
-The current runtime foundation is based on Wave Terminal.
+Windows Block Terminal maintains a downstream source baseline of Wave Terminal.
+
+Initial upstream baseline:
+
+`a4447c1563b2df285ab89e76c82f91e1a1a49c1e`
 
 Wave Terminal is licensed under Apache-2.0.
+
+This repository is currently a downstream fork of the Wave runtime source.
 
 Warp is used only as an architectural and interaction-design reference where appropriate.
 
