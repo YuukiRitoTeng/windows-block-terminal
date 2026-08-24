@@ -1,0 +1,5 @@
+{"rpc":"ControllerInputCommand","side":"backend handler","path":"pkg/wshrpc/wshserver/wshserver.go","purpose":"route terminal input to controller/PTy"}
+{"rpc":"ControllerAppendOutputCommand","side":"backend handler","path":"pkg/wshrpc/wshserver/wshserver.go","purpose":"append terminal output to block file"}
+{"rpc":"CreateBlockCommand","side":"backend handler","path":"pkg/wshrpc/wshserver/wshserver.go","purpose":"create session block"}
+{"rpc":"BlockInfoCommand","side":"backend handler","path":"pkg/wshrpc/wshserver/wshserver.go","purpose":"read block metadata/files"}
+{"rpc":"EventReadHistoryCommand","side":"backend handler","path":"pkg/wshrpc/wshserver/wshserver.go","purpose":"read event history"}

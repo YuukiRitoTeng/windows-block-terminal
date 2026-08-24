@@ -1,0 +1,3 @@
+# Shell Integration
+
+Shell integration assets under pkg/util/shellutil/shellintegration/ emit OSC 7 for cwd and OSC 16162 markers. The PowerShell asset is pwsh_wavepwsh.sh (embedded/written as wavepwsh.ps1 by shellutil). Frontend osc-handlers.ts and 	ermwrap.ts currently consume the stream-side markers. Backend decoding for a future journal should be independent of React/xterm state and must preserve raw bytes for xterm.

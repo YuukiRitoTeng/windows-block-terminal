@@ -1,0 +1,3 @@
+# RPC and Event System
+
+pkg/wshrpc defines command data/types and server/client boundaries. wshserver contains handlers such as controller input, append output, block creation/info and event history. Event history and WPS/event plumbing synchronize backend state to frontend stores. RPC and event infrastructure is shared and must not be classified as removable merely because a product feature using it is hidden.
