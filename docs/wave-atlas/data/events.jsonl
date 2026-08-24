@@ -1,0 +1,5 @@
+{"event":"OSC 16162 C","producer":"PowerShell shell integration","consumer":"frontend/app/view/term/osc-handlers.ts","meaning":"command started marker","path":"pkg/util/shellutil/shellintegration/pwsh_wavepwsh.sh"}
+{"event":"OSC 16162 D","producer":"shell integration","consumer":"frontend/app/view/term/osc-handlers.ts","meaning":"command finished and exit code","path":"pkg/util/shellutil/shellintegration/zsh_zshrc.sh"}
+{"event":"OSC 7","producer":"shell integration","consumer":"xterm OSC handler","meaning":"cwd update","path":"pkg/util/shellutil/shellintegration"}
+{"event":"controller output","producer":"ShellController PTY read loop","consumer":"HandleAppendBlockFile / terminal file","meaning":"raw terminal bytes","path":"pkg/blockcontroller/shellcontroller.go"}
+{"event":"WPS event","producer":"backend event system","consumer":"frontend RPC/event store","meaning":"cross-process state update","path":"pkg/wps"}

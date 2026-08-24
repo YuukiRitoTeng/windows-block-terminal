@@ -1,0 +1,3 @@
+# Startup Path
+
+Static path: Electron entry in main/emain.ts → frontend bootstrap under 	sunami/frontend/src/main.tsx / rontend/ → backend Go process and RPC server → workspace/session restoration → terminal view and controller attachment. Exact sequencing is split between Electron process orchestration, generated/runtime helpers, and RPC registration; the Atlas records boundaries without claiming execution order not proven by source.

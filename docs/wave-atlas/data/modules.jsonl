@@ -1,0 +1,6 @@
+{"module":"blockcontroller","layer":"backend/runtime","entry":"pkg/blockcontroller/blockcontroller.go","depends_on":["filestore","wshrpc","ShellController"],"relevance":"runtime core"}
+{"module":"shellutil/shellintegration","layer":"backend/runtime","entry":"pkg/util/shellutil/shellintegration/pwsh_wavepwsh.sh","depends_on":["PowerShell","OSC","cwd metadata"],"relevance":"runtime core"}
+{"module":"wshrpc","layer":"shared/infrastructure","entry":"pkg/wshrpc/wshserver/wshserver.go","depends_on":["blockcontroller","filestore","events"],"relevance":"runtime core"}
+{"module":"frontend terminal","layer":"frontend/runtime","entry":"frontend/app/view/term/termwrap.ts","depends_on":["xterm.js","TabRpcClient","OSC handlers"],"relevance":"runtime core"}
+{"module":"emain","layer":"startup","entry":"emain/emain.ts","depends_on":["Electron","backend process","frontend"],"relevance":"startup"}
+{"module":"AI/browser/editor/widgets","layer":"product/feature","entry":"frontend/app","depends_on":["shared RPC","workspace"],"relevance":"Wave product layer"}

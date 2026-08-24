@@ -1,0 +1,3 @@
+# Windows and PowerShell
+
+Windows relevance is concentrated in shellutil PowerShell integration, PTY/controller platform paths, Electron packaging and terminal frontend. PowerShell 7 lifecycle markers, cwd metadata and exit status are the early feasibility gate. Nested shells and interactive programs must remain opaque PTY sessions to xterm.js; only reliable C/D boundaries should become journal records.
