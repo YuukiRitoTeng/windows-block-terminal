@@ -96,8 +96,10 @@ func (d *Decoder) FeedOrdered(raw []byte) []StreamItem {
 		frameBytes := append([]byte(nil), d.buffer[:2+end+termLen]...)
 		frame := string(d.buffer[2 : 2+end])
 		d.buffer = d.buffer[2+end+termLen:]
-		if ev, ok := d.decodeFrame(frame); ok {
-			items = append(items, StreamItem{Kind: StreamIntegrationEvent, Event: ev})
+		if events, ok := d.decodeFrame(frame); ok {
+			for _, ev := range events {
+				items = append(items, StreamItem{Kind: StreamIntegrationEvent, Event: ev})
+			}
 		} else if !bytes.HasPrefix([]byte(frame), []byte("16162;")) {
 			items = append(items, StreamItem{Kind: StreamOutputSegment, Output: frameBytes})
 		}
@@ -117,55 +119,82 @@ func frameEnd(data []byte) (int, int) {
 	return bel, 1
 }
 
-func (d *Decoder) decodeFrame(frame string) (IntegrationEvent, bool) {
+func (d *Decoder) decodeFrame(frame string) ([]IntegrationEvent, bool) {
 	parts := bytes.SplitN([]byte(frame), []byte(";"), 3)
 	if len(parts) != 3 || string(parts[0]) != "16162" {
-		return IntegrationEvent{}, false
+		return nil, false
 	}
 	kind := string(parts[1])
 	var p wirePayload
 	if json.Unmarshal(parts[2], &p) != nil {
-		return IntegrationEvent{}, false
+		return nil, false
 	}
 	if p.Version == 0 {
 		p.Version = 1
 	} // backwards-compatible M frames
 	if p.Version != 1 {
-		return IntegrationEvent{}, false
+		return nil, false
 	}
-	if (kind == "C" || kind == "D") && (p.Epoch == "" || p.Sequence == 0) {
-		return IntegrationEvent{}, false
+	if (kind == "C" || kind == "D" || kind == "P") && (p.Epoch == "" || p.Sequence == 0) {
+		return nil, false
 	}
 	if kind == "D" && (p.Success == nil || p.ExitCode == nil) {
-		return IntegrationEvent{}, false
+		return nil, false
+	}
+	if kind != "M" && kind != "P" && kind != "C" && kind != "D" {
+		return nil, false
+	}
+	if kind == "D" && d.sessionEpoch != "" && p.Epoch != d.sessionEpoch {
+		return nil, false
+	}
+	if p.Epoch != "" && d.sessionEpoch != "" && p.Epoch != d.sessionEpoch && p.Sequence == 0 {
+		return nil, false
+	}
+	command, ok := decodeField(p.Command64, p.Command)
+	if !ok {
+		return nil, false
+	}
+	cwd, ok := decodeField(p.Cwd64, p.Cwd)
+	if !ok {
+		return nil, false
+	}
+
+	events := make([]IntegrationEvent, 0, 3)
+	// A valid M/P/C frame is an epoch boundary. It can reconcile an active
+	// command from the old shell session, while a D is never allowed to switch
+	// session identity.
+	if p.Epoch != "" && d.sessionEpoch != "" && p.Epoch != d.sessionEpoch {
+		if kind != "M" && kind != "P" && kind != "C" {
+			return nil, false
+		}
+		if d.activeCommandID != "" {
+			events = append(events, IntegrationEvent{
+				Kind: EventCommandAborted, SessionEpoch: d.sessionEpoch,
+				CommandID: d.activeCommandID, CompletionReason: "epoch_changed",
+			})
+			d.activeCommandID = ""
+		}
+		d.sessionEpoch = p.Epoch
+		d.lastHookSequence = 0
 	}
 	epoch := d.sessionEpoch
 	if p.Epoch != "" {
-		if epoch != "" && epoch != p.Epoch {
-			return IntegrationEvent{}, false
-		}
 		epoch = p.Epoch
 	}
 	sequence := d.lastHookSequence
 	if p.Sequence != 0 {
 		if p.Sequence <= sequence {
-			return IntegrationEvent{}, false
+			return nil, false
 		}
 		sequence = p.Sequence
-	}
-	command, ok := decodeField(p.Command64, p.Command)
-	if !ok {
-		return IntegrationEvent{}, false
-	}
-	cwd, ok := decodeField(p.Cwd64, p.Cwd)
-	if !ok {
-		return IntegrationEvent{}, false
 	}
 	e := IntegrationEvent{ProtocolVersion: p.Version, SessionEpoch: epoch, HookSequence: p.Sequence, CommandID: p.ID, Command: command, Cwd: cwd, ExitCode: p.ExitCode, Success: p.Success, Shell: p.Shell, ShellVersion: p.ShellVersion}
 	switch kind {
 	case "C":
 		if d.activeCommandID != "" {
-			return IntegrationEvent{}, false
+			// A newer C in the same epoch is a deterministic recovery fence.
+			events = append(events, IntegrationEvent{Kind: EventCommandAborted, SessionEpoch: d.sessionEpoch, CommandID: d.activeCommandID, CompletionReason: "superseded"})
+			d.activeCommandID = ""
 		}
 		if e.CommandID == "" {
 			e.CommandID = generatedCommandID(epoch, p.Sequence)
@@ -173,19 +202,23 @@ func (d *Decoder) decodeFrame(frame string) (IntegrationEvent, bool) {
 		e.Kind = EventCommandStarted
 	case "D":
 		if d.activeCommandID == "" {
-			return IntegrationEvent{}, false
+			return nil, false
 		}
 		if e.CommandID == "" {
 			e.CommandID = d.activeCommandID
 		}
 		if e.CommandID != d.activeCommandID {
-			return IntegrationEvent{}, false
+			return nil, false
 		}
 		e.Kind = EventCommandFinished
+	case "P":
+		if d.activeCommandID != "" {
+			events = append(events, IntegrationEvent{Kind: EventCommandAborted, SessionEpoch: d.sessionEpoch, CommandID: d.activeCommandID, CompletionReason: "missing_finish"})
+			d.activeCommandID = ""
+		}
+		e.Kind = EventPromptReady
 	case "M":
 		e.Kind = EventShellMetadata
-	default:
-		return IntegrationEvent{}, false
 	}
 	d.sessionEpoch = epoch
 	d.lastHookSequence = sequence
@@ -194,7 +227,8 @@ func (d *Decoder) decodeFrame(frame string) (IntegrationEvent, bool) {
 	} else if kind == "D" {
 		d.activeCommandID = ""
 	}
-	return e, true
+	events = append(events, e)
+	return events, true
 }
 
 func decodeField(encoded, plain string) (string, bool) {

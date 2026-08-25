@@ -67,10 +67,12 @@ type ShellController struct {
 	ShellProc    *shellexec.ShellProc
 	ShellInputCh chan *BlockInputUnion
 
-	journalMu         sync.Mutex
-	commandJournal    *commandjournal.Journal
-	journalObserver   *commandjournal.RuntimeObserver
-	journalUnregister func()
+	journalMu                sync.Mutex
+	commandJournal           *commandjournal.Journal
+	journalObserver          *commandjournal.RuntimeObserver
+	journalUnregister        func()
+	terminationMu            sync.Mutex
+	pendingTerminationReason commandjournal.CompletionReason
 }
 
 // Constructor that returns the Controller interface
@@ -112,7 +114,7 @@ func (sc *ShellController) Stop(graceful bool, newStatus string, destroy bool) {
 		return
 	}
 
-	sc.detachCommandJournal()
+	sc.setTerminationReason(commandjournal.CompletionControllerStop)
 	sc.ShellProc.Close()
 	if graceful {
 		doneCh := sc.ShellProc.DoneCh
@@ -130,22 +132,36 @@ func (sc *ShellController) attachCommandJournal() {
 	if sc.BlockId == "" {
 		return
 	}
-	sc.detachCommandJournal()
-	journal := commandjournal.New()
+	sc.journalMu.Lock()
+	if sc.journalObserver != nil {
+		sc.journalMu.Unlock()
+		return
+	}
+	journal := sc.commandJournal
+	if journal == nil {
+		journal = commandjournal.New()
+		sc.commandJournal = journal
+	}
+	sc.journalMu.Unlock()
 	observer := commandjournal.NewRuntimeObserver(sc.BlockId, journal)
 	unregister := RegisterOutputObserver(sc.BlockId, observer)
 	sc.journalMu.Lock()
-	sc.commandJournal = journal
+	if sc.journalObserver != nil {
+		sc.journalMu.Unlock()
+		unregister()
+		observer.Close()
+		return
+	}
 	sc.journalObserver = observer
 	sc.journalUnregister = unregister
 	sc.journalMu.Unlock()
 }
 
-func (sc *ShellController) detachCommandJournal() {
+func (sc *ShellController) detachCommandJournal(reason commandjournal.CompletionReason) {
 	sc.journalMu.Lock()
 	observer := sc.journalObserver
 	unregister := sc.journalUnregister
-	sc.commandJournal = nil
+	journal := sc.commandJournal
 	sc.journalObserver = nil
 	sc.journalUnregister = nil
 	sc.journalMu.Unlock()
@@ -155,6 +171,28 @@ func (sc *ShellController) detachCommandJournal() {
 	if observer != nil {
 		observer.Close()
 	}
+	if journal != nil {
+		journal.AbortActive(sc.BlockId, reason, time.Now())
+	}
+}
+
+func (sc *ShellController) setTerminationReason(reason commandjournal.CompletionReason) {
+	sc.terminationMu.Lock()
+	if sc.pendingTerminationReason == "" {
+		sc.pendingTerminationReason = reason
+	}
+	sc.terminationMu.Unlock()
+}
+
+func (sc *ShellController) takeTerminationReason(fallback commandjournal.CompletionReason) commandjournal.CompletionReason {
+	sc.terminationMu.Lock()
+	defer sc.terminationMu.Unlock()
+	if sc.pendingTerminationReason != "" {
+		reason := sc.pendingTerminationReason
+		sc.pendingTerminationReason = ""
+		return reason
+	}
+	return fallback
 }
 
 func (sc *ShellController) getRuntimeStatus_nolock() BlockControllerRuntimeStatus {
@@ -566,7 +604,7 @@ func (bc *ShellController) manageRunningShellProcess(shellProc *shellexec.ShellP
 	bc.ShellInputCh = shellInputCh
 
 	go func() {
-		defer bc.detachCommandJournal()
+		readReason := commandjournal.CompletionSessionEnded
 		// handles regular output from the pty (goes to the blockfile and xterm)
 		defer func() {
 			panichandler.PanicHandler("blockcontroller:shellproc-pty-read-loop", recover())
@@ -588,6 +626,7 @@ func (bc *ShellController) manageRunningShellProcess(shellProc *shellexec.ShellP
 			// to stop the inputCh loop
 			time.Sleep(100 * time.Millisecond)
 			close(shellInputCh) // don't use bc.ShellInputCh (it's nil)
+			bc.detachCommandJournal(bc.takeTerminationReason(readReason))
 		}()
 		buf := make([]byte, 4096)
 		for {
@@ -603,6 +642,7 @@ func (bc *ShellController) manageRunningShellProcess(shellProc *shellexec.ShellP
 			}
 			if err != nil {
 				log.Printf("error reading from shell: %v\n", err)
+				readReason = commandjournal.CompletionPTYError
 				break
 			}
 		}

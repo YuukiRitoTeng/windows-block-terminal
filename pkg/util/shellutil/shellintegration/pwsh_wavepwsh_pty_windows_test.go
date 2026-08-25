@@ -135,7 +135,7 @@ func TestPowerShellInteractivePTYLifecycle(t *testing.T) {
 		return started, finished
 	}
 
-	firstCommand := fmt.Sprintf(`Set-Location -LiteralPath '%s'; cmd /c echo phase2-one`, strings.ReplaceAll(cwdTarget, "'", "''"))
+	firstCommand := fmt.Sprintf(`Set-Location -LiteralPath '%s'; Write-Output phase2-one; Start-Sleep -Milliseconds 100`, strings.ReplaceAll(cwdTarget, "'", "''"))
 	_, success := run(firstCommand)
 	assertResult(t, success, true, 0)
 	records := journal.Snapshot(blockID)
@@ -168,7 +168,9 @@ func TestPowerShellInteractivePTYLifecycle(t *testing.T) {
 		for {
 			select {
 			case event := <-events:
-				collected = append(collected, event)
+				if event.Kind != terminalruntime.EventPromptReady {
+					collected = append(collected, event)
+				}
 			case <-timer.C:
 				return collected
 			}

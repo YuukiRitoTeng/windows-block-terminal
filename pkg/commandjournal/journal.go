@@ -12,6 +12,19 @@ type CommandState string
 const (
 	StateRunning  CommandState = "running"
 	StateFinished CommandState = "finished"
+	StateAborted  CommandState = "aborted"
+)
+
+type CompletionReason string
+
+const (
+	CompletionNormal         CompletionReason = "normal"
+	CompletionMissingFinish  CompletionReason = "missing_finish"
+	CompletionSuperseded     CompletionReason = "superseded"
+	CompletionSessionEnded   CompletionReason = "session_ended"
+	CompletionControllerStop CompletionReason = "controller_stop"
+	CompletionPTYError       CompletionReason = "pty_error"
+	CompletionEpochChanged   CompletionReason = "epoch_changed"
 )
 
 type CommandRecord struct {
@@ -23,6 +36,7 @@ type CommandRecord struct {
 	Command            string
 	Cwd                string
 	State              CommandState
+	CompletionReason   CompletionReason
 	StartedAt          time.Time
 	FinishedAt         *time.Time
 	Success            *bool
@@ -88,13 +102,61 @@ func (j *Journal) Apply(blockID string, item terminalruntime.StreamItem, observe
 			active.Success = cloneBool(event.Success)
 			active.ExitCode = cloneInt(event.ExitCode)
 			active.State = StateFinished
+			active.CompletionReason = CompletionNormal
 			completed := cloneRecord(*active)
 			j.completed[blockID] = append(j.completed[blockID], completed)
 			delete(j.active, blockID)
 			return true
+		case terminalruntime.EventCommandAborted:
+			return j.abortActiveLocked(blockID, CompletionReason(event.CompletionReason), observedAt, event.CommandID, event.SessionEpoch)
+		case terminalruntime.EventPromptReady:
+			// Decoder emits the explicit missing_finish abort before P. Keep this
+			// event itself side-effect free so a duplicate P cannot abort twice.
+			return false
 		}
 	}
 	return false
+}
+
+// AbortActive closes the current record without inventing a finish result.
+// It is idempotent and only affects the active record for blockID.
+func (j *Journal) AbortActive(blockID string, reason CompletionReason, observedAt time.Time) bool {
+	if j == nil || blockID == "" || !validAbortReason(reason) {
+		return false
+	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return j.abortActiveLocked(blockID, reason, observedAt, "", "")
+}
+
+func (j *Journal) abortActiveLocked(blockID string, reason CompletionReason, observedAt time.Time, commandID, epoch string) bool {
+	active := j.active[blockID]
+	if active == nil || !validAbortReason(reason) || (commandID != "" && active.ID != commandID) || (epoch != "" && active.SessionEpoch != epoch) {
+		return false
+	}
+	if observedAt.IsZero() {
+		observedAt = time.Now()
+	}
+	active.State = StateAborted
+	active.CompletionReason = reason
+	active.Success = nil
+	active.ExitCode = nil
+	active.FinishHookSequence = 0
+	finishedAt := observedAt
+	active.FinishedAt = &finishedAt
+	completed := cloneRecord(*active)
+	j.completed[blockID] = append(j.completed[blockID], completed)
+	delete(j.active, blockID)
+	return true
+}
+
+func validAbortReason(reason CompletionReason) bool {
+	switch reason {
+	case CompletionMissingFinish, CompletionSuperseded, CompletionSessionEnded, CompletionControllerStop, CompletionPTYError, CompletionEpochChanged:
+		return true
+	default:
+		return false
+	}
 }
 
 func (j *Journal) Snapshot(blockID string) []CommandRecord {

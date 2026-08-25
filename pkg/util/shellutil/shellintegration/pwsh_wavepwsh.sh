@@ -127,6 +127,12 @@ function Global:_waveterm_si_command_finished([bool]$success, [int]$nativeExitCo
     $Global:_WAVETERM_SI_LAST_COMMAND_NATIVE = $false
 }
 
+function Global:_waveterm_si_prompt_ready {
+    if (_waveterm_si_blocked) { return }
+    $sequence = _waveterm_si_next_sequence
+    _waveterm_si_emit "P" @{ v = 1; epoch = $Global:_WAVETERM_SI_SESSION_EPOCH; seq = $sequence; cwd64 = (_waveterm_si_b64 $PWD.Path) }
+}
+
 # PSReadLine is the earliest supported PowerShell boundary for a command that
 # is about to be accepted. The original terminal input path is still used.
 try {
@@ -152,6 +158,8 @@ function Global:_waveterm_si_prompt {
 		       _waveterm_si_emit "M" @{ v = 1; epoch = $Global:_WAVETERM_SI_SESSION_EPOCH; seq = (_waveterm_si_next_sequence); shell = "pwsh"; shellversion = $shellversion; integration = [bool]$Global:_WAVETERM_SI_INTEGRATION_ACTIVE }
         $Global:_WAVETERM_SI_FIRSTPROMPT = $false
     }
+
+    _waveterm_si_prompt_ready
     
     _waveterm_si_osc7
 }

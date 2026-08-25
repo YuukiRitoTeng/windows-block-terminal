@@ -10,10 +10,18 @@ import (
 var pwshWaveIntegration string
 
 func TestPowerShellIntegrationContainsVersionedLifecycleHooks(t *testing.T) {
-	for _, marker := range []string{"16162", "_waveterm_si_command_started", "_waveterm_si_command_finished", "Set-PSReadLineKeyHandler", "cmd64", "cwd64", "_WAVETERM_SI_SESSION_EPOCH", "_WAVETERM_SI_HOOK_SEQUENCE", "LASTEXITCODE"} {
+	for _, marker := range []string{"16162", "_waveterm_si_command_started", "_waveterm_si_command_finished", "_waveterm_si_prompt_ready", "Set-PSReadLineKeyHandler", "cmd64", "cwd64", "_WAVETERM_SI_SESSION_EPOCH", "_WAVETERM_SI_HOOK_SEQUENCE", "LASTEXITCODE"} {
 		if !strings.Contains(pwshWaveIntegration, marker) {
 			t.Errorf("integration script missing %q", marker)
 		}
+	}
+}
+
+func TestPowerShellIntegrationEmitsPromptReadyAfterFinish(t *testing.T) {
+	finish := strings.Index(pwshWaveIntegration, `_waveterm_si_emit "D"`)
+	prompt := strings.Index(pwshWaveIntegration, `_waveterm_si_emit "P"`)
+	if finish < 0 || prompt < 0 || finish > prompt {
+		t.Fatalf("PromptReady must be emitted after command finish: finish=%d prompt=%d", finish, prompt)
 	}
 }
 

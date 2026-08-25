@@ -15,9 +15,11 @@ Direct native invocations preserve the native process exit code. PowerShell
 commands and mixed pipelines use PowerShell success semantics and map to exit
 code 0/1.
 
-The backend decoder accepts BEL and ST terminators, split frames, duplicate and
-foreign-epoch rejection, and unknown protocol versions without changing the
-original bytes. Existing Wave/frontend OSC handling remains intact.
+The backend decoder accepts BEL and ST terminators, split frames, stale and
+mismatched D rejection, and unknown protocol versions without changing the
+original bytes. Later Phase 3 recovery permits only validated M/P/C frames to
+establish a new epoch; a foreign D can never switch session identity. Existing
+Wave/frontend OSC handling remains intact.
 
 ## Output seam
 

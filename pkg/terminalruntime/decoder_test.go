@@ -33,8 +33,8 @@ func TestDecoderRejectsStaleAndForeignEvents(t *testing.T) {
 	if len(d.Feed(frame(1, "e1"))) != 0 {
 		t.Fatal("duplicate event accepted")
 	}
-	if len(d.Feed(frame(2, "e2"))) != 0 {
-		t.Fatal("foreign epoch accepted")
+	if got := d.Feed(frame(2, "e2")); len(got) != 1 || got[0].SessionEpoch != "e2" {
+		t.Fatalf("new epoch metadata was not adopted: %#v", got)
 	}
 }
 
@@ -70,14 +70,14 @@ func TestDecoderRejectsInvalidLifecycleTransitions(t *testing.T) {
 	if got := d.Feed(frame("C", "e1-1", 2)); len(got) != 1 {
 		t.Fatalf("initial C rejected: %#v", got)
 	}
-	if got := d.Feed(frame("C", "e1-2", 3)); len(got) != 0 {
-		t.Fatalf("accepted overlapping C: %#v", got)
+	if got := d.Feed(frame("C", "e1-2", 3)); len(got) != 2 || got[0].Kind != EventCommandAborted || got[1].Kind != EventCommandStarted {
+		t.Fatalf("same-epoch recovery C was not ordered: %#v", got)
 	}
-	if got := d.Feed(frame("D", "e1-2", 4)); len(got) != 0 {
+	if got := d.Feed(frame("D", "e1-3", 4)); len(got) != 0 {
 		t.Fatalf("accepted mismatched D: %#v", got)
 	}
-	if got := d.Feed(frame("D", "e1-1", 5)); len(got) != 1 || got[0].Kind != EventCommandFinished {
-		t.Fatalf("valid D did not complete active C: %#v", got)
+	if got := d.Feed(frame("D", "e1-2", 5)); len(got) != 1 || got[0].Kind != EventCommandFinished {
+		t.Fatalf("valid D did not complete recovered C: %#v", got)
 	}
 }
 
@@ -128,5 +128,52 @@ func TestDecoderRequiresFinishedResult(t *testing.T) {
 	valid := []byte("\x1b]16162;D;{\"v\":1,\"epoch\":\"e1\",\"seq\":4,\"id\":\"e1-1\",\"success\":true,\"exitcode\":0}\a")
 	if len(d.Feed(valid)) != 1 {
 		t.Fatal("valid D did not complete active C")
+	}
+}
+
+func TestDecoderPromptAbortsMissingFinishAndFencesOutput(t *testing.T) {
+	d := NewDecoder()
+	raw := append(orderedFrame("C", "epoch-1", "cmd-1", 1), []byte("inside")...)
+	raw = append(raw, []byte("\x1b]16162;P;{\"v\":1,\"epoch\":\"epoch-1\",\"seq\":2}\a")...)
+	raw = append(raw, []byte("prompt-text")...)
+	items := d.FeedOrdered(raw)
+	events := eventsFromItems(items)
+	if len(events) != 3 || events[0].Kind != EventCommandStarted || events[1].Kind != EventCommandAborted || events[1].CompletionReason != "missing_finish" || events[2].Kind != EventPromptReady {
+		t.Fatalf("unexpected prompt recovery events: %#v", events)
+	}
+	if got := string(outputFromItems(items)); got != "insideprompt-text" {
+		t.Fatalf("unexpected ordered output: %q", got)
+	}
+	if next := d.Feed(orderedFrame("D", "epoch-1", "cmd-1", 3)); len(next) != 0 {
+		t.Fatalf("stale D completed an aborted command: %#v", next)
+	}
+}
+
+func TestDecoderNewCommandSupersedesActiveCommand(t *testing.T) {
+	d := NewDecoder()
+	raw := append(orderedFrame("C", "epoch-1", "cmd-1", 1), []byte("one")...)
+	raw = append(raw, orderedFrame("C", "epoch-1", "cmd-2", 2)...)
+	raw = append(raw, []byte("two")...)
+	raw = append(raw, orderedFrame("D", "epoch-1", "cmd-2", 3)...)
+	items := d.FeedOrdered(raw)
+	events := eventsFromItems(items)
+	if len(events) != 4 || events[1].Kind != EventCommandAborted || events[1].CompletionReason != "superseded" || events[2].Kind != EventCommandStarted || events[3].Kind != EventCommandFinished {
+		t.Fatalf("unexpected supersession events: %#v", events)
+	}
+}
+
+func TestDecoderEpochChangeAbortsActiveButForeignDIsRejected(t *testing.T) {
+	d := NewDecoder()
+	if got := d.Feed(orderedFrame("C", "epoch-a", "cmd-a", 1)); len(got) != 1 {
+		t.Fatal("initial C rejected")
+	}
+	if got := d.Feed(orderedFrame("D", "epoch-b", "cmd-a", 2)); len(got) != 0 {
+		t.Fatalf("foreign D changed epoch: %#v", got)
+	}
+	if got := d.Feed([]byte("\x1b]16162;M;{\"v\":1,\"epoch\":\"epoch-b\",\"seq\":1}\a")); len(got) != 2 || got[0].Kind != EventCommandAborted || got[0].CompletionReason != "epoch_changed" || got[1].Kind != EventShellMetadata {
+		t.Fatalf("epoch recovery did not reconcile active command: %#v", got)
+	}
+	if got := d.Feed(orderedFrame("C", "epoch-b", "cmd-b", 2)); len(got) != 1 || got[0].Kind != EventCommandStarted {
+		t.Fatalf("new epoch command rejected: %#v", got)
 	}
 }
