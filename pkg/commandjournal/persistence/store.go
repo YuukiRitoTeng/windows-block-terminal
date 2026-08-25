@@ -49,6 +49,12 @@ type event struct {
 	data      []byte
 	blockID   string
 	ack       chan error
+	result    chan eventResult
+}
+
+type eventResult struct {
+	generation uint64
+	err        error
 }
 
 // Store is a product-owned SQLite persistence service with one FIFO writer.
@@ -64,6 +70,8 @@ type Store struct {
 	cond           *sync.Cond
 	queue          []event
 	closed         bool
+	closeOnce      sync.Once
+	closeErr       error
 	done           chan struct{}
 	degraded       error
 }
@@ -132,6 +140,12 @@ func effectiveChunk(value, fallback int) int {
 }
 
 func (s *Store) Enabled() bool { return s != nil && s.db != nil }
+func (s *Store) MaxOutputBytes() int64 {
+	if s == nil {
+		return 0
+	}
+	return s.maxOutputBytes
+}
 func (s *Store) Path() string {
 	if s == nil {
 		return ""
@@ -192,14 +206,15 @@ func (s *Store) Close() error {
 	if s == nil || s.db == nil {
 		return nil
 	}
-	s.mu.Lock()
-	if !s.closed {
+	s.closeOnce.Do(func() {
+		s.mu.Lock()
 		s.closed = true
 		s.cond.Broadcast()
-	}
-	s.mu.Unlock()
-	<-s.done
-	return s.db.Close()
+		s.mu.Unlock()
+		<-s.done
+		s.closeErr = s.db.Close()
+	})
+	return s.closeErr
 }
 
 func (s *Store) run() {
@@ -216,7 +231,8 @@ func (s *Store) run() {
 		e := s.queue[0]
 		s.queue = s.queue[1:]
 		s.mu.Unlock()
-		err := s.process(e)
+		result := s.process(e)
+		err := result.err
 		if err != nil {
 			s.mu.Lock()
 			s.degraded = err
@@ -230,29 +246,32 @@ func (s *Store) run() {
 		if e.ack != nil {
 			e.ack <- err
 		}
+		if e.result != nil {
+			e.result <- result
+		}
 	}
 }
 
-func (s *Store) process(e event) error {
+func (s *Store) process(e event) eventResult {
 	switch e.kind {
 	case eventStarted:
-		return s.insertStarted(e.record)
+		return eventResult{err: s.insertStarted(e.record)}
 	case eventOutput:
-		return s.appendOutput(e.commandID, e.data)
+		return eventResult{err: s.appendOutput(e.commandID, e.data)}
 	case eventFinished:
-		return s.updateFinished(e.record)
+		return eventResult{err: s.updateFinished(e.record)}
 	case eventAborted:
-		return s.updateAborted(e.record)
+		return eventResult{err: s.updateAborted(e.record)}
 	case eventAdvance:
-		_, err := s.advanceGeneration(e.blockID)
-		return err
+		generation, err := s.advanceGeneration(e.blockID)
+		return eventResult{generation: generation, err: err}
 	case eventDelete:
-		_, err := s.deleteHistory(e.blockID)
-		return err
+		generation, err := s.deleteHistory(e.blockID)
+		return eventResult{generation: generation, err: err}
 	case eventFlush:
-		return nil
+		return eventResult{}
 	default:
-		return fmt.Errorf("unknown command journal persistence event %d", e.kind)
+		return eventResult{err: fmt.Errorf("unknown command journal persistence event %d", e.kind)}
 	}
 }
 
@@ -358,29 +377,30 @@ func (s *Store) updateAborted(r commandjournal.CommandRecord) error {
 	})
 }
 
-func (s *Store) CurrentVisibilityGeneration(blockID string) uint64 {
+func (s *Store) CurrentVisibilityGeneration(blockID string) (uint64, error) {
 	if s == nil || s.db == nil {
-		return 0
+		return 0, nil
 	}
 	var generation uint64
 	if err := s.db.QueryRow(`SELECT current_visibility_generation FROM journal_state WHERE wave_block_id=?`, blockID).Scan(&generation); err != nil {
-		return 0
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, nil
+		}
+		return 0, err
 	}
-	return generation
+	return generation, nil
 }
 
 func (s *Store) AdvanceVisibilityGeneration(blockID string) (uint64, error) {
 	if s == nil || s.db == nil {
 		return 1, nil
 	}
-	ack := make(chan error, 1)
-	if err := s.enqueue(event{kind: eventAdvance, blockID: blockID, ack: ack}); err != nil {
+	result := make(chan eventResult, 1)
+	if err := s.enqueue(event{kind: eventAdvance, blockID: blockID, result: result}); err != nil {
 		return 0, err
 	}
-	if err := <-ack; err != nil {
-		return 0, err
-	}
-	return s.CurrentVisibilityGeneration(blockID), nil
+	completed := <-result
+	return completed.generation, completed.err
 }
 
 func (s *Store) advanceGeneration(blockID string) (uint64, error) {
@@ -403,14 +423,12 @@ func (s *Store) DeleteHistory(blockID string) (uint64, error) {
 	if s == nil || s.db == nil {
 		return 1, nil
 	}
-	ack := make(chan error, 1)
-	if err := s.enqueue(event{kind: eventDelete, blockID: blockID, ack: ack}); err != nil {
+	result := make(chan eventResult, 1)
+	if err := s.enqueue(event{kind: eventDelete, blockID: blockID, result: result}); err != nil {
 		return 0, err
 	}
-	if err := <-ack; err != nil {
-		return 0, err
-	}
-	return s.CurrentVisibilityGeneration(blockID), nil
+	completed := <-result
+	return completed.generation, completed.err
 }
 
 func (s *Store) deleteHistory(blockID string) (uint64, error) {
@@ -461,7 +479,10 @@ func (s *Store) ReadVisibleRecords(blockID string) ([]commandjournal.CommandReco
 	if s == nil || s.db == nil {
 		return nil, nil
 	}
-	generation := s.CurrentVisibilityGeneration(blockID)
+	generation, err := s.CurrentVisibilityGeneration(blockID)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := s.db.Queryx(`SELECT id,wave_block_id,session_epoch,protocol_version,start_hook_sequence,finish_hook_sequence,command,cwd,state,completion_reason,started_at_ms,finished_at_ms,success,exit_code,visibility_generation,output_total_bytes,output_stored_bytes,output_truncated FROM command_records WHERE wave_block_id=? AND visibility_generation=? ORDER BY started_at_ms ASC`, blockID, generation)
 	if err != nil {
 		return nil, err
@@ -497,4 +518,15 @@ func (s *Store) ReadVisibleRecords(blockID string) ([]commandjournal.CommandReco
 		records = append(records, r)
 	}
 	return records, rows.Err()
+}
+
+// CountRecords is a diagnostic/read-model helper used by persistence
+// validation; it does not alter journal state.
+func (s *Store) CountRecords(blockID string) (int, error) {
+	if s == nil || s.db == nil {
+		return 0, nil
+	}
+	var count int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM command_records WHERE wave_block_id=?`, blockID).Scan(&count)
+	return count, err
 }

@@ -151,7 +151,12 @@ func (sc *ShellController) attachCommandJournal() {
 		} else {
 			sc.journalPersistence = store
 			journal.SetDurableStore(store)
-			journal.SetVisibilityGeneration(sc.BlockId, store.CurrentVisibilityGeneration(sc.BlockId))
+			generation, err := store.CurrentVisibilityGeneration(sc.BlockId)
+			if err != nil {
+				log.Printf("[command-journal] visibility generation read failed: %v", err)
+			} else {
+				journal.SetVisibilityGeneration(sc.BlockId, generation)
+			}
 		}
 	}
 	sc.journalMu.Unlock()

@@ -156,3 +156,30 @@ func TestClearDeleteAndDisabled(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestGenerationReadErrorIsNotZeroSuccess(t *testing.T) {
+	s, _ := openTest(t, Options{Enabled: true})
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if generation, err := s.CurrentVisibilityGeneration("b1"); err == nil || generation != 0 {
+		t.Fatalf("query failure was not reported: generation=%d err=%v", generation, err)
+	}
+}
+
+func TestCloseIsIdempotentAndDrains(t *testing.T) {
+	s, _ := openTest(t, Options{Enabled: true})
+	r := testRecord()
+	if err := s.RecordStarted(r); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AppendOutput(r.ID, []byte("queued")); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+}

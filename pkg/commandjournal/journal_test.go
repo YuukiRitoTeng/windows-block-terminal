@@ -8,6 +8,32 @@ import (
 	"github.com/wavetermdev/waveterm/pkg/terminalruntime"
 )
 
+type blockingDurable struct {
+	entered    chan struct{}
+	release    chan struct{}
+	generation uint64
+}
+
+func (d *blockingDurable) RecordStarted(CommandRecord) error  { return nil }
+func (d *blockingDurable) AppendOutput(string, []byte) error  { return nil }
+func (d *blockingDurable) RecordFinished(CommandRecord) error { return nil }
+func (d *blockingDurable) RecordAborted(CommandRecord) error  { return nil }
+func (d *blockingDurable) CurrentVisibilityGeneration(string) (uint64, error) {
+	return d.generation, nil
+}
+func (d *blockingDurable) AdvanceVisibilityGeneration(string) (uint64, error) {
+	close(d.entered)
+	<-d.release
+	d.generation++
+	return d.generation, nil
+}
+func (d *blockingDurable) DeleteHistory(string) (uint64, error) {
+	close(d.entered)
+	<-d.release
+	d.generation++
+	return d.generation, nil
+}
+
 func journalEvent(kind terminalruntime.EventKind, id string, seq uint64) terminalruntime.StreamItem {
 	success := true
 	exitCode := 0
@@ -203,4 +229,32 @@ func TestRuntimeObserverKeepsForeignNestedLifecycleInsideOuterRecord(t *testing.
 	if len(records) != 1 || records[0].ID != "outer" || records[0].State != StateFinished || records[0].CompletionReason != CompletionNormal || !bytes.Contains(records[0].Output, []byte("remoteinner")) {
 		t.Fatalf("nested integration created or replaced a record: %#v", records)
 	}
+}
+
+func TestClearDoesNotHoldJournalLockAcrossDurableAck(t *testing.T) {
+	j := New()
+	d := &blockingDurable{entered: make(chan struct{}), release: make(chan struct{})}
+	j.SetDurableStore(d)
+	done := make(chan struct{})
+	go func() { _, _ = j.ClearVisualHistory("b"); close(done) }()
+	<-d.entered
+	if !j.Apply("b", journalEvent(terminalruntime.EventCommandStarted, "c", 1), time.Now()) {
+		t.Fatal("journal lock was held during durable clear")
+	}
+	close(d.release)
+	<-done
+}
+
+func TestDeleteDoesNotHoldJournalLockAcrossDurableAck(t *testing.T) {
+	j := New()
+	d := &blockingDurable{entered: make(chan struct{}), release: make(chan struct{})}
+	j.SetDurableStore(d)
+	done := make(chan struct{})
+	go func() { _ = j.DeleteHistory("b"); close(done) }()
+	<-d.entered
+	if !j.Apply("b", journalEvent(terminalruntime.EventCommandStarted, "c", 1), time.Now()) {
+		t.Fatal("journal lock was held during durable delete")
+	}
+	close(d.release)
+	<-done
 }

@@ -57,7 +57,7 @@ type DurableStore interface {
 	AppendOutput(commandID string, data []byte) error
 	RecordFinished(CommandRecord) error
 	RecordAborted(CommandRecord) error
-	CurrentVisibilityGeneration(blockID string) uint64
+	CurrentVisibilityGeneration(blockID string) (uint64, error)
 	AdvanceVisibilityGeneration(blockID string) (uint64, error)
 	DeleteHistory(blockID string) (uint64, error)
 }
@@ -111,7 +111,18 @@ func (j *Journal) Apply(blockID string, item terminalruntime.StreamItem, observe
 		}
 		active.Output = append(active.Output, item.Output...)
 		active.OutputTotalBytes += int64(len(item.Output))
-		active.OutputStoredBytes += int64(len(item.Output))
+		stored := int64(len(item.Output))
+		if limited, ok := j.durable.(interface{ MaxOutputBytes() int64 }); ok {
+			remaining := limited.MaxOutputBytes() - active.OutputStoredBytes
+			if remaining < stored {
+				stored = remaining
+			}
+			if stored < 0 {
+				stored = 0
+			}
+		}
+		active.OutputStoredBytes += stored
+		active.OutputTruncated = active.OutputStoredBytes < active.OutputTotalBytes
 		if j.durable != nil {
 			_ = j.durable.AppendOutput(active.ID, item.Output)
 		}
@@ -210,21 +221,33 @@ func (j *Journal) ClearVisualHistory(blockID string) (uint64, error) {
 	if j == nil || blockID == "" {
 		return 0, nil
 	}
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	generation := j.generation[blockID] + 1
-	if j.durable != nil {
-		var err error
-		generation, err = j.durable.AdvanceVisibilityGeneration(blockID)
-		if err != nil {
-			return 0, err
+	j.mu.RLock()
+	durable := j.durable
+	j.mu.RUnlock()
+	if durable == nil {
+		j.mu.Lock()
+		generation := j.generation[blockID] + 1
+		j.generation[blockID] = generation
+		if active := j.active[blockID]; active != nil {
+			active.VisibilityGeneration = generation
 		}
+		j.mu.Unlock()
+		return generation, nil
 	}
-	j.generation[blockID] = generation
+	generation, err := durable.AdvanceVisibilityGeneration(blockID)
+	if err != nil {
+		return 0, err
+	}
+	j.mu.Lock()
+	if generation > j.generation[blockID] {
+		j.generation[blockID] = generation
+	}
 	if active := j.active[blockID]; active != nil {
-		active.VisibilityGeneration = generation
+		active.VisibilityGeneration = j.generation[blockID]
 	}
-	return generation, nil
+	result := j.generation[blockID]
+	j.mu.Unlock()
+	return result, nil
 }
 
 // DeleteHistory physically removes completed history while preserving an
@@ -233,21 +256,27 @@ func (j *Journal) DeleteHistory(blockID string) error {
 	if j == nil || blockID == "" {
 		return nil
 	}
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	if j.durable != nil {
-		generation, err := j.durable.DeleteHistory(blockID)
+	j.mu.RLock()
+	durable := j.durable
+	j.mu.RUnlock()
+	if durable != nil {
+		generation, err := durable.DeleteHistory(blockID)
 		if err != nil {
 			return err
 		}
-		j.generation[blockID] = generation
+		j.mu.Lock()
+		if generation > j.generation[blockID] {
+			j.generation[blockID] = generation
+		}
 	} else {
+		j.mu.Lock()
 		j.generation[blockID]++
 	}
 	j.completed[blockID] = nil
 	if active := j.active[blockID]; active != nil {
 		active.VisibilityGeneration = j.generation[blockID]
 	}
+	j.mu.Unlock()
 	return nil
 }
 

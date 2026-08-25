@@ -18,3 +18,17 @@ func Default() (*Store, error) {
 	}
 	return defaultStore, defaultErr
 }
+
+// CloseDefault drains and closes the process-wide store. It is safe to call
+// more than once and is a no-op if Default was never opened.
+func CloseDefault() error {
+	defaultMu.Lock()
+	defer defaultMu.Unlock()
+	if defaultStore == nil {
+		return nil
+	}
+	err := defaultStore.Close()
+	defaultStore = nil
+	defaultErr = nil
+	return err
+}

@@ -18,6 +18,9 @@ observation only enqueues events. Persistence failures mark the store
 degraded and are logged; they never terminate the shell or delete existing
 data. Persistence can be disabled through `Options.Enabled`.
 
+Production shutdown waits for controller cleanup and then calls
+`persistence.CloseDefault()`, which drains and closes the process-wide writer.
+
 ## Recovery and visibility
 
 Running rows found at startup are completed as `aborted` with reason
@@ -28,3 +31,7 @@ while preserving a running row in the new generation.
 
 The frontend exposes only a narrow `TermWrap.clearVisualBuffer()` seam. It
 clears rendered xterm state and does not restart or truncate the shell session.
+
+The persistence layer supports disabled mode through `Options.Enabled`. Phase 5
+production wiring defaults persistence to enabled; no user-facing settings
+toggle is introduced in this phase.
