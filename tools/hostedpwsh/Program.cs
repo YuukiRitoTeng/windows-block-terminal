@@ -240,6 +240,9 @@ static class Program
         try { output = ps.Invoke(); }
         catch (Exception ex)
         {
+            var rendered = RenderInvocationError(ps, ex);
+            Console.Error.WriteLine(rendered);
+            EmitOutput(rendered + Environment.NewLine, id, "error");
             trace.Write($"INVOKE_EXCEPTION command_id={id} type={ex.GetType().Name} message={Escape(ex.Message)}");
             EmitFinished(id, false, 1, false);
             currentInvocation = null;
@@ -333,6 +336,13 @@ static class Program
     static void EmitFinished(string id, bool success, int exitCode, bool interrupted)
     {
         sidechannel?.Send(new { kind = "command_finished", hostId = Environment.ProcessId.ToString(CultureInfo.InvariantCulture), runspaceId = runspace?.InstanceId.ToString("N"), commandId = id, success, exitCode, interrupted });
+    }
+
+    static string RenderInvocationError(PowerShell ps, Exception exception)
+    {
+        var streamError = ps.Streams.Error.FirstOrDefault();
+        if (streamError is not null) return streamError.ToString();
+        return exception.Message;
     }
 
     static void OnCancel(object? sender, ConsoleCancelEventArgs e)
