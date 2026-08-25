@@ -40,6 +40,16 @@ Evidence Gate preparation / Phase 0–5 remediation，修复以下产品基础�
 projection、copy normalization、frontend read model/RPC 使用方式和 persistence
 product UX。
 
+### Foundation correction: execution versus output completion
+
+The Phase 1–5 contract is amended without changing the phase order: OSC `D`
+means command execution result known, not a physical PTY output-drained fence;
+`P` is prompt lifecycle metadata. Execution completion, output attribution and
+output completion are independent. A reliable `complete` / `exclusive` output
+record requires a proven causal output fence. Until then, unresolved output
+must converge conservatively to `unknown` / `incomplete`; it must not be
+assigned wholesale from `D` to the next `C`.
+
 主线调整为：
 
 ```text

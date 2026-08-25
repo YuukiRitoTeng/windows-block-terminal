@@ -14,10 +14,11 @@ type blockingDurable struct {
 	generation uint64
 }
 
-func (d *blockingDurable) RecordStarted(CommandRecord) error  { return nil }
-func (d *blockingDurable) AppendOutput(string, []byte) error  { return nil }
-func (d *blockingDurable) RecordFinished(CommandRecord) error { return nil }
-func (d *blockingDurable) RecordAborted(CommandRecord) error  { return nil }
+func (d *blockingDurable) RecordStarted(CommandRecord) error         { return nil }
+func (d *blockingDurable) AppendOutput(string, []byte) error         { return nil }
+func (d *blockingDurable) RecordFinished(CommandRecord) error        { return nil }
+func (d *blockingDurable) RecordOutputFinalized(CommandRecord) error { return nil }
+func (d *blockingDurable) RecordAborted(CommandRecord) error         { return nil }
 func (d *blockingDurable) CurrentVisibilityGeneration(string) (uint64, error) {
 	return d.generation, nil
 }
@@ -78,6 +79,62 @@ func TestJournalRecordsOrderedOutputAndSeparatesIdentity(t *testing.T) {
 	record.Output[0] = 'X'
 	if !bytes.Equal(j.Snapshot(blockID)[0].Output, []byte("one")) {
 		t.Fatal("snapshot exposed mutable output storage")
+	}
+}
+
+func TestJournalRunAExecutionAndOutputHaveSeparateCompletion(t *testing.T) {
+	j := New()
+	blockID := "run-a"
+	if !j.Apply(blockID, journalEvent(terminalruntime.EventCommandStarted, "cmd-a", 1), time.Now()) {
+		t.Fatal("start not recorded")
+	}
+	j.Apply(blockID, terminalruntime.StreamItem{Kind: terminalruntime.StreamOutputSegment, Output: []byte("manual-success\r\n")}, time.Now())
+	if !j.Apply(blockID, journalEvent(terminalruntime.EventCommandFinished, "cmd-a", 2), time.Now()) {
+		t.Fatal("finish not recorded")
+	}
+	record := j.Snapshot(blockID)[0]
+	if record.State != StateFinished || record.OutputState != OutputStatePending || record.OutputCompleteness != OutputCompletenessUnknown {
+		t.Fatalf("D changed output contract: %#v", record)
+	}
+	if !j.Apply(blockID, terminalruntime.StreamItem{Kind: terminalruntime.StreamIntegrationEvent, Event: terminalruntime.IntegrationEvent{Kind: terminalruntime.EventPromptReady}}, time.Now()) {
+		t.Fatal("prompt did not close pending output state")
+	}
+	record = j.Snapshot(blockID)[0]
+	if record.OutputState != OutputStateClosed || record.OutputCompleteness != OutputCompletenessUnknown || string(record.Output) != "manual-success\r\n" {
+		t.Fatalf("Run A output state was overclaimed: %#v", record)
+	}
+}
+
+func TestJournalRunBDoesNotAttributePostPromptBytes(t *testing.T) {
+	j := New()
+	blockID := "run-b"
+	j.Apply(blockID, journalEvent(terminalruntime.EventCommandStarted, "cmd-b", 1), time.Now())
+	j.Apply(blockID, terminalruntime.StreamItem{Kind: terminalruntime.StreamOutputSegment, Output: []byte("\x1b[m")}, time.Now())
+	j.Apply(blockID, journalEvent(terminalruntime.EventCommandFinished, "cmd-b", 2), time.Now())
+	j.Apply(blockID, terminalruntime.StreamItem{Kind: terminalruntime.StreamIntegrationEvent, Event: terminalruntime.IntegrationEvent{Kind: terminalruntime.EventPromptReady}}, time.Now())
+	if j.Apply(blockID, terminalruntime.StreamItem{Kind: terminalruntime.StreamOutputSegment, Output: []byte("manual-success\r\nPS> ")}, time.Now()) {
+		t.Fatal("post-prompt bytes were attributed to the previous command")
+	}
+	record := j.Snapshot(blockID)[0]
+	if record.OutputState != OutputStateClosed || record.OutputCompleteness == OutputCompletenessComplete || string(record.Output) != "\x1b[m" {
+		t.Fatalf("Run B produced a false complete record: %#v", record)
+	}
+}
+
+func TestJournalNextCommandClosesUnresolvedOutputWithoutCrossing(t *testing.T) {
+	j := New()
+	blockID := "next-command-fence"
+	j.Apply(blockID, journalEvent(terminalruntime.EventCommandStarted, "old", 1), time.Now())
+	j.Apply(blockID, journalEvent(terminalruntime.EventCommandFinished, "old", 2), time.Now())
+	j.Apply(blockID, journalEvent(terminalruntime.EventCommandStarted, "new", 3), time.Now())
+	j.Apply(blockID, terminalruntime.StreamItem{Kind: terminalruntime.StreamOutputSegment, Output: []byte("new-output")}, time.Now())
+	records := j.Snapshot(blockID)
+	if len(records) != 1 || records[0].ID != "old" || records[0].OutputState != OutputStateClosed || records[0].OutputCompleteness == OutputCompletenessComplete {
+		t.Fatalf("unresolved record was not closed safely: %#v", records)
+	}
+	active, ok := j.Active(blockID)
+	if !ok || active.ID != "new" || string(active.Output) != "new-output" {
+		t.Fatalf("next command crossed output boundary: %#v %v", active, ok)
 	}
 }
 
@@ -218,6 +275,28 @@ func TestJournalRetainsOutputBeforeBackendAbort(t *testing.T) {
 	records := j.Snapshot(blockID)
 	if len(records) != 1 || !bytes.Equal(records[0].Output, []byte("final-output")) || records[0].CompletionReason != CompletionControllerStop {
 		t.Fatalf("drain output was lost: %#v", records)
+	}
+}
+
+func TestJournalRejectsMalformedStartWithoutClosingPendingOutput(t *testing.T) {
+	j := New()
+	blockID := "block-malformed-start"
+	if !j.Apply(blockID, journalEvent(terminalruntime.EventCommandStarted, "cmd-1", 1), time.Now()) {
+		t.Fatal("start was not recorded")
+	}
+	if !j.Apply(blockID, terminalruntime.StreamItem{Kind: terminalruntime.StreamOutputSegment, Output: []byte("pending")}, time.Now()) {
+		t.Fatal("output was not recorded")
+	}
+	if !j.Apply(blockID, journalEvent(terminalruntime.EventCommandFinished, "cmd-1", 2), time.Now()) {
+		t.Fatal("finish was not recorded")
+	}
+	malformed := journalEvent(terminalruntime.EventCommandStarted, "", 3)
+	if j.Apply(blockID, malformed, time.Now()) {
+		t.Fatal("malformed start was accepted")
+	}
+	records := j.Snapshot(blockID)
+	if len(records) != 1 || records[0].OutputState != OutputStatePending || !bytes.Equal(records[0].Output, []byte("pending")) {
+		t.Fatalf("malformed start changed pending output state: %#v", records)
 	}
 }
 

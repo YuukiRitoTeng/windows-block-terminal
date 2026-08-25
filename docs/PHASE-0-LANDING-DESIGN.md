@@ -204,7 +204,11 @@ frontend/commandjournal/
 
 No code directories are created in Phase 0.
 
-CommandRecord is created by CommandJournalService on validated C, completed only on matched D or an explicit abnormal terminal state, and references independent CommandOutputSpan data. waveBlockId is a reference only and does not change Wave Block semantics.
+CommandRecord is created by CommandJournalService on validated C. A matched D
+completes execution and records success/exit code, while output attribution and
+output completion remain independent. An explicit abnormal terminal state can
+close unresolved output conservatively. `waveBlockId` is a reference only and
+does not change Wave Block semantics.
 
 ## 8. Output Sequencer / Store
 
@@ -218,7 +222,12 @@ byteLength
 waveBlockId
 ~~~
 
-Decoder and sequencer consume the same ordered input. C establishes the command boundary; D closes the output boundary; OSC envelopes are excluded from copy output; bytes outside a valid pair are not silently assigned.
+Decoder and sequencer consume the same ordered input. C establishes execution
+and capture ownership; D is an execution-result event, not a physical output
+fence. Only a separately proven causal fence can close output as complete;
+otherwise liveness events close it as unknown/incomplete. OSC envelopes are
+excluded from copy output and bytes outside a proven attribution window are not
+silently assigned.
 
 Command history cannot use Wave term as truth:
 
@@ -319,8 +328,8 @@ PowerShell prompt wrapper
   → tap decoder
   → IntegrationEvent(D, sessionEpoch, hookSequence, success, exitCode, cwdAfter)
   → CommandJournalService
-  → CommandRecord COMPLETE
-  → Command Card Projection
+  → CommandRecord execution FINISHED, output PENDING/UNKNOWN
+  → Command Card Projection only when output quality permits
 ~~~
 
 The remaining validation concerns are ordering, partial OSC frames, queue/backpressure, and PowerShell exit semantics—not a missing PTY path.
