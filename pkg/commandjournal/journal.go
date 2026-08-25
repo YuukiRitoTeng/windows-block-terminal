@@ -18,40 +18,78 @@ const (
 type CompletionReason string
 
 const (
-	CompletionNormal         CompletionReason = "normal"
-	CompletionMissingFinish  CompletionReason = "missing_finish"
-	CompletionSuperseded     CompletionReason = "superseded"
-	CompletionSessionEnded   CompletionReason = "session_ended"
-	CompletionControllerStop CompletionReason = "controller_stop"
-	CompletionPTYError       CompletionReason = "pty_error"
-	CompletionEpochChanged   CompletionReason = "epoch_changed"
+	CompletionNormal             CompletionReason = "normal"
+	CompletionMissingFinish      CompletionReason = "missing_finish"
+	CompletionSuperseded         CompletionReason = "superseded"
+	CompletionSessionEnded       CompletionReason = "session_ended"
+	CompletionControllerStop     CompletionReason = "controller_stop"
+	CompletionPTYError           CompletionReason = "pty_error"
+	CompletionEpochChanged       CompletionReason = "epoch_changed"
+	CompletionAppRestartRecovery CompletionReason = "app_restart_recovery"
 )
 
 type CommandRecord struct {
-	ID                 string
-	WaveBlockID        string
-	SessionEpoch       string
-	StartHookSequence  uint64
-	FinishHookSequence uint64
-	Command            string
-	Cwd                string
-	State              CommandState
-	CompletionReason   CompletionReason
-	StartedAt          time.Time
-	FinishedAt         *time.Time
-	Success            *bool
-	ExitCode           *int
-	Output             []byte
+	ID                   string
+	WaveBlockID          string
+	SessionEpoch         string
+	StartHookSequence    uint64
+	FinishHookSequence   uint64
+	Command              string
+	Cwd                  string
+	State                CommandState
+	CompletionReason     CompletionReason
+	VisibilityGeneration uint64
+	OutputTotalBytes     int64
+	OutputStoredBytes    int64
+	OutputTruncated      bool
+	StartedAt            time.Time
+	FinishedAt           *time.Time
+	Success              *bool
+	ExitCode             *int
+	Output               []byte
+}
+
+// DurableStore is the narrow persistence seam used by the in-memory journal.
+// Implementations must enqueue quickly; the Journal never performs database
+// work while consuming PTY output.
+type DurableStore interface {
+	RecordStarted(CommandRecord) error
+	AppendOutput(commandID string, data []byte) error
+	RecordFinished(CommandRecord) error
+	RecordAborted(CommandRecord) error
+	CurrentVisibilityGeneration(blockID string) uint64
+	AdvanceVisibilityGeneration(blockID string) (uint64, error)
+	DeleteHistory(blockID string) (uint64, error)
 }
 
 type Journal struct {
-	mu        sync.RWMutex
-	completed map[string][]CommandRecord
-	active    map[string]*CommandRecord
+	mu         sync.RWMutex
+	completed  map[string][]CommandRecord
+	active     map[string]*CommandRecord
+	durable    DurableStore
+	generation map[string]uint64
 }
 
 func New() *Journal {
-	return &Journal{completed: make(map[string][]CommandRecord), active: make(map[string]*CommandRecord)}
+	return &Journal{completed: make(map[string][]CommandRecord), active: make(map[string]*CommandRecord), generation: make(map[string]uint64)}
+}
+
+func (j *Journal) SetDurableStore(store DurableStore) {
+	if j == nil {
+		return
+	}
+	j.mu.Lock()
+	j.durable = store
+	j.mu.Unlock()
+}
+
+func (j *Journal) SetVisibilityGeneration(blockID string, generation uint64) {
+	if j == nil || blockID == "" {
+		return
+	}
+	j.mu.Lock()
+	j.generation[blockID] = generation
+	j.mu.Unlock()
 }
 
 // Apply consumes one ordered runtime item. It returns true only when the item
@@ -72,6 +110,11 @@ func (j *Journal) Apply(blockID string, item terminalruntime.StreamItem, observe
 			return false
 		}
 		active.Output = append(active.Output, item.Output...)
+		active.OutputTotalBytes += int64(len(item.Output))
+		active.OutputStoredBytes += int64(len(item.Output))
+		if j.durable != nil {
+			_ = j.durable.AppendOutput(active.ID, item.Output)
+		}
 		return true
 	case terminalruntime.StreamIntegrationEvent:
 		event := item.Event
@@ -80,15 +123,20 @@ func (j *Journal) Apply(blockID string, item terminalruntime.StreamItem, observe
 			if j.active[blockID] != nil || event.CommandID == "" || event.SessionEpoch == "" || event.HookSequence == 0 {
 				return false
 			}
+			generation := j.generation[blockID]
 			j.active[blockID] = &CommandRecord{
-				ID:                event.CommandID,
-				WaveBlockID:       blockID,
-				SessionEpoch:      event.SessionEpoch,
-				StartHookSequence: event.HookSequence,
-				Command:           event.Command,
-				Cwd:               event.Cwd,
-				State:             StateRunning,
-				StartedAt:         observedAt,
+				ID:                   event.CommandID,
+				WaveBlockID:          blockID,
+				SessionEpoch:         event.SessionEpoch,
+				StartHookSequence:    event.HookSequence,
+				Command:              event.Command,
+				Cwd:                  event.Cwd,
+				State:                StateRunning,
+				VisibilityGeneration: generation,
+				StartedAt:            observedAt,
+			}
+			if j.durable != nil {
+				_ = j.durable.RecordStarted(*j.active[blockID])
 			}
 			return true
 		case terminalruntime.EventCommandFinished:
@@ -106,6 +154,9 @@ func (j *Journal) Apply(blockID string, item terminalruntime.StreamItem, observe
 			completed := cloneRecord(*active)
 			j.completed[blockID] = append(j.completed[blockID], completed)
 			delete(j.active, blockID)
+			if j.durable != nil {
+				_ = j.durable.RecordFinished(completed)
+			}
 			return true
 		case terminalruntime.EventCommandAborted:
 			return j.abortActiveLocked(blockID, CompletionReason(event.CompletionReason), observedAt, event.CommandID, event.SessionEpoch)
@@ -147,7 +198,73 @@ func (j *Journal) abortActiveLocked(blockID string, reason CompletionReason, obs
 	completed := cloneRecord(*active)
 	j.completed[blockID] = append(j.completed[blockID], completed)
 	delete(j.active, blockID)
+	if j.durable != nil {
+		_ = j.durable.RecordAborted(completed)
+	}
 	return true
+}
+
+// ClearVisualHistory advances the durable visibility generation without
+// changing the shell, PTY, decoder, or command identity.
+func (j *Journal) ClearVisualHistory(blockID string) (uint64, error) {
+	if j == nil || blockID == "" {
+		return 0, nil
+	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	generation := j.generation[blockID] + 1
+	if j.durable != nil {
+		var err error
+		generation, err = j.durable.AdvanceVisibilityGeneration(blockID)
+		if err != nil {
+			return 0, err
+		}
+	}
+	j.generation[blockID] = generation
+	if active := j.active[blockID]; active != nil {
+		active.VisibilityGeneration = generation
+	}
+	return generation, nil
+}
+
+// DeleteHistory physically removes completed history while preserving an
+// active record by moving it to the new generation.
+func (j *Journal) DeleteHistory(blockID string) error {
+	if j == nil || blockID == "" {
+		return nil
+	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.durable != nil {
+		generation, err := j.durable.DeleteHistory(blockID)
+		if err != nil {
+			return err
+		}
+		j.generation[blockID] = generation
+	} else {
+		j.generation[blockID]++
+	}
+	j.completed[blockID] = nil
+	if active := j.active[blockID]; active != nil {
+		active.VisibilityGeneration = j.generation[blockID]
+	}
+	return nil
+}
+
+func (j *Journal) VisibleSnapshot(blockID string) []CommandRecord {
+	if j == nil {
+		return nil
+	}
+	j.mu.RLock()
+	defer j.mu.RUnlock()
+	generation := j.generation[blockID]
+	result := make([]CommandRecord, 0, len(j.completed[blockID]))
+	for _, record := range j.completed[blockID] {
+		if record.VisibilityGeneration == generation {
+			result = append(result, cloneRecord(record))
+		}
+	}
+	return result
 }
 
 func validAbortReason(reason CompletionReason) bool {

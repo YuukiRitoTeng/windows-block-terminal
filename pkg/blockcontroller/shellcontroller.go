@@ -18,6 +18,7 @@ import (
 
 	"github.com/wavetermdev/waveterm/pkg/blocklogger"
 	"github.com/wavetermdev/waveterm/pkg/commandjournal"
+	"github.com/wavetermdev/waveterm/pkg/commandjournal/persistence"
 	"github.com/wavetermdev/waveterm/pkg/filestore"
 	"github.com/wavetermdev/waveterm/pkg/panichandler"
 	"github.com/wavetermdev/waveterm/pkg/remote"
@@ -69,6 +70,7 @@ type ShellController struct {
 
 	journalMu                sync.Mutex
 	commandJournal           *commandjournal.Journal
+	journalPersistence       *persistence.Store
 	journalObserver          *commandjournal.RuntimeObserver
 	journalUnregister        func()
 	terminationMu            sync.Mutex
@@ -141,6 +143,16 @@ func (sc *ShellController) attachCommandJournal() {
 	if journal == nil {
 		journal = commandjournal.New()
 		sc.commandJournal = journal
+	}
+	if sc.journalPersistence == nil {
+		store, err := persistence.Default()
+		if err != nil {
+			log.Printf("[command-journal] persistence disabled: %v", err)
+		} else {
+			sc.journalPersistence = store
+			journal.SetDurableStore(store)
+			journal.SetVisibilityGeneration(sc.BlockId, store.CurrentVisibilityGeneration(sc.BlockId))
+		}
 	}
 	sc.journalMu.Unlock()
 	observer := commandjournal.NewRuntimeObserver(sc.BlockId, journal)
