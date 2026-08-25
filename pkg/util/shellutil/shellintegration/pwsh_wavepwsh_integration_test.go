@@ -95,7 +95,7 @@ function Invoke-WaveCliCommand([string]$Name, [scriptblock]$Command) {
 
 	var chunks []terminalruntime.OutputChunk
 	var events []terminalruntime.IntegrationEvent
-	adapter := terminalruntime.NewRuntimeAdapter("cli-phase1-epoch", func(chunk terminalruntime.OutputChunk) {
+	adapter := terminalruntime.NewRuntimeAdapter("block-cli-phase1", func(chunk terminalruntime.OutputChunk) {
 		chunks = append(chunks, chunk)
 	}, func(event terminalruntime.IntegrationEvent) {
 		events = append(events, event)
@@ -106,7 +106,7 @@ function Invoke-WaveCliCommand([string]$Name, [scriptblock]$Command) {
 		if end > len(data) {
 			end = len(data)
 		}
-		adapter.ObserveOutput("cli-phase1-epoch", data[start:end])
+		adapter.ObserveOutput("block-cli-phase1", data[start:end])
 	}
 	adapter.Close()
 

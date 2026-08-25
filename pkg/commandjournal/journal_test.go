@@ -1,0 +1,115 @@
+package commandjournal
+
+import (
+	"bytes"
+	"testing"
+	"time"
+
+	"github.com/wavetermdev/waveterm/pkg/terminalruntime"
+)
+
+func journalEvent(kind terminalruntime.EventKind, id string, seq uint64) terminalruntime.StreamItem {
+	success := true
+	exitCode := 0
+	return terminalruntime.StreamItem{Kind: terminalruntime.StreamIntegrationEvent, Event: terminalruntime.IntegrationEvent{
+		Kind: kind, SessionEpoch: "shell-epoch-456", HookSequence: seq, CommandID: id,
+		Command: "Write-Output one", Cwd: "C:\\tmp", Success: &success, ExitCode: &exitCode,
+	}}
+}
+
+func TestJournalRecordsOrderedOutputAndSeparatesIdentity(t *testing.T) {
+	j := New()
+	blockID := "block-123"
+	startedAt := time.Unix(10, 0)
+	finishedAt := time.Unix(20, 0)
+	if j.Apply(blockID, terminalruntime.StreamItem{Kind: terminalruntime.StreamOutputSegment, Output: []byte("before")}, startedAt) {
+		t.Fatal("output before C created a record")
+	}
+	if !j.Apply(blockID, journalEvent(terminalruntime.EventCommandStarted, "cmd-1", 1), startedAt) {
+		t.Fatal("start was not recorded")
+	}
+	if !j.Apply(blockID, terminalruntime.StreamItem{Kind: terminalruntime.StreamOutputSegment, Output: []byte("one")}, startedAt) {
+		t.Fatal("output was not recorded")
+	}
+	if !j.Apply(blockID, journalEvent(terminalruntime.EventCommandFinished, "cmd-1", 2), finishedAt) {
+		t.Fatal("finish was not recorded")
+	}
+	if j.Apply(blockID, terminalruntime.StreamItem{Kind: terminalruntime.StreamOutputSegment, Output: []byte("outside")}, time.Time{}) {
+		t.Fatal("unrelated output changed the journal")
+	}
+	records := j.Snapshot(blockID)
+	if len(records) != 1 {
+		t.Fatalf("expected one completed record, got %d", len(records))
+	}
+	record := records[0]
+	if record.WaveBlockID != blockID || record.SessionEpoch != "shell-epoch-456" || record.State != StateFinished || !bytes.Equal(record.Output, []byte("one")) {
+		t.Fatalf("unexpected record identity/state/output: %#v", record)
+	}
+	if record.StartHookSequence != 1 || record.FinishHookSequence != 2 || record.StartedAt != startedAt || record.FinishedAt == nil || *record.FinishedAt != finishedAt {
+		t.Fatalf("unexpected record lifecycle timestamps: %#v", record)
+	}
+	record.Output[0] = 'X'
+	if !bytes.Equal(j.Snapshot(blockID)[0].Output, []byte("one")) {
+		t.Fatal("snapshot exposed mutable output storage")
+	}
+}
+
+func TestJournalRejectsMismatchedFinishAndKeepsActive(t *testing.T) {
+	j := New()
+	blockID := "block-123"
+	if !j.Apply(blockID, journalEvent(terminalruntime.EventCommandStarted, "cmd-1", 1), time.Now()) {
+		t.Fatal("start was not recorded")
+	}
+	if j.Apply(blockID, journalEvent(terminalruntime.EventCommandFinished, "cmd-2", 2), time.Now()) {
+		t.Fatal("mismatched finish was accepted")
+	}
+	active, ok := j.Active(blockID)
+	if !ok || active.ID != "cmd-1" || active.State != StateRunning {
+		t.Fatalf("active command was not preserved: %#v %v", active, ok)
+	}
+}
+
+func TestJournalSeparatesMultipleBlocks(t *testing.T) {
+	j := New()
+	for _, blockID := range []string{"block-123", "block-456"} {
+		if !j.Apply(blockID, journalEvent(terminalruntime.EventCommandStarted, blockID+"-cmd", 1), time.Now()) {
+			t.Fatal("start was not recorded")
+		}
+	}
+	if j.Snapshot("block-123") != nil || j.Snapshot("block-456") != nil {
+		t.Fatal("running records appeared in completed snapshots")
+	}
+}
+
+func TestRuntimeObserverRegistersOrderedConsumer(t *testing.T) {
+	journal := New()
+	blockID := "block-123"
+	observer := NewRuntimeObserver(blockID, journal)
+	raw := []byte("before")
+	raw = append(raw, []byte("\x1b]16162;C;{\"v\":1,\"epoch\":\"shell-epoch-456\",\"seq\":1,\"id\":\"cmd-1\"}\a")...)
+	raw = append(raw, []byte("one")...)
+	raw = append(raw, []byte("\x1b]16162;D;{\"v\":1,\"epoch\":\"shell-epoch-456\",\"seq\":2,\"id\":\"cmd-1\",\"success\":true,\"exitcode\":0}\a")...)
+	observer.ObserveOutput(blockID, raw)
+	observer.Close()
+	records := journal.Snapshot(blockID)
+	if len(records) != 1 || !bytes.Contains(records[0].Output, []byte("one")) || bytes.Contains(records[0].Output, []byte("before")) {
+		t.Fatalf("runtime observer did not record ordered output: %#v", records)
+	}
+}
+
+func TestRuntimeObserverSeparatesTwoCommandsInOneSubmission(t *testing.T) {
+	journal := New()
+	blockID := "block-123"
+	observer := NewRuntimeObserver(blockID, journal)
+	raw := []byte("background-before")
+	raw = append(raw, []byte("\x1b]16162;C;{\"v\":1,\"epoch\":\"shell-epoch-456\",\"seq\":1,\"id\":\"cmd-1\"}\aone")...)
+	raw = append(raw, []byte("\x1b]16162;D;{\"v\":1,\"epoch\":\"shell-epoch-456\",\"seq\":2,\"id\":\"cmd-1\",\"success\":true,\"exitcode\":0}\a")...)
+	raw = append(raw, []byte("\x1b]16162;C;{\"v\":1,\"epoch\":\"shell-epoch-456\",\"seq\":3,\"id\":\"cmd-2\"}\atwo")...)
+	raw = append(raw, []byte("\x1b]16162;D;{\"v\":1,\"epoch\":\"shell-epoch-456\",\"seq\":4,\"id\":\"cmd-2\",\"success\":true,\"exitcode\":0}\abackground-after")...)
+	observer.ObserveOutput(blockID, raw)
+	observer.Close()
+	records := journal.Snapshot(blockID)
+	if len(records) != 2 || !bytes.Equal(records[0].Output, []byte("one")) || !bytes.Equal(records[1].Output, []byte("two")) {
+		t.Fatalf("commands or output crossed boundaries: %#v", records)
+	}
+}

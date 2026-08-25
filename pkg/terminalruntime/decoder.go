@@ -35,20 +35,43 @@ type wirePayload struct {
 }
 
 func (d *Decoder) Feed(raw []byte) []IntegrationEvent {
+	items := d.FeedOrdered(raw)
+	events := make([]IntegrationEvent, 0, len(items))
+	for _, item := range items {
+		if item.Kind == StreamIntegrationEvent {
+			events = append(events, item.Event)
+		}
+	}
+	return events
+}
+
+// FeedOrdered returns validated integration events and ordinary output in the
+// exact order they appeared in the PTY byte stream.
+func (d *Decoder) FeedOrdered(raw []byte) []StreamItem {
 	if len(raw) == 0 {
 		return nil
 	}
 	d.buffer = append(d.buffer, raw...)
-	var events []IntegrationEvent
+	var items []StreamItem
 	for {
 		start := bytes.Index(d.buffer, []byte{0x1b, ']'})
 		if start < 0 {
-			if len(d.buffer) > 1 {
+			keep := 0
+			if len(d.buffer) > 0 && d.buffer[len(d.buffer)-1] == 0x1b {
+				keep = 1
+			}
+			if len(d.buffer)-keep > 0 {
+				items = append(items, StreamItem{Kind: StreamOutputSegment, Output: append([]byte(nil), d.buffer[:len(d.buffer)-keep]...)})
+			}
+			if keep == 1 {
 				d.buffer = d.buffer[len(d.buffer)-1:]
+			} else {
+				d.buffer = nil
 			}
 			break
 		}
 		if start > 0 {
+			items = append(items, StreamItem{Kind: StreamOutputSegment, Output: append([]byte(nil), d.buffer[:start]...)})
 			d.buffer = d.buffer[start:]
 		}
 		end, termLen := frameEnd(d.buffer[2:])
@@ -70,13 +93,16 @@ func (d *Decoder) Feed(raw []byte) []IntegrationEvent {
 			}
 			break
 		}
+		frameBytes := append([]byte(nil), d.buffer[:2+end+termLen]...)
 		frame := string(d.buffer[2 : 2+end])
 		d.buffer = d.buffer[2+end+termLen:]
 		if ev, ok := d.decodeFrame(frame); ok {
-			events = append(events, ev)
+			items = append(items, StreamItem{Kind: StreamIntegrationEvent, Event: ev})
+		} else if !bytes.HasPrefix([]byte(frame), []byte("16162;")) {
+			items = append(items, StreamItem{Kind: StreamOutputSegment, Output: frameBytes})
 		}
 	}
-	return events
+	return items
 }
 
 func frameEnd(data []byte) (int, int) {
@@ -108,6 +134,9 @@ func (d *Decoder) decodeFrame(frame string) (IntegrationEvent, bool) {
 		return IntegrationEvent{}, false
 	}
 	if (kind == "C" || kind == "D") && (p.Epoch == "" || p.Sequence == 0) {
+		return IntegrationEvent{}, false
+	}
+	if kind == "D" && (p.Success == nil || p.ExitCode == nil) {
 		return IntegrationEvent{}, false
 	}
 	epoch := d.sessionEpoch

@@ -3,6 +3,8 @@
 package shellintegration
 
 import (
+	"bytes"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -12,6 +14,7 @@ import (
 	"time"
 
 	"github.com/creack/pty"
+	"github.com/wavetermdev/waveterm/pkg/commandjournal"
 	"github.com/wavetermdev/waveterm/pkg/terminalruntime"
 )
 
@@ -29,6 +32,10 @@ func TestPowerShellInteractivePTYLifecycle(t *testing.T) {
 	if err := os.WriteFile(integrationPath, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	cwdTarget := filepath.Join(dir, "phase2-cwd")
+	if err := os.Mkdir(cwdTarget, 0o700); err != nil {
+		t.Fatal(err)
+	}
 
 	cmd := exec.Command(pwsh, "-NoLogo", "-NoExit", "-ExecutionPolicy", "Bypass", "-File", integrationPath)
 	term, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 30, Cols: 120})
@@ -44,6 +51,8 @@ func TestPowerShellInteractivePTYLifecycle(t *testing.T) {
 	}()
 
 	d := terminalruntime.NewDecoder()
+	journal := commandjournal.New()
+	const blockID = "block-phase2-conpty"
 	events := make(chan terminalruntime.IntegrationEvent, 32)
 	readDone := make(chan error, 1)
 	go func() {
@@ -51,8 +60,11 @@ func TestPowerShellInteractivePTYLifecycle(t *testing.T) {
 		for {
 			n, readErr := term.Read(buf)
 			if n > 0 {
-				for _, event := range d.Feed(buf[:n]) {
-					events <- event
+				for _, item := range d.FeedOrdered(buf[:n]) {
+					journal.Apply(blockID, item, time.Now())
+					if item.Kind == terminalruntime.StreamIntegrationEvent {
+						events <- item.Event
+					}
 				}
 			}
 			if readErr != nil {
@@ -123,10 +135,22 @@ func TestPowerShellInteractivePTYLifecycle(t *testing.T) {
 		return started, finished
 	}
 
-	_, success := run(`Write-Output "phase1-success"`)
+	firstCommand := fmt.Sprintf(`Set-Location -LiteralPath '%s'; cmd /c echo phase2-one`, strings.ReplaceAll(cwdTarget, "'", "''"))
+	_, success := run(firstCommand)
 	assertResult(t, success, true, 0)
-	_, native := run(`cmd /c exit 7`)
+	records := journal.Snapshot(blockID)
+	if len(records) != 1 || records[0].WaveBlockID != blockID || records[0].SessionEpoch != metadata.SessionEpoch || records[0].WaveBlockID == records[0].SessionEpoch || !bytes.Contains(records[0].Output, []byte("phase2-one")) || records[0].Success == nil || !*records[0].Success || records[0].ExitCode == nil || *records[0].ExitCode != 0 {
+		t.Fatalf("unexpected first command record: %#v", records)
+	}
+	secondStarted, native := run(`cmd /c exit 7`)
 	assertResult(t, native, false, 7)
+	if !strings.EqualFold(filepath.Clean(secondStarted.Cwd), filepath.Clean(cwdTarget)) {
+		t.Fatalf("second command cwd did not persist: got %q want %q", secondStarted.Cwd, cwdTarget)
+	}
+	records = journal.Snapshot(blockID)
+	if len(records) != 2 || records[1].Success == nil || *records[1].Success || records[1].ExitCode == nil || *records[1].ExitCode != 7 || bytes.Contains(records[1].Output, []byte("phase2-one")) {
+		t.Fatalf("unexpected second command record or output contamination: %#v", records)
+	}
 
 	// Physical multiline input must not emit a lifecycle event for each
 	// continuation Enter. Only the final accepted command may produce C/D.

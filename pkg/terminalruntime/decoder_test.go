@@ -58,7 +58,11 @@ func TestDecoderFindsFrameAfterLargePlainOutput(t *testing.T) {
 func TestDecoderRejectsInvalidLifecycleTransitions(t *testing.T) {
 	d := NewDecoder()
 	frame := func(kind, id string, seq uint64) []byte {
-		return []byte("\x1b]16162;" + kind + ";{\"v\":1,\"epoch\":\"e1\",\"seq\":" + string(rune('0'+seq)) + ",\"id\":\"" + id + "\"}\a")
+		result := "\x1b]16162;" + kind + ";{\"v\":1,\"epoch\":\"e1\",\"seq\":" + string(rune('0'+seq)) + ",\"id\":\"" + id + "\""
+		if kind == "D" {
+			result += ",\"success\":true,\"exitcode\":0"
+		}
+		return []byte(result + "}\a")
 	}
 	if got := d.Feed(frame("D", "e1-1", 1)); len(got) != 0 {
 		t.Fatalf("accepted D without C: %#v", got)
@@ -79,7 +83,11 @@ func TestDecoderRejectsInvalidLifecycleTransitions(t *testing.T) {
 
 func TestDecoderRequiresLifecycleIdentity(t *testing.T) {
 	frame := func(kind, epoch string, sequence uint64, id string) []byte {
-		return []byte(fmt.Sprintf("\x1b]16162;%s;{\"v\":1,\"epoch\":\"%s\",\"seq\":%d,\"id\":\"%s\"}\a", kind, epoch, sequence, id))
+		result := fmt.Sprintf("\x1b]16162;%s;{\"v\":1,\"epoch\":\"%s\",\"seq\":%d,\"id\":\"%s\"", kind, epoch, sequence, id)
+		if kind == "D" {
+			result += ",\"success\":true,\"exitcode\":0"
+		}
+		return []byte(result + "}\a")
 	}
 
 	d := NewDecoder()
@@ -100,5 +108,25 @@ func TestDecoderRequiresLifecycleIdentity(t *testing.T) {
 	}
 	if got := d.Feed(frame("D", "e1", 2, "e1-1")); len(got) != 1 || got[0].Kind != EventCommandFinished {
 		t.Fatalf("valid D did not complete active C: %#v", got)
+	}
+}
+
+func TestDecoderRequiresFinishedResult(t *testing.T) {
+	d := NewDecoder()
+	c := []byte("\x1b]16162;C;{\"v\":1,\"epoch\":\"e1\",\"seq\":1,\"id\":\"e1-1\"}\a")
+	if len(d.Feed(c)) != 1 {
+		t.Fatal("valid C rejected")
+	}
+	missingSuccess := []byte("\x1b]16162;D;{\"v\":1,\"epoch\":\"e1\",\"seq\":2,\"id\":\"e1-1\",\"exitcode\":0}\a")
+	if len(d.Feed(missingSuccess)) != 0 {
+		t.Fatal("accepted D without success")
+	}
+	missingExitCode := []byte("\x1b]16162;D;{\"v\":1,\"epoch\":\"e1\",\"seq\":3,\"id\":\"e1-1\",\"success\":true}\a")
+	if len(d.Feed(missingExitCode)) != 0 {
+		t.Fatal("accepted D without exitcode")
+	}
+	valid := []byte("\x1b]16162;D;{\"v\":1,\"epoch\":\"e1\",\"seq\":4,\"id\":\"e1-1\",\"success\":true,\"exitcode\":0}\a")
+	if len(d.Feed(valid)) != 1 {
+		t.Fatal("valid D did not complete active C")
 	}
 }
