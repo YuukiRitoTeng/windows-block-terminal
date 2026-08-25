@@ -60,9 +60,14 @@ function Invoke-WaveCliCommand([string]$Name, [scriptblock]$Command) {
     $commandText = $Command.ToString()
     $Global:_WAVETERM_SI_LAST_COMMAND_NATIVE = _waveterm_si_is_direct_native_invocation $commandText
     _waveterm_si_emit "C" @{ v = 1; epoch = $Global:_WAVETERM_SI_SESSION_EPOCH; seq = $sequence; id = $id; cmd64 = (_waveterm_si_b64 $commandText); cwd64 = (_waveterm_si_b64 $PWD.Path) }
-    $success = $true
-    try { & $Command } catch { $success = $false }
-    $nativeExitCode = $LASTEXITCODE
+	$success = $true
+	try {
+	    & $Command
+	    $success = [bool]$?
+	} catch {
+	    $success = $false
+	}
+	$nativeExitCode = $LASTEXITCODE
     _waveterm_si_command_finished $success $nativeExitCode
 }
 `)
