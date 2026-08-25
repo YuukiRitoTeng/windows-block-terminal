@@ -44,12 +44,17 @@ work should begin until those cases meet the Phase 1 Go/No-Go conditions in
 
 ### Automated CLI verified
 
-- A CLI integration harness starts PowerShell 7, loads the current
-  `pwsh_wavepwsh.sh` template, emits the same versioned OSC 16162 envelopes,
-  captures stdout/stderr, and feeds the resulting byte stream through the
-  existing `RuntimeAdapter` and decoder.
-- Success, native failure (`cmd /c exit 7`), PowerShell failure, pipeline, and
-  multiline scriptblock cases each produce exactly one C/D pair.
+- The helper/protocol CLI harness starts PowerShell 7, loads the current
+  `pwsh_wavepwsh.sh` template, exercises the emit/completion helpers, captures
+  stdout/stderr, and feeds the resulting byte stream through the existing
+  `RuntimeAdapter` and decoder.
+- A Windows-only CLI ConPTY test starts the real `pwsh.exe`, loads the same
+  integration script, writes command characters and Enter through the PTY, and
+  verifies the PSReadLine Enter hook, command buffer capture, real execution,
+  and prompt completion boundary.
+- Success and native failure (`cmd /c exit 7`) each produce exactly one C/D
+  pair through the real interactive path. PowerShell failure, pipeline, and
+  multiline scriptblock cases are covered by the helper/protocol harness.
 - Command IDs are paired, the session epoch is stable, hook sequences are
   strictly monotonic, and native exit code 7 is preserved.
 - Multiple captured chunks have strictly increasing `OutputChunk.Sequence`
@@ -77,6 +82,13 @@ work should begin until those cases meet the Phase 1 Go/No-Go conditions in
 - vim, ssh, fzf, Python REPL, and nested PowerShell compatibility
 - Command Journal persistence
 - Command Cards
+
+### Runtime consumer registration
+
+`RegisterOutputObserver` currently has no production caller. The output tap and
+`RuntimeAdapter` are established and tested as a feasibility seam; a product
+runtime consumer and registration lifecycle are intentionally deferred to
+Phase 2.
 
 ### Known limitation
 
