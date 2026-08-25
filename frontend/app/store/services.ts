@@ -69,6 +69,47 @@ export class ClientServiceType {
 
 export const ClientService = new ClientServiceType();
 
+// commandjournalservice.CommandJournalService (commandjournal)
+export class CommandJournalServiceType {
+    waveEnv: WaveEnv;
+
+    constructor(waveEnv?: WaveEnv) {
+        this.waveEnv = waveEnv;
+    }
+
+    // advance visible command history without restarting the terminal session
+    ClearVisualHistory(blockId: string): Promise<GenerationView> {
+        return callBackendService(this?.waveEnv, "commandjournal", "ClearVisualHistory", Array.from(arguments))
+    }
+
+    // delete completed command history without restarting the terminal session
+    DeleteHistory(blockId: string): Promise<void> {
+        return callBackendService(this?.waveEnv, "commandjournal", "DeleteHistory", Array.from(arguments))
+    }
+
+    // read command journal persistence health
+    GetHealth(): Promise<HealthView> {
+        return callBackendService(this?.waveEnv, "commandjournal", "GetHealth", Array.from(arguments))
+    }
+
+    // read raw captured output and completeness metadata
+    GetOutput(commandId: string): Promise<OutputView> {
+        return callBackendService(this?.waveEnv, "commandjournal", "GetOutput", Array.from(arguments))
+    }
+
+    // read one command record by id
+    GetRecord(commandId: string): Promise<RecordView> {
+        return callBackendService(this?.waveEnv, "commandjournal", "GetRecord", Array.from(arguments))
+    }
+
+    // read visible command records for a terminal block
+    ListVisibleRecords(blockId: string): Promise<RecordView[]> {
+        return callBackendService(this?.waveEnv, "commandjournal", "ListVisibleRecords", Array.from(arguments))
+    }
+}
+
+export const CommandJournalService = new CommandJournalServiceType();
+
 // objectservice.ObjectService (object)
 export class ObjectServiceType {
     waveEnv: WaveEnv;
@@ -217,6 +258,7 @@ export const WorkspaceService = new WorkspaceServiceType();
 export const AllServiceTypes = {
     "block": BlockServiceType,
     "client": ClientServiceType,
+    "commandjournal": CommandJournalServiceType,
     "object": ObjectServiceType,
     "userinput": UserInputServiceType,
     "window": WindowServiceType,
@@ -226,6 +268,7 @@ export const AllServiceTypes = {
 export const AllServiceImpls = {
     "block": BlockService,
     "client": ClientService,
+    "commandjournal": CommandJournalService,
     "object": ObjectService,
     "userinput": UserInputService,
     "window": WindowService,

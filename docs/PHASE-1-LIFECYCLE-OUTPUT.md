@@ -93,10 +93,10 @@ domain work should begin until the required cases meet the Phase 1 Go/No-Go cond
 
 ### Runtime consumer registration
 
-`RegisterOutputObserver` currently has no production caller. The output tap and
-`RuntimeAdapter` are established and tested as a feasibility seam; a product
-runtime consumer and registration lifecycle are intentionally deferred to
-Phase 2.
+At the end of Phase 1, `RegisterOutputObserver` had no product consumer. Phase
+2 and later remediation now provide a production `RuntimeObserver` and a
+narrow backend service seam. This historical Phase 1 document does not claim
+that the product read model or persistence UX is complete.
 
 ### Verdict
 

@@ -18,7 +18,10 @@ func NewRuntimeObserver(blockID string, journal *Journal) *RuntimeObserver {
 		journal = New()
 	}
 	observer := &RuntimeObserver{journal: journal}
-	observer.adapter = terminalruntime.NewRuntimeAdapterWithStream(blockID, nil, nil, func(_ terminalruntime.OutputChunk, items []terminalruntime.StreamItem) {
+	observer.adapter = terminalruntime.NewRuntimeAdapterWithStream(blockID, nil, nil, func(chunk terminalruntime.OutputChunk, items []terminalruntime.StreamItem) {
+		if !chunk.Complete {
+			observer.journal.MarkOutputIncomplete(blockID, chunk.DroppedBytes)
+		}
 		for _, item := range items {
 			observer.journal.Apply(blockID, item, time.Now())
 		}

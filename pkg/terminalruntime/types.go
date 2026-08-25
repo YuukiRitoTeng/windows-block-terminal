@@ -43,9 +43,11 @@ type StreamItem struct {
 }
 
 type OutputChunk struct {
-	BlockID  string
-	Sequence uint64
-	Raw      []byte
+	BlockID      string
+	Sequence     uint64
+	Raw          []byte
+	Complete     bool
+	DroppedBytes int64
 }
 
 func generatedCommandID(epoch string, sequence uint64) string {

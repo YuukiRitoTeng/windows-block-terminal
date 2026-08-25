@@ -1,6 +1,7 @@
 package persistence
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -178,6 +179,24 @@ func TestCloseIsIdempotentAndDrains(t *testing.T) {
 	}
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestOutputQueueBudgetReportsIncompleteHistory(t *testing.T) {
+	s, _ := openTest(t, Options{Enabled: true, MaxQueueBytes: 4})
+	r := testRecord()
+	if err := s.RecordStarted(r); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AppendOutput(r.ID, []byte("12345")); !errors.Is(err, ErrOutputQueueOverflow) {
+		t.Fatalf("expected queue overflow, got %v", err)
+	}
+	health := s.Health()
+	if health.Status != HealthDegraded || health.OutputComplete || health.DroppedOutputBytes != 5 {
+		t.Fatalf("unexpected degraded health: %#v", health)
 	}
 	if err := s.Close(); err != nil {
 		t.Fatal(err)

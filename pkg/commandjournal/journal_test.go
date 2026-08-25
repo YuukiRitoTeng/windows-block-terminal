@@ -103,6 +103,22 @@ func TestJournalBoundsInMemoryOutputAndRetainsPrefix(t *testing.T) {
 	}
 }
 
+func TestJournalMarksRecorderGapAsIncomplete(t *testing.T) {
+	j := New()
+	blockID := "gap"
+	if !j.Apply(blockID, journalEvent(terminalruntime.EventCommandStarted, "cmd-gap", 1), time.Now()) {
+		t.Fatal("start not recorded")
+	}
+	j.MarkOutputIncomplete(blockID, 128)
+	if !j.Apply(blockID, journalEvent(terminalruntime.EventCommandFinished, "cmd-gap", 2), time.Now()) {
+		t.Fatal("finish not recorded")
+	}
+	record := j.Snapshot(blockID)[0]
+	if record.OutputCompleteness != OutputCompletenessIncomplete || record.OutputAttribution != OutputAttributionUnknown {
+		t.Fatalf("recorder gap was not preserved: %#v", record)
+	}
+}
+
 func TestJournalRejectsMismatchedFinishAndKeepsActive(t *testing.T) {
 	j := New()
 	blockID := "block-123"

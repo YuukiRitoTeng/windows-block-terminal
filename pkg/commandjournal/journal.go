@@ -15,6 +15,18 @@ const (
 	StateAborted  CommandState = "aborted"
 )
 
+const (
+	OutputCompletenessComplete   = "complete"
+	OutputCompletenessTruncated  = "truncated"
+	OutputCompletenessIncomplete = "incomplete"
+	OutputCompletenessUnknown    = "unknown"
+	OutputAttributionUnknown     = "unknown"
+	OutputAttributionExclusive   = "exclusive"
+	OutputAttributionMixed       = "mixed"
+	OutputTextSafetyUnknown      = "unknown"
+	OutputTextSafetyPlain        = "plain_text"
+)
+
 type CompletionReason string
 
 const (
@@ -42,6 +54,9 @@ type CommandRecord struct {
 	OutputTotalBytes     int64
 	OutputStoredBytes    int64
 	OutputTruncated      bool
+	OutputCompleteness   string
+	OutputAttribution    string
+	OutputTextSafety     string
 	StartedAt            time.Time
 	FinishedAt           *time.Time
 	Success              *bool
@@ -61,6 +76,23 @@ type DurableStore interface {
 	AdvanceVisibilityGeneration(blockID string) (uint64, error)
 	DeleteHistory(blockID string) (uint64, error)
 	RetagRecordGeneration(commandID string, generation uint64) error
+}
+
+// MarkOutputIncomplete records a recorder gap without inventing output bytes.
+// Implementations must not block the terminal path.
+func (j *Journal) MarkOutputIncomplete(blockID string, droppedBytes int64) {
+	if j == nil || blockID == "" {
+		return
+	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	active := j.active[blockID]
+	if active == nil {
+		return
+	}
+	active.OutputCompleteness = OutputCompletenessIncomplete
+	active.OutputAttribution = OutputAttributionUnknown
+	active.OutputTextSafety = OutputTextSafetyUnknown
 }
 
 type generationTransition struct {
@@ -145,8 +177,19 @@ func (j *Journal) Apply(blockID string, item terminalruntime.StreamItem, observe
 		}
 		active.OutputStoredBytes += stored
 		active.OutputTruncated = active.OutputStoredBytes < active.OutputTotalBytes
+		if active.OutputCompleteness != OutputCompletenessIncomplete {
+			if active.OutputTruncated {
+				active.OutputCompleteness = OutputCompletenessTruncated
+			} else {
+				active.OutputCompleteness = OutputCompletenessComplete
+			}
+		}
 		if j.durable != nil {
-			_ = j.durable.AppendOutput(active.ID, item.Output)
+			if err := j.durable.AppendOutput(active.ID, item.Output); err != nil {
+				active.OutputCompleteness = OutputCompletenessIncomplete
+				active.OutputAttribution = OutputAttributionUnknown
+				active.OutputTextSafety = OutputTextSafetyUnknown
+			}
 		}
 		return true
 	case terminalruntime.StreamIntegrationEvent:
@@ -167,6 +210,9 @@ func (j *Journal) Apply(blockID string, item terminalruntime.StreamItem, observe
 				State:                StateRunning,
 				VisibilityGeneration: generation,
 				StartedAt:            observedAt,
+				OutputCompleteness:   OutputCompletenessComplete,
+				OutputAttribution:    OutputAttributionUnknown,
+				OutputTextSafety:     OutputTextSafetyUnknown,
 			}
 			if j.durable != nil {
 				_ = j.durable.RecordStarted(*j.active[blockID])
