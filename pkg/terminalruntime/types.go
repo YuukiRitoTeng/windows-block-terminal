@@ -24,10 +24,25 @@ type IntegrationEvent struct {
 	ShellVersion    string
 }
 
+type StreamItemKind string
+
+const (
+	StreamOutputSegment    StreamItemKind = "output_segment"
+	StreamIntegrationEvent StreamItemKind = "integration_event"
+)
+
+// StreamItem preserves the byte order between terminal output and validated
+// OSC 16162 integration events. Output contains no product control frames.
+type StreamItem struct {
+	Kind   StreamItemKind
+	Output []byte
+	Event  IntegrationEvent
+}
+
 type OutputChunk struct {
-	SessionEpoch string
-	Sequence     uint64
-	Raw          []byte
+	BlockID  string
+	Sequence uint64
+	Raw      []byte
 }
 
 func generatedCommandID(epoch string, sequence uint64) string {

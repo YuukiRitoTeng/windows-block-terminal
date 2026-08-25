@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/wavetermdev/waveterm/pkg/blocklogger"
+	"github.com/wavetermdev/waveterm/pkg/commandjournal"
 	"github.com/wavetermdev/waveterm/pkg/filestore"
 	"github.com/wavetermdev/waveterm/pkg/panichandler"
 	"github.com/wavetermdev/waveterm/pkg/remote"
@@ -65,6 +66,11 @@ type ShellController struct {
 	// for shell/cmd
 	ShellProc    *shellexec.ShellProc
 	ShellInputCh chan *BlockInputUnion
+
+	journalMu         sync.Mutex
+	commandJournal    *commandjournal.Journal
+	journalObserver   *commandjournal.RuntimeObserver
+	journalUnregister func()
 }
 
 // Constructor that returns the Controller interface
@@ -106,6 +112,7 @@ func (sc *ShellController) Stop(graceful bool, newStatus string, destroy bool) {
 		return
 	}
 
+	sc.detachCommandJournal()
 	sc.ShellProc.Close()
 	if graceful {
 		doneCh := sc.ShellProc.DoneCh
@@ -117,6 +124,37 @@ func (sc *ShellController) Stop(graceful bool, newStatus string, destroy bool) {
 	// Update status
 	sc.ProcStatus = newStatus
 	sc.sendUpdate_nolock()
+}
+
+func (sc *ShellController) attachCommandJournal() {
+	if sc.BlockId == "" {
+		return
+	}
+	sc.detachCommandJournal()
+	journal := commandjournal.New()
+	observer := commandjournal.NewRuntimeObserver(sc.BlockId, journal)
+	unregister := RegisterOutputObserver(sc.BlockId, observer)
+	sc.journalMu.Lock()
+	sc.commandJournal = journal
+	sc.journalObserver = observer
+	sc.journalUnregister = unregister
+	sc.journalMu.Unlock()
+}
+
+func (sc *ShellController) detachCommandJournal() {
+	sc.journalMu.Lock()
+	observer := sc.journalObserver
+	unregister := sc.journalUnregister
+	sc.commandJournal = nil
+	sc.journalObserver = nil
+	sc.journalUnregister = nil
+	sc.journalMu.Unlock()
+	if unregister != nil {
+		unregister()
+	}
+	if observer != nil {
+		observer.Close()
+	}
 }
 
 func (sc *ShellController) getRuntimeStatus_nolock() BlockControllerRuntimeStatus {
@@ -519,6 +557,7 @@ func (bc *ShellController) setupAndStartShellProcess(logCtx context.Context, rc 
 		bc.ProcStatus = Status_Running
 		return true
 	})
+	bc.attachCommandJournal()
 	return shellProc, nil
 }
 
@@ -527,6 +566,7 @@ func (bc *ShellController) manageRunningShellProcess(shellProc *shellexec.ShellP
 	bc.ShellInputCh = shellInputCh
 
 	go func() {
+		defer bc.detachCommandJournal()
 		// handles regular output from the pty (goes to the blockfile and xterm)
 		defer func() {
 			panichandler.PanicHandler("blockcontroller:shellproc-pty-read-loop", recover())
