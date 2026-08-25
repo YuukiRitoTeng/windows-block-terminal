@@ -1,3 +1,15 @@
+# A Wave integration is owned by the top-level PowerShell process. The marker
+# is inherited by child shells so nested pwsh sessions remain ordinary PTY
+# applications instead of becoming new product sessions.
+if ($env:WAVETERM_SI_OWNER_PID -and $env:WAVETERM_SI_OWNER_PID -ne "$PID") {
+    return
+}
+if ($env:WAVETERM_SI_INSTALLED -eq "1") {
+    return
+}
+$env:WAVETERM_SI_OWNER_PID = "$PID"
+$env:WAVETERM_SI_INSTALLED = "1"
+
 # We source this file with -NoExit -File
 $env:PATH = {{.WSHBINDIR_PWSH}} + "{{.PATHSEP}}" + $env:PATH
 

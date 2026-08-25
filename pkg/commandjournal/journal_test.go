@@ -187,3 +187,20 @@ func TestJournalFinishedDWinsBeforeTerminationAbort(t *testing.T) {
 		t.Fatalf("finished record was changed by EOF: %#v", records)
 	}
 }
+
+func TestRuntimeObserverKeepsForeignNestedLifecycleInsideOuterRecord(t *testing.T) {
+	j := New()
+	blockID := "block-nested"
+	o := NewRuntimeObserver(blockID, j)
+	raw := []byte("\x1b]16162;C;{\"v\":1,\"epoch\":\"epoch-a\",\"seq\":1,\"id\":\"outer\"}\anormal ")
+	raw = append(raw, []byte("\x1b]16162;M;{\"v\":1,\"epoch\":\"epoch-b\",\"seq\":1}\aremote")...)
+	raw = append(raw, []byte("\x1b]16162;C;{\"v\":1,\"epoch\":\"epoch-b\",\"seq\":2,\"id\":\"inner\"}\ainner")...)
+	raw = append(raw, []byte("\x1b]16162;D;{\"v\":1,\"epoch\":\"epoch-b\",\"seq\":3,\"id\":\"inner\",\"success\":true,\"exitcode\":0}\a")...)
+	raw = append(raw, []byte("\x1b]16162;D;{\"v\":1,\"epoch\":\"epoch-a\",\"seq\":2,\"id\":\"outer\",\"success\":true,\"exitcode\":0}\a")...)
+	o.ObserveOutput(blockID, raw)
+	o.Close()
+	records := j.Snapshot(blockID)
+	if len(records) != 1 || records[0].ID != "outer" || records[0].State != StateFinished || records[0].CompletionReason != CompletionNormal || !bytes.Contains(records[0].Output, []byte("remoteinner")) {
+		t.Fatalf("nested integration created or replaced a record: %#v", records)
+	}
+}

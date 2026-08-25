@@ -170,10 +170,35 @@ func TestDecoderEpochChangeAbortsActiveButForeignDIsRejected(t *testing.T) {
 	if got := d.Feed(orderedFrame("D", "epoch-b", "cmd-a", 2)); len(got) != 0 {
 		t.Fatalf("foreign D changed epoch: %#v", got)
 	}
-	if got := d.Feed([]byte("\x1b]16162;M;{\"v\":1,\"epoch\":\"epoch-b\",\"seq\":1}\a")); len(got) != 2 || got[0].Kind != EventCommandAborted || got[0].CompletionReason != "epoch_changed" || got[1].Kind != EventShellMetadata {
-		t.Fatalf("epoch recovery did not reconcile active command: %#v", got)
+	if got := d.Feed([]byte("\x1b]16162;M;{\"v\":1,\"epoch\":\"epoch-b\",\"seq\":1}\a")); len(got) != 0 {
+		t.Fatalf("foreign nested metadata took over active command: %#v", got)
 	}
-	if got := d.Feed(orderedFrame("C", "epoch-b", "cmd-b", 2)); len(got) != 1 || got[0].Kind != EventCommandStarted {
-		t.Fatalf("new epoch command rejected: %#v", got)
+	if got := d.Feed(orderedFrame("D", "epoch-a", "cmd-a", 2)); len(got) != 1 || got[0].Kind != EventCommandFinished {
+		t.Fatalf("outer command did not finish after foreign frames: %#v", got)
+	}
+	idle := NewDecoder()
+	if got := idle.Feed([]byte("\x1b]16162;M;{\"v\":1,\"epoch\":\"epoch-b\",\"seq\":1}\a")); len(got) != 1 || got[0].SessionEpoch != "epoch-b" {
+		t.Fatalf("idle decoder did not adopt new epoch: %#v", got)
+	}
+}
+
+func TestDecoderIgnoresForeignNestedEpochWhileOuterCommandActive(t *testing.T) {
+	d := NewDecoder()
+	raw := append(orderedFrame("C", "epoch-a", "outer", 1), []byte("normal output")...)
+	raw = append(raw, []byte("\x1b]16162;M;{\"v\":1,\"epoch\":\"epoch-b\",\"seq\":1}\a")...)
+	raw = append(raw, []byte("\x1b]16162;P;{\"v\":1,\"epoch\":\"epoch-b\",\"seq\":2}\aremote-output")...)
+	raw = append(raw, orderedFrame("C", "epoch-b", "inner", 3)...)
+	raw = append(raw, []byte("inner-command")...)
+	raw = append(raw, orderedFrame("D", "epoch-b", "inner", 4)...)
+	raw = append(raw, []byte("more normal output")...)
+	raw = append(raw, orderedFrame("D", "epoch-a", "outer", 2)...)
+	raw = append(raw, []byte("\x1b]16162;P;{\"v\":1,\"epoch\":\"epoch-a\",\"seq\":3}\a")...)
+	items := d.FeedOrdered(raw)
+	events := eventsFromItems(items)
+	if len(events) != 3 || events[0].Kind != EventCommandStarted || events[0].SessionEpoch != "epoch-a" || events[1].Kind != EventCommandFinished || events[1].SessionEpoch != "epoch-a" || events[2].Kind != EventPromptReady {
+		t.Fatalf("foreign nested lifecycle took over outer decoder: %#v", events)
+	}
+	if got := string(outputFromItems(items)); got != "normal outputremote-outputinner-commandmore normal output" {
+		t.Fatalf("unexpected nested raw output: %q", got)
 	}
 }

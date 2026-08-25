@@ -29,8 +29,11 @@ fence cannot be attributed to the aborted record.
 
 - A newer same-epoch `C` aborts the active command as `superseded`, then starts
   the new command.
-- A valid new-epoch `M`, `P`, or `C` aborts an old active command as
-  `epoch_changed` and adopts the new epoch.
+- A valid new-epoch `M`, `P`, or `C` may reconcile an old active command as
+  `epoch_changed` when the decoder is operating without the Phase 4 nested
+  integration guard. Phase 4 tightens the active-command case: foreign
+  M/P/C frames are ignored as nested control, while idle epoch adoption and
+  ShellController-owned restart cleanup remain available.
 - A foreign-epoch `D` is rejected and cannot change session identity.
 - Aborted events are internal product events; they are never encoded as wire
   `D` frames.
