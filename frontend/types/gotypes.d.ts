@@ -1024,6 +1024,19 @@ declare global {
         buildtime: string;
     };
 
+    // commandjournalservice.GenerationView
+    type GenerationView = {
+        generation: number;
+    };
+
+    // commandjournalservice.HealthView
+    type HealthView = {
+        status: string;
+        output_complete: boolean;
+        dropped_output_bytes: number;
+        error?: string;
+    };
+
     // waveobj.Job
     type Job = WaveObj & {
         connection: string;
@@ -1251,6 +1264,17 @@ declare global {
         "waveai:maxoutputtokens"?: number;
     };
 
+    // commandjournalservice.OutputView
+    type OutputView = {
+        data: string;
+        total_bytes: number;
+        stored_bytes: number;
+        truncated: boolean;
+        completeness: string;
+        attribution: string;
+        text_safety: string;
+    };
+
     // wshrpc.PathCommandData
     type PathCommandData = {
         pathtype: string;
@@ -1311,6 +1335,30 @@ declare global {
         preqlimit: number;
         resetepoch: number;
         unknown?: boolean;
+    };
+
+    // commandjournalservice.RecordView
+    type RecordView = {
+        id: string;
+        wave_block_id: string;
+        session_epoch: string;
+        start_hook_sequence: number;
+        finish_hook_sequence: number;
+        command: string;
+        cwd: string;
+        state: string;
+        completion_reason: string;
+        visibility_generation: number;
+        output_total_bytes: number;
+        output_stored_bytes: number;
+        output_truncated: boolean;
+        output_completeness: string;
+        output_attribution: string;
+        output_text_safety: string;
+        started_at_unix_ms: number;
+        finished_at_unix_ms?: number;
+        success?: boolean;
+        exit_code?: number;
     };
 
     // wshrpc.RemoteInfo

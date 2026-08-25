@@ -21,13 +21,32 @@ const (
 	DefaultFileName       = "command-journal.sqlite"
 	DefaultMaxOutputBytes = 10 * 1024 * 1024
 	DefaultMaxChunkBytes  = 256 * 1024
+	DefaultMaxQueueBytes  = 32 * 1024 * 1024
 )
+
+var ErrOutputQueueOverflow = errors.New("command journal output queue budget exceeded")
+
+type HealthStatus string
+
+const (
+	HealthUnavailable HealthStatus = "unavailable"
+	HealthAvailable   HealthStatus = "available"
+	HealthDegraded    HealthStatus = "degraded"
+)
+
+type Health struct {
+	Status             HealthStatus
+	OutputComplete     bool
+	DroppedOutputBytes int64
+	Error              string
+}
 
 type Options struct {
 	Enabled        bool
 	MaxOutputBytes int64
 	MaxChunkBytes  int
 	ErrorHandler   func(error)
+	MaxQueueBytes  int64
 }
 
 type eventKind int
@@ -63,19 +82,22 @@ type eventResult struct {
 // Public record methods only append to the in-memory queue and never execute
 // SQLite work on the PTY observer goroutine.
 type Store struct {
-	db             *sqlx.DB
-	path           string
-	maxOutputBytes int64
-	maxChunkBytes  int
-	errorHandler   func(error)
-	mu             sync.Mutex
-	cond           *sync.Cond
-	queue          []event
-	closed         bool
-	closeOnce      sync.Once
-	closeErr       error
-	done           chan struct{}
-	degraded       error
+	db                 *sqlx.DB
+	path               string
+	maxOutputBytes     int64
+	maxChunkBytes      int
+	errorHandler       func(error)
+	mu                 sync.Mutex
+	cond               *sync.Cond
+	queue              []event
+	queueBytes         int64
+	maxQueueBytes      int64
+	closed             bool
+	closeOnce          sync.Once
+	closeErr           error
+	done               chan struct{}
+	degraded           error
+	droppedOutputBytes int64
 }
 
 func DefaultPath() string {
@@ -88,7 +110,7 @@ func OpenDefault(opts Options) (*Store, error) {
 
 func Open(path string, opts Options) (*Store, error) {
 	if !opts.Enabled {
-		return &Store{maxOutputBytes: effectiveLimit(opts.MaxOutputBytes, DefaultMaxOutputBytes), maxChunkBytes: effectiveChunk(opts.MaxChunkBytes, DefaultMaxChunkBytes)}, nil
+		return &Store{maxOutputBytes: effectiveLimit(opts.MaxOutputBytes, DefaultMaxOutputBytes), maxChunkBytes: effectiveChunk(opts.MaxChunkBytes, DefaultMaxChunkBytes), maxQueueBytes: effectiveLimit(opts.MaxQueueBytes, DefaultMaxQueueBytes)}, nil
 	}
 	if path == "" {
 		return nil, errors.New("command journal persistence path is empty")
@@ -116,6 +138,7 @@ func Open(path string, opts Options) (*Store, error) {
 		path:           path,
 		maxOutputBytes: effectiveLimit(opts.MaxOutputBytes, DefaultMaxOutputBytes),
 		maxChunkBytes:  effectiveChunk(opts.MaxChunkBytes, DefaultMaxChunkBytes),
+		maxQueueBytes:  effectiveLimit(opts.MaxQueueBytes, DefaultMaxQueueBytes),
 		errorHandler:   opts.ErrorHandler,
 		done:           make(chan struct{}),
 	}
@@ -163,6 +186,23 @@ func (s *Store) Degraded() error {
 	return s.degraded
 }
 
+func (s *Store) Health() Health {
+	if s == nil || s.db == nil {
+		return Health{Status: HealthUnavailable, OutputComplete: false}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return Health{Status: HealthUnavailable, OutputComplete: false, DroppedOutputBytes: s.droppedOutputBytes}
+	}
+	health := Health{Status: HealthAvailable, OutputComplete: s.degraded == nil, DroppedOutputBytes: s.droppedOutputBytes}
+	if s.degraded != nil {
+		health.Status = HealthDegraded
+		health.Error = s.degraded.Error()
+	}
+	return health
+}
+
 func (s *Store) enqueue(e event) error {
 	if s == nil || s.db == nil {
 		return nil
@@ -184,7 +224,27 @@ func (s *Store) AppendOutput(commandID string, data []byte) error {
 	if len(data) == 0 {
 		return nil
 	}
-	return s.enqueue(event{kind: eventOutput, commandID: commandID, data: append([]byte(nil), data...)})
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return errors.New("command journal persistence is closed")
+	}
+	if s.degraded != nil {
+		s.droppedOutputBytes += int64(len(data))
+		return s.degraded
+	}
+	if s.queueBytes+int64(len(data)) > s.maxQueueBytes {
+		s.degraded = ErrOutputQueueOverflow
+		s.droppedOutputBytes += int64(len(data))
+		if s.errorHandler != nil {
+			go s.errorHandler(ErrOutputQueueOverflow)
+		}
+		return ErrOutputQueueOverflow
+	}
+	s.queue = append(s.queue, event{kind: eventOutput, commandID: commandID, data: append([]byte(nil), data...)})
+	s.queueBytes += int64(len(data))
+	s.cond.Signal()
+	return nil
 }
 func (s *Store) RecordFinished(record commandjournal.CommandRecord) error {
 	return s.enqueue(event{kind: eventFinished, record: record})
@@ -242,6 +302,9 @@ func (s *Store) run() {
 		}
 		e := s.queue[0]
 		s.queue = s.queue[1:]
+		if e.kind == eventOutput {
+			s.queueBytes -= int64(len(e.data))
+		}
 		s.mu.Unlock()
 		result := s.process(e)
 		err := result.err
@@ -325,8 +388,8 @@ func boolInt(v *bool) any {
 func (s *Store) insertStarted(r commandjournal.CommandRecord) error {
 	return s.withTx(func(tx *sql.Tx) error {
 		_, err := tx.Exec(`INSERT OR IGNORE INTO command_records
- (id,wave_block_id,session_epoch,protocol_version,start_hook_sequence,finish_hook_sequence,command,cwd,state,completion_reason,started_at_ms,visibility_generation)
- VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`, r.ID, r.WaveBlockID, r.SessionEpoch, 1, r.StartHookSequence, 0, r.Command, r.Cwd, string(r.State), string(r.CompletionReason), r.StartedAt.UnixMilli(), r.VisibilityGeneration)
+	 (id,wave_block_id,session_epoch,protocol_version,start_hook_sequence,finish_hook_sequence,command,cwd,state,completion_reason,started_at_ms,visibility_generation,output_completeness,output_attribution,output_text_safety)
+	 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, r.ID, r.WaveBlockID, r.SessionEpoch, 1, r.StartHookSequence, 0, r.Command, r.Cwd, string(r.State), string(r.CompletionReason), r.StartedAt.UnixMilli(), r.VisibilityGeneration, outputCompleteness(r), outputAttribution(r), outputTextSafety(r))
 		return err
 	})
 }
@@ -377,7 +440,7 @@ func boolIntValue(v bool) int {
 
 func (s *Store) updateFinished(r commandjournal.CommandRecord) error {
 	return s.withTx(func(tx *sql.Tx) error {
-		_, err := tx.Exec(`UPDATE command_records SET finish_hook_sequence=?,state=?,completion_reason=?,finished_at_ms=?,success=?,exit_code=?,visibility_generation=? WHERE id=?`, r.FinishHookSequence, string(r.State), string(r.CompletionReason), ms(r.FinishedAt), boolInt(r.Success), nullableInt(r.ExitCode), r.VisibilityGeneration, r.ID)
+		_, err := tx.Exec(`UPDATE command_records SET finish_hook_sequence=?,state=?,completion_reason=?,finished_at_ms=?,success=?,exit_code=?,visibility_generation=?,output_completeness=?,output_attribution=?,output_text_safety=? WHERE id=?`, r.FinishHookSequence, string(r.State), string(r.CompletionReason), ms(r.FinishedAt), boolInt(r.Success), nullableInt(r.ExitCode), r.VisibilityGeneration, outputCompleteness(r), outputAttribution(r), outputTextSafety(r), r.ID)
 		return err
 	})
 }
@@ -391,9 +454,33 @@ func nullableInt(v *int) any {
 
 func (s *Store) updateAborted(r commandjournal.CommandRecord) error {
 	return s.withTx(func(tx *sql.Tx) error {
-		_, err := tx.Exec(`UPDATE command_records SET finish_hook_sequence=0,state=?,completion_reason=?,finished_at_ms=?,success=NULL,exit_code=NULL,visibility_generation=? WHERE id=?`, string(r.State), string(r.CompletionReason), ms(r.FinishedAt), r.VisibilityGeneration, r.ID)
+		_, err := tx.Exec(`UPDATE command_records SET finish_hook_sequence=0,state=?,completion_reason=?,finished_at_ms=?,success=NULL,exit_code=NULL,visibility_generation=?,output_completeness=?,output_attribution=?,output_text_safety=? WHERE id=?`, string(r.State), string(r.CompletionReason), ms(r.FinishedAt), r.VisibilityGeneration, outputCompleteness(r), outputAttribution(r), outputTextSafety(r), r.ID)
 		return err
 	})
+}
+
+func outputCompleteness(r commandjournal.CommandRecord) string {
+	if r.OutputCompleteness != "" {
+		return r.OutputCompleteness
+	}
+	if r.OutputTruncated {
+		return commandjournal.OutputCompletenessTruncated
+	}
+	return commandjournal.OutputCompletenessUnknown
+}
+
+func outputAttribution(r commandjournal.CommandRecord) string {
+	if r.OutputAttribution != "" {
+		return r.OutputAttribution
+	}
+	return commandjournal.OutputAttributionUnknown
+}
+
+func outputTextSafety(r commandjournal.CommandRecord) string {
+	if r.OutputTextSafety != "" {
+		return r.OutputTextSafety
+	}
+	return commandjournal.OutputTextSafetyUnknown
 }
 
 func (s *Store) CurrentVisibilityGeneration(blockID string) (uint64, error) {
@@ -494,6 +581,64 @@ func (s *Store) ReadOutput(commandID string) ([]byte, error) {
 	return output, rows.Err()
 }
 
+func (s *Store) ReadRecord(commandID string) (*commandjournal.CommandRecord, error) {
+	if s == nil || s.db == nil {
+		return nil, nil
+	}
+	var r commandjournal.CommandRecord
+	var protocol int
+	var started, finished sql.NullInt64
+	var success, exit sql.NullInt64
+	var state, reason string
+	var truncated int
+	err := s.db.QueryRow(`SELECT id,wave_block_id,session_epoch,protocol_version,start_hook_sequence,finish_hook_sequence,command,cwd,state,completion_reason,started_at_ms,finished_at_ms,success,exit_code,visibility_generation,output_total_bytes,output_stored_bytes,output_truncated,output_completeness,output_attribution,output_text_safety FROM command_records WHERE id=?`, commandID).Scan(&r.ID, &r.WaveBlockID, &r.SessionEpoch, &protocol, &r.StartHookSequence, &r.FinishHookSequence, &r.Command, &r.Cwd, &state, &reason, &started, &finished, &success, &exit, &r.VisibilityGeneration, &r.OutputTotalBytes, &r.OutputStoredBytes, &truncated, &r.OutputCompleteness, &r.OutputAttribution, &r.OutputTextSafety)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	r.OutputTruncated = truncated != 0
+	r.State = commandjournal.CommandState(state)
+	r.CompletionReason = commandjournal.CompletionReason(reason)
+	r.StartedAt = time.UnixMilli(started.Int64)
+	if finished.Valid {
+		v := time.UnixMilli(finished.Int64)
+		r.FinishedAt = &v
+	}
+	if success.Valid {
+		v := success.Int64 != 0
+		r.Success = &v
+	}
+	if exit.Valid {
+		v := int(exit.Int64)
+		r.ExitCode = &v
+	}
+	return &r, nil
+}
+
+type OutputRead struct {
+	Data         []byte
+	TotalBytes   int64
+	StoredBytes  int64
+	Truncated    bool
+	Completeness string
+	Attribution  string
+	TextSafety   string
+}
+
+func (s *Store) ReadOutputWithMetadata(commandID string) (*OutputRead, error) {
+	record, err := s.ReadRecord(commandID)
+	if err != nil || record == nil {
+		return nil, err
+	}
+	data, err := s.ReadOutput(commandID)
+	if err != nil {
+		return nil, err
+	}
+	return &OutputRead{Data: data, TotalBytes: record.OutputTotalBytes, StoredBytes: record.OutputStoredBytes, Truncated: record.OutputTruncated, Completeness: outputCompleteness(*record), Attribution: outputAttribution(*record), TextSafety: outputTextSafety(*record)}, nil
+}
+
 func (s *Store) ReadVisibleRecords(blockID string) ([]commandjournal.CommandRecord, error) {
 	if s == nil || s.db == nil {
 		return nil, nil
@@ -502,7 +647,7 @@ func (s *Store) ReadVisibleRecords(blockID string) ([]commandjournal.CommandReco
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.db.Queryx(`SELECT id,wave_block_id,session_epoch,protocol_version,start_hook_sequence,finish_hook_sequence,command,cwd,state,completion_reason,started_at_ms,finished_at_ms,success,exit_code,visibility_generation,output_total_bytes,output_stored_bytes,output_truncated FROM command_records WHERE wave_block_id=? AND visibility_generation=? ORDER BY started_at_ms ASC`, blockID, generation)
+	rows, err := s.db.Queryx(`SELECT id,wave_block_id,session_epoch,protocol_version,start_hook_sequence,finish_hook_sequence,command,cwd,state,completion_reason,started_at_ms,finished_at_ms,success,exit_code,visibility_generation,output_total_bytes,output_stored_bytes,output_truncated,output_completeness,output_attribution,output_text_safety FROM command_records WHERE wave_block_id=? AND visibility_generation=? ORDER BY started_at_ms ASC`, blockID, generation)
 	if err != nil {
 		return nil, err
 	}
@@ -515,7 +660,7 @@ func (s *Store) ReadVisibleRecords(blockID string) ([]commandjournal.CommandReco
 		var success, exit sql.NullInt64
 		var state, reason string
 		var truncated int
-		if err := rows.Scan(&r.ID, &r.WaveBlockID, &r.SessionEpoch, &protocol, &r.StartHookSequence, &r.FinishHookSequence, &r.Command, &r.Cwd, &state, &reason, &started, &finished, &success, &exit, &r.VisibilityGeneration, &r.OutputTotalBytes, &r.OutputStoredBytes, &truncated); err != nil {
+		if err := rows.Scan(&r.ID, &r.WaveBlockID, &r.SessionEpoch, &protocol, &r.StartHookSequence, &r.FinishHookSequence, &r.Command, &r.Cwd, &state, &reason, &started, &finished, &success, &exit, &r.VisibilityGeneration, &r.OutputTotalBytes, &r.OutputStoredBytes, &truncated, &r.OutputCompleteness, &r.OutputAttribution, &r.OutputTextSafety); err != nil {
 			return nil, err
 		}
 		r.OutputTruncated = truncated != 0

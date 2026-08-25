@@ -15,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/wavetermdev/waveterm/pkg/blocklogger"
+	"github.com/wavetermdev/waveterm/pkg/commandjournal"
 	"github.com/wavetermdev/waveterm/pkg/filestore"
 	"github.com/wavetermdev/waveterm/pkg/jobcontroller"
 	"github.com/wavetermdev/waveterm/pkg/remote"
@@ -92,6 +93,19 @@ func getController(blockId string) Controller {
 	registryLock.RLock()
 	defer registryLock.RUnlock()
 	return controllerRegistry[blockId]
+}
+
+// GetCommandJournal returns the in-memory journal for a live local shell when
+// one is attached. Product services use persistence as the durable fallback.
+func GetCommandJournal(blockId string) *commandjournal.Journal {
+	controller := getController(blockId)
+	shell, ok := controller.(*ShellController)
+	if !ok || shell == nil {
+		return nil
+	}
+	shell.journalMu.Lock()
+	defer shell.journalMu.Unlock()
+	return shell.commandJournal
 }
 
 func registerController(blockId string, controller Controller) {

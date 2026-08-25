@@ -6,6 +6,11 @@
 >
 > Scope: implementation landing design only. No product code is implemented in this phase.
 
+Historical note: Phase 0–5 now provide a backend feasibility and domain
+foundation. They do not constitute a fully frozen product architecture; the
+product read/control path, output projection and persistence UX remain subject
+to the Product Evidence Gate.
+
 ## 1. Verdict
 
 B2+ has a viable landing path on the current Wave source, with one material qualification: Wave has an OSC 16162 parser, but its current PowerShell 7 integration does not emit command lifecycle events. The current script emits one M event with integration:false and OSC 7 for the current directory.

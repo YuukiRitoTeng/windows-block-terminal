@@ -3,6 +3,10 @@
 Phase 5 establishes product-owned command history persistence without changing
 Wave's terminal-session model.
 
+This phase is a backend foundation, not a completed product history surface.
+The next remediation adds the narrow product read/control seam and makes
+recorder lag, output incompleteness and persistence health observable.
+
 ## Ownership and storage
 
 The journal is stored as `command-journal.sqlite` beneath Wave's existing user
@@ -31,6 +35,10 @@ while preserving a running row in the new generation.
 
 The frontend exposes only a narrow `TermWrap.clearVisualBuffer()` seam. It
 clears rendered xterm state and does not restart or truncate the shell session.
+
+The seam is not yet a product Clear command. Product orchestration must advance
+the Journal generation and clear the rendered xterm state without truncating
+the Wave terminal stream.
 
 The persistence layer supports disabled mode through `Options.Enabled`. Phase 5
 production wiring defaults persistence to enabled; no user-facing settings

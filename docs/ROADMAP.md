@@ -24,6 +24,34 @@
 → 最后投入高级产品 UI
 ```
 
+## 当前基线：Phase 0–5 remediation
+
+Phase 0–5 目前代表 backend feasibility and domain foundation，不代表
+fully frozen product architecture。完成 Phase 5 后，必须先完成 Product
+Evidence Gate preparation / Phase 0–5 remediation，修复以下产品基础缺口：
+
+- product-facing history read/control seam；
+- raw captured output、presentation output 与 copy output 的边界；
+- recorder queue budget、overflow 和 incomplete/degraded 语义；
+- persistence health 的 production-readable 状态；
+- Clear/Delete 与真实产品入口的衔接。
+
+当前不冻结：CommandRecord 最终 schema/API、Output Store 最终 contract、Card
+projection、copy normalization、frontend read model/RPC 使用方式和 persistence
+product UX。
+
+主线调整为：
+
+```text
+Phase 0–5 remediation
+        ↓
+Product Evidence Gate
+        ↓
+Conditional Architecture Freeze
+        ↓
+后续 fork、发布、规模与视觉产品化路线
+```
+
 # 推荐主干 Roadmap
 
 ## 阶段 0：实现落点设计
@@ -434,13 +462,15 @@ D → success / exit code / duration
 | PowerShell Integration | 阶段 3 | C/D 协议、事件身份、exit 语义、异常状态 |
 | Command Journal 生命周期 | 阶段 3 | CommandRecord 状态机和领域事件 |
 | TerminalRuntimeAdapter | 阶段 4 | 输入、输出、resize、resync、session、状态接口 |
-| Output Store | 阶段 5 | 序列、范围、blob、截断、恢复和迁移 |
-| Command Journal 持久化 | 阶段 5 | schema、版本、迁移和数据所有权 |
-| Command Card 数据契约 | 阶段 5 | Card 能读取的稳定 projection |
+| Output Store | Product Evidence Gate 后 | 序列、范围、blob、截断、恢复和迁移 |
+| Command Journal 持久化 | Product Evidence Gate 后 | schema、版本、迁移和数据所有权 |
+| Command Card 数据契约 | Product Evidence Gate 后 | 由真实 read/copy/render 使用验证 |
 | Command Card 交互契约 | 阶段 7 | 复制、选择、折叠、焦点和虚拟化 |
 | 视觉系统 | 阶段 8 | 设计 token、材质、降级和动效规则 |
 
-阶段 5 结束后，可以认为核心架构已经冻结。
+Phase 0–5 remediation 和 Product Evidence Gate 通过后，才可有条件冻结核心
+产品边界。届时冻结的是已被真实产品数据流证明的契约，不是当前所有领域类型的
+最终形状。
 
 之后允许：
 
@@ -613,4 +643,7 @@ Mica/Acrylic 必须有不透明背景降级方案。
    正式产品
 ```
 
-这条主干最关键的决策是：在阶段 1 就验证 B2+ 的生死假设，在阶段 4 之前消灭兼容性风险，在阶段 5 冻结领域与存储，最后才投入高成本视觉。这样即使路线存在根本问题，也会在最便宜的阶段暴露。
+这条主干最关键的决策是：在阶段 1 就验证 B2+ 的生死假设，在阶段 4 之前
+消灭兼容性风险，在 Product Evidence Gate 之前验证真实 read/render/copy
+闭环，之后才条件性冻结领域与存储，最后投入高成本视觉。这样产品假设会在
+进入发布路线前暴露。
