@@ -516,6 +516,7 @@ func (bc *ShellController) setupAndStartShellProcess(logCtx context.Context, rc 
 	var shellProc *shellexec.ShellProc
 	swapToken := makeSwapToken(ctx, logCtx, bc.BlockId, blockMeta, remoteName, connUnion.ShellType)
 	cmdOpts.SwapToken = swapToken
+	cmdOpts.BlockID = bc.BlockId
 	blocklogger.Debugf(logCtx, "[conndebug] created swaptoken: %s\n", swapToken.Token)
 	if connUnion.ConnType == ConnType_Wsl {
 		wslConn := connUnion.WslConn

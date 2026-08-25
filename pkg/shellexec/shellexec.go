@@ -40,6 +40,7 @@ type CommandOptsType struct {
 	Interactive bool                      `json:"interactive,omitempty"`
 	Login       bool                      `json:"login,omitempty"`
 	Cwd         string                    `json:"cwd,omitempty"`
+	BlockID     string                    `json:"blockId,omitempty"`
 	ShellPath   string                    `json:"shellPath,omitempty"`
 	ShellOpts   []string                  `json:"shellOpts,omitempty"`
 	SwapToken   *shellutil.TokenSwapEntry `json:"swapToken,omitempty"`
@@ -52,9 +53,13 @@ type ShellProc struct {
 	CloseOnce *sync.Once
 	DoneCh    chan any // closed after proc.Wait() returns
 	WaitErr   error    // WaitErr is synchronized by DoneCh (written before DoneCh is closed) and CloseOnce
+	Cleanup   func()
 }
 
 func (sp *ShellProc) Close() {
+	if sp.Cleanup != nil {
+		sp.Cleanup()
+	}
 	sp.Cmd.KillGraceful(DefaultGracefulKillWait)
 	go func() {
 		defer func() {
@@ -587,6 +592,7 @@ func StartLocalShellProc(logCtx context.Context, termSize waveobj.TermSize, cmdS
 	shellutil.InitCustomShellStartupFiles()
 	var ecmd *exec.Cmd
 	var shellOpts []string
+	var hostedSidechannelConn *hostedSidechannel
 	shellPath := cmdOpts.ShellPath
 	if shellPath == "" {
 		shellPath = shellutil.DetectLocalShellPath()
@@ -594,7 +600,20 @@ func StartLocalShellProc(logCtx context.Context, termSize waveobj.TermSize, cmdS
 	shellType := shellutil.GetShellTypeFromShellPath(shellPath)
 	shellOpts = append(shellOpts, cmdOpts.ShellOpts...)
 	var isShell bool
-	if cmdStr == "" {
+	useHostedPowerShell := cmdStr == "" && shellType == shellutil.ShellType_pwsh && hostedRuntimeEnabled()
+	if useHostedPowerShell {
+		hostedPath := hostedRuntimePath()
+		if hostedPath == "" {
+			return nil, fmt.Errorf("WBT_HOSTED_PWSH=1 requires WBT_HOSTED_PWSH_EXE")
+		}
+		isShell = true
+		shellPath = hostedPath
+		ecnd := exec.Command(shellPath)
+		ecnd.Env = os.Environ()
+		ecnd.Dir = cmdOpts.Cwd
+		ecnd.Args = []string{shellPath}
+		ecmd = ecnd
+	} else if cmdStr == "" {
 		isShell = true
 		if shellType == shellutil.ShellType_bash {
 			// add --rcfile
@@ -676,6 +695,14 @@ func StartLocalShellProc(logCtx context.Context, termSize waveobj.TermSize, cmdS
 		envToAdd["LANG"] = wavebase.DetermineLang()
 	}
 	shellutil.UpdateCmdEnv(ecmd, envToAdd)
+	if useHostedPowerShell {
+		var err error
+		hostedSidechannelConn, err = prepareHostedPowerShell(&ecmd.Env, cmdOpts.BlockID)
+		if err != nil {
+			return nil, err
+		}
+		logHostedLaunch(logCtx, cmdOpts.BlockID, shellPath)
+	}
 	if termSize.Rows == 0 || termSize.Cols == 0 {
 		termSize.Rows = shellutil.DefaultTermRows
 		termSize.Cols = shellutil.DefaultTermCols
@@ -689,7 +716,11 @@ func StartLocalShellProc(logCtx context.Context, termSize waveobj.TermSize, cmdS
 		return nil, err
 	}
 	cmdWrap := MakeCmdWrap(ecmd, cmdPty, isShell)
-	return &ShellProc{Cmd: cmdWrap, ConnName: connName, CloseOnce: &sync.Once{}, DoneCh: make(chan any)}, nil
+	proc := &ShellProc{Cmd: cmdWrap, ConnName: connName, CloseOnce: &sync.Once{}, DoneCh: make(chan any)}
+	if hostedSidechannelConn != nil {
+		proc.Cleanup = func() { _ = hostedSidechannelConn.listener.Close() }
+	}
+	return proc, nil
 }
 
 func RunSimpleCmdInPty(ecmd *exec.Cmd, termSize waveobj.TermSize) ([]byte, error) {
