@@ -73,12 +73,32 @@ function Global:_waveterm_si_command_is_native([string]$command) {
     } catch { return $false }
 }
 
+function Global:_waveterm_si_command_is_complete([string]$command) {
+    try {
+        $tokens = $null
+        $errors = $null
+        [System.Management.Automation.Language.Parser]::ParseInput($command, [ref]$tokens, [ref]$errors) | Out-Null
+        foreach ($errorRecord in @($errors)) {
+            # These parser diagnostics mean PSReadLine is expected to enter
+            # continuation mode rather than accept/execute the buffer.
+            if ($errorRecord.ErrorId -match '^(IncompleteParse|MissingEnd|ExpectedExpression|TerminatorExpected|MissingStatementBlock)') {
+                return $false
+            }
+        }
+        return $true
+    } catch {
+        # Preserve the terminal path if parser inspection is unavailable.
+        return $true
+    }
+}
+
 function Global:_waveterm_si_command_started {
     try {
         $line = ""
         $cursor = 0
         [Microsoft.PowerShell.PSConsoleReadLine]::GetBufferState([ref]$line, [ref]$cursor)
         if ([string]::IsNullOrWhiteSpace($line)) { return $false }
+        if (-not (_waveterm_si_command_is_complete $line)) { return $false }
         $sequence = _waveterm_si_next_sequence
         $id = "{0}-{1}" -f $Global:_WAVETERM_SI_SESSION_EPOCH, $sequence
         $Global:_WAVETERM_SI_LAST_COMMAND_ID = $id

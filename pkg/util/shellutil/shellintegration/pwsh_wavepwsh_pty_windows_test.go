@@ -127,6 +127,68 @@ func TestPowerShellInteractivePTYLifecycle(t *testing.T) {
 	assertResult(t, success, true, 0)
 	_, native := run(`cmd /c exit 7`)
 	assertResult(t, native, false, 7)
+
+	// Physical multiline input must not emit a lifecycle event for each
+	// continuation Enter. Only the final accepted command may produce C/D.
+	writeLine := func(line string) {
+		t.Helper()
+		if _, err := term.Write([]byte(line + "\r")); err != nil {
+			t.Fatalf("write multiline line %q: %v", line, err)
+		}
+	}
+	collectFor := func(d time.Duration) []terminalruntime.IntegrationEvent {
+		t.Helper()
+		var collected []terminalruntime.IntegrationEvent
+		timer := time.NewTimer(d)
+		defer timer.Stop()
+		for {
+			select {
+			case event := <-events:
+				collected = append(collected, event)
+			case <-timer.C:
+				return collected
+			}
+		}
+	}
+	writeLine(`1..3 | ForEach-Object {`)
+	if events := collectFor(500 * time.Millisecond); len(events) != 0 {
+		t.Fatalf("multiline continuation emitted lifecycle events after first Enter: %#v", events)
+	}
+	writeLine(`    $_ * 2`)
+	if events := collectFor(500 * time.Millisecond); len(events) != 0 {
+		t.Fatalf("multiline continuation emitted lifecycle events after second Enter: %#v", events)
+	}
+	writeLine(`}`)
+	var multilineStarted, multilineFinished *terminalruntime.IntegrationEvent
+	deadline := time.After(10 * time.Second)
+	for multilineFinished == nil {
+		select {
+		case event := <-events:
+			switch event.Kind {
+			case terminalruntime.EventCommandStarted:
+				if multilineStarted != nil {
+					t.Fatal("multiline emitted duplicate START")
+				}
+				copy := event
+				multilineStarted = &copy
+			case terminalruntime.EventCommandFinished:
+				copy := event
+				multilineFinished = &copy
+			case terminalruntime.EventShellMetadata:
+			}
+		case <-deadline:
+			t.Fatal("timed out waiting for multiline C/D")
+		}
+	}
+	if multilineStarted == nil || multilineStarted.CommandID == "" || multilineStarted.CommandID != multilineFinished.CommandID {
+		t.Fatalf("unpaired multiline C/D: %#v %#v", multilineStarted, multilineFinished)
+	}
+	if !strings.Contains(multilineStarted.Command, "1..3 | ForEach-Object {") ||
+		!strings.Contains(multilineStarted.Command, "$_ * 2") ||
+		!strings.Contains(multilineStarted.Command, "}") {
+		t.Fatalf("multiline START did not contain complete command: %q", multilineStarted.Command)
+	}
+	assertResult(t, *multilineFinished, true, 0)
 }
 
 func assertResult(t *testing.T, event terminalruntime.IntegrationEvent, wantSuccess bool, wantExit int) {

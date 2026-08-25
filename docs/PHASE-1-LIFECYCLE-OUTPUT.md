@@ -36,8 +36,9 @@ validation, and lossless ordering of accepted observer submissions. A static
 test verifies that the PowerShell template contains the lifecycle hooks.
 Interactive validation must run against the full Wave PTY on Windows 11 with
 PowerShell 7 for successful/failed native commands, cmdlets, pipelines,
-multiline input, Ctrl+C, shell crash, and integration loss. No product domain
-work should begin until those cases meet the Phase 1 Go/No-Go conditions in
+physical multiline input, Ctrl+C, and terminal-path invariance. Shell crash,
+reconnect, and integration-loss recovery are explicitly deferred. No product
+domain work should begin until the required cases meet the Phase 1 Go/No-Go conditions in
 `docs/PHASE-0-LANDING-DESIGN.md`.
 
 ## Local validation — 2026-08-25
@@ -53,8 +54,10 @@ work should begin until those cases meet the Phase 1 Go/No-Go conditions in
   verifies the PSReadLine Enter hook, command buffer capture, real execution,
   and prompt completion boundary.
 - Success and native failure (`cmd /c exit 7`) each produce exactly one C/D
-  pair through the real interactive path. PowerShell failure, pipeline, and
-  multiline scriptblock cases are covered by the helper/protocol harness.
+  pair through the real interactive path. Physical multiline input also
+  produces exactly one C/D pair with the complete command captured in START.
+  PowerShell failure and pipeline semantics are covered by the helper/protocol
+  harness.
 - Command IDs are paired, the session epoch is stable, hook sequences are
   strictly monotonic, and native exit code 7 is preserved.
 - Multiple captured chunks have strictly increasing `OutputChunk.Sequence`
@@ -89,13 +92,6 @@ work should begin until those cases meet the Phase 1 Go/No-Go conditions in
 `RuntimeAdapter` are established and tested as a feasibility seam; a product
 runtime consumer and registration lifecycle are intentionally deferred to
 Phase 2.
-
-### Known limitation
-
-The CLI harness cannot reproduce PSReadLine's physical Enter-key acceptance
-boundary. Multiline lifecycle semantics are verified for a real PowerShell
-multiline scriptblock and separately covered by the user's manual Wave PTY
-verification; physical PSReadLine editing remains manual evidence.
 
 ### Verdict
 
