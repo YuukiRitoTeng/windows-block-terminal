@@ -2,6 +2,7 @@ package terminalruntime
 
 import (
 	"bytes"
+	"fmt"
 	"testing"
 )
 
@@ -72,6 +73,32 @@ func TestDecoderRejectsInvalidLifecycleTransitions(t *testing.T) {
 		t.Fatalf("accepted mismatched D: %#v", got)
 	}
 	if got := d.Feed(frame("D", "e1-1", 5)); len(got) != 1 || got[0].Kind != EventCommandFinished {
+		t.Fatalf("valid D did not complete active C: %#v", got)
+	}
+}
+
+func TestDecoderRequiresLifecycleIdentity(t *testing.T) {
+	frame := func(kind, epoch string, sequence uint64, id string) []byte {
+		return []byte(fmt.Sprintf("\x1b]16162;%s;{\"v\":1,\"epoch\":\"%s\",\"seq\":%d,\"id\":\"%s\"}\a", kind, epoch, sequence, id))
+	}
+
+	d := NewDecoder()
+	if got := d.Feed(frame("C", "", 1, "e1-1")); len(got) != 0 {
+		t.Fatalf("accepted C without epoch: %#v", got)
+	}
+	if got := d.Feed(frame("C", "e1", 0, "e1-1")); len(got) != 0 {
+		t.Fatalf("accepted C with zero sequence: %#v", got)
+	}
+	if got := d.Feed(frame("C", "e1", 1, "e1-1")); len(got) != 1 {
+		t.Fatalf("valid C rejected: %#v", got)
+	}
+	if got := d.Feed(frame("D", "", 2, "e1-1")); len(got) != 0 {
+		t.Fatalf("accepted D without epoch: %#v", got)
+	}
+	if got := d.Feed(frame("D", "e1", 0, "e1-1")); len(got) != 0 {
+		t.Fatalf("accepted D with zero sequence: %#v", got)
+	}
+	if got := d.Feed(frame("D", "e1", 2, "e1-1")); len(got) != 1 || got[0].Kind != EventCommandFinished {
 		t.Fatalf("valid D did not complete active C: %#v", got)
 	}
 }

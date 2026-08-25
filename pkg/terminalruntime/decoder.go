@@ -107,6 +107,9 @@ func (d *Decoder) decodeFrame(frame string) (IntegrationEvent, bool) {
 	if p.Version != 1 {
 		return IntegrationEvent{}, false
 	}
+	if (kind == "C" || kind == "D") && (p.Epoch == "" || p.Sequence == 0) {
+		return IntegrationEvent{}, false
+	}
 	epoch := d.sessionEpoch
 	if p.Epoch != "" {
 		if epoch != "" && epoch != p.Epoch {
