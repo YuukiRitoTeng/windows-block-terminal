@@ -98,6 +98,7 @@ function Global:_waveterm_si_command_started {
         $cursor = 0
         [Microsoft.PowerShell.PSConsoleReadLine]::GetBufferState([ref]$line, [ref]$cursor)
         if ([string]::IsNullOrWhiteSpace($line)) { return $false }
+        if (_waveterm_si_blocked) { return $false }
         if (-not (_waveterm_si_command_is_complete $line)) { return $false }
         $sequence = _waveterm_si_next_sequence
         $id = "{0}-{1}" -f $Global:_WAVETERM_SI_SESSION_EPOCH, $sequence

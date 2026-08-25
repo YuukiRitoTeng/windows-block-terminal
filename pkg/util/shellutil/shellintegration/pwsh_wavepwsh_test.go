@@ -16,3 +16,16 @@ func TestPowerShellIntegrationContainsVersionedLifecycleHooks(t *testing.T) {
 		}
 	}
 }
+
+func TestPowerShellIntegrationBlocksCommandStartForMultiplexedTerminals(t *testing.T) {
+	start := strings.Index(pwshWaveIntegration, "function Global:_waveterm_si_command_started")
+	if start < 0 {
+		t.Fatal("command start helper missing")
+	}
+	body := pwshWaveIntegration[start:]
+	blocked := strings.Index(body, "if (_waveterm_si_blocked) { return $false }")
+	sequence := strings.Index(body, "_waveterm_si_next_sequence")
+	if blocked < 0 || sequence < 0 || blocked > sequence {
+		t.Fatal("blocked terminal guard must precede lifecycle sequence allocation")
+	}
+}

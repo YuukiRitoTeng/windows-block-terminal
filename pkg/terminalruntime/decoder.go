@@ -39,9 +39,6 @@ func (d *Decoder) Feed(raw []byte) []IntegrationEvent {
 		return nil
 	}
 	d.buffer = append(d.buffer, raw...)
-	if len(d.buffer) > maxIntegrationFrame {
-		d.buffer = nil
-	}
 	var events []IntegrationEvent
 	for {
 		start := bytes.Index(d.buffer, []byte{0x1b, ']'})
@@ -56,6 +53,21 @@ func (d *Decoder) Feed(raw []byte) []IntegrationEvent {
 		}
 		end, termLen := frameEnd(d.buffer[2:])
 		if end < 0 {
+			if len(d.buffer) > maxIntegrationFrame {
+				// The limit applies only to an unterminated OSC candidate. If
+				// another candidate follows, discard this one and continue.
+				next := bytes.Index(d.buffer[2:], []byte{0x1b, ']'})
+				if next >= 0 {
+					d.buffer = d.buffer[2+next:]
+					continue
+				}
+				// Preserve a possible split ESC ] marker for the next Feed.
+				if d.buffer[len(d.buffer)-1] == 0x1b {
+					d.buffer = d.buffer[len(d.buffer)-1:]
+				} else {
+					d.buffer = nil
+				}
+			}
 			break
 		}
 		frame := string(d.buffer[2 : 2+end])
@@ -95,17 +107,19 @@ func (d *Decoder) decodeFrame(frame string) (IntegrationEvent, bool) {
 	if p.Version != 1 {
 		return IntegrationEvent{}, false
 	}
+	epoch := d.sessionEpoch
 	if p.Epoch != "" {
-		if d.sessionEpoch != "" && d.sessionEpoch != p.Epoch {
+		if epoch != "" && epoch != p.Epoch {
 			return IntegrationEvent{}, false
 		}
-		d.sessionEpoch = p.Epoch
+		epoch = p.Epoch
 	}
+	sequence := d.lastHookSequence
 	if p.Sequence != 0 {
-		if p.Sequence <= d.lastHookSequence {
+		if p.Sequence <= sequence {
 			return IntegrationEvent{}, false
 		}
-		d.lastHookSequence = p.Sequence
+		sequence = p.Sequence
 	}
 	command, ok := decodeField(p.Command64, p.Command)
 	if !ok {
@@ -115,27 +129,38 @@ func (d *Decoder) decodeFrame(frame string) (IntegrationEvent, bool) {
 	if !ok {
 		return IntegrationEvent{}, false
 	}
-	e := IntegrationEvent{ProtocolVersion: p.Version, SessionEpoch: d.sessionEpoch, HookSequence: p.Sequence, CommandID: p.ID, Command: command, Cwd: cwd, ExitCode: p.ExitCode, Success: p.Success, Shell: p.Shell, ShellVersion: p.ShellVersion}
+	e := IntegrationEvent{ProtocolVersion: p.Version, SessionEpoch: epoch, HookSequence: p.Sequence, CommandID: p.ID, Command: command, Cwd: cwd, ExitCode: p.ExitCode, Success: p.Success, Shell: p.Shell, ShellVersion: p.ShellVersion}
 	switch kind {
 	case "C":
-		if e.CommandID == "" {
-			e.CommandID = generatedCommandID(d.sessionEpoch, p.Sequence)
+		if d.activeCommandID != "" {
+			return IntegrationEvent{}, false
 		}
-		d.activeCommandID = e.CommandID
+		if e.CommandID == "" {
+			e.CommandID = generatedCommandID(epoch, p.Sequence)
+		}
 		e.Kind = EventCommandStarted
 	case "D":
+		if d.activeCommandID == "" {
+			return IntegrationEvent{}, false
+		}
 		if e.CommandID == "" {
 			e.CommandID = d.activeCommandID
 		}
-		if d.activeCommandID != "" && e.CommandID != d.activeCommandID {
+		if e.CommandID != d.activeCommandID {
 			return IntegrationEvent{}, false
 		}
-		d.activeCommandID = ""
 		e.Kind = EventCommandFinished
 	case "M":
 		e.Kind = EventShellMetadata
 	default:
 		return IntegrationEvent{}, false
+	}
+	d.sessionEpoch = epoch
+	d.lastHookSequence = sequence
+	if kind == "C" {
+		d.activeCommandID = e.CommandID
+	} else if kind == "D" {
+		d.activeCommandID = ""
 	}
 	return e, true
 }

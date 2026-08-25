@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -26,12 +27,20 @@ func TestPowerShellLifecycleCLIContract(t *testing.T) {
 		wantExit    int
 	}{
 		{"success", `Write-Output "phase1-success"`, false, true, 0},
-		{"native-failure", `cmd /c exit 7`, true, false, 7},
 		{"powershell-failure", `throw "phase1-failure"`, false, false, 1},
 		{"pipeline", `1..5 | Where-Object { $_ -gt 2 }`, false, true, 0},
 		{"multiline", `1..3 | ForEach-Object {
     $_ * 2
 }`, false, true, 0},
+	}
+	if runtime.GOOS == "windows" {
+		tests = append(tests, struct {
+			name        string
+			command     string
+			native      bool
+			wantSuccess bool
+			wantExit    int
+		}{"native-failure", `cmd /c exit 7`, true, false, 7})
 	}
 
 	var script strings.Builder

@@ -1,6 +1,9 @@
 package terminalruntime
 
-import "testing"
+import (
+	"bytes"
+	"testing"
+)
 
 func TestDecoderHandlesSplitFramesAndPairsLifecycle(t *testing.T) {
 	d := NewDecoder()
@@ -39,5 +42,36 @@ func TestDecoderAcceptsSTTerminator(t *testing.T) {
 	got := d.Feed([]byte("\x1b]16162;M;{\"shell\":\"pwsh\"}\x1b\\"))
 	if len(got) != 1 || got[0].Kind != EventShellMetadata {
 		t.Fatalf("unexpected ST event: %#v", got)
+	}
+}
+
+func TestDecoderFindsFrameAfterLargePlainOutput(t *testing.T) {
+	d := NewDecoder()
+	frame := []byte("\x1b]16162;C;{\"v\":1,\"epoch\":\"e1\",\"seq\":1,\"id\":\"e1-1\",\"cmd64\":\"Ww==\"}\a")
+	got := d.Feed(append(bytes.Repeat([]byte{'x'}, maxIntegrationFrame+1), frame...))
+	if len(got) != 1 || got[0].Kind != EventCommandStarted || got[0].CommandID != "e1-1" {
+		t.Fatalf("large plain output hid lifecycle frame: %#v", got)
+	}
+}
+
+func TestDecoderRejectsInvalidLifecycleTransitions(t *testing.T) {
+	d := NewDecoder()
+	frame := func(kind, id string, seq uint64) []byte {
+		return []byte("\x1b]16162;" + kind + ";{\"v\":1,\"epoch\":\"e1\",\"seq\":" + string(rune('0'+seq)) + ",\"id\":\"" + id + "\"}\a")
+	}
+	if got := d.Feed(frame("D", "e1-1", 1)); len(got) != 0 {
+		t.Fatalf("accepted D without C: %#v", got)
+	}
+	if got := d.Feed(frame("C", "e1-1", 2)); len(got) != 1 {
+		t.Fatalf("initial C rejected: %#v", got)
+	}
+	if got := d.Feed(frame("C", "e1-2", 3)); len(got) != 0 {
+		t.Fatalf("accepted overlapping C: %#v", got)
+	}
+	if got := d.Feed(frame("D", "e1-2", 4)); len(got) != 0 {
+		t.Fatalf("accepted mismatched D: %#v", got)
+	}
+	if got := d.Feed(frame("D", "e1-1", 5)); len(got) != 1 || got[0].Kind != EventCommandFinished {
+		t.Fatalf("valid D did not complete active C: %#v", got)
 	}
 }
