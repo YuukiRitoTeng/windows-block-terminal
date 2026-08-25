@@ -70,6 +70,7 @@ function Invoke-WaveCliCommand([string]$Name, [scriptblock]$Command) {
 	$nativeExitCode = $LASTEXITCODE
     _waveterm_si_command_finished $success $nativeExitCode
 }
+
 `)
 	for _, test := range tests {
 		script.WriteString("Invoke-WaveCliCommand ")
@@ -144,5 +145,43 @@ function Invoke-WaveCliCommand([string]$Name, [scriptblock]$Command) {
 		if i > 0 && start.HookSequence <= events[i*2-1].HookSequence {
 			t.Fatalf("hook sequence is not monotonic at %s", test.name)
 		}
+	}
+}
+
+func TestPowerShellIntegrationIsIdempotentAndSuppressesNestedChild(t *testing.T) {
+	pwsh, err := exec.LookPath("pwsh")
+	if err != nil {
+		t.Skipf("pwsh is required for integration guard test: %v", err)
+	}
+	dir := t.TempDir()
+	integrationPath := filepath.Join(dir, "wavepwsh.ps1")
+	integration := strings.ReplaceAll(pwshWaveIntegration, "{{.WSHBINDIR_PWSH}}", "\"\"")
+	integration = strings.ReplaceAll(integration, "{{.PATHSEP}}", ";")
+	if err := os.WriteFile(integrationPath, []byte(integration), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	childPath := filepath.Join(dir, "child.ps1")
+	childScript := fmt.Sprintf("function wsh { param([Parameter(ValueFromRemainingArguments=$true)][object[]]$Args); return \"\" }\n$env:WAVETERM_SWAPTOKEN = 'cli-test-token'\n. '%s'\nWrite-Output 'child-ok'\n", strings.ReplaceAll(integrationPath, "'", "''"))
+	if err := os.WriteFile(childPath, []byte(childScript), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	harnessPath := filepath.Join(dir, "parent.ps1")
+	harness := fmt.Sprintf("function wsh { param([Parameter(ValueFromRemainingArguments=$true)][object[]]$Args); return \"\" }\n$env:WAVETERM_SWAPTOKEN = 'cli-test-token'\n. '%s'\n$epoch1 = $Global:_WAVETERM_SI_SESSION_EPOCH\n. '%s'\n$epoch2 = $Global:_WAVETERM_SI_SESSION_EPOCH\nWrite-Output ('same-epoch=' + [bool]($epoch1 -eq $epoch2))\n$child = & '%s' -NoLogo -NoProfile -NonInteractive -File '%s'\n$child | Write-Output\n", strings.ReplaceAll(integrationPath, "'", "''"), strings.ReplaceAll(integrationPath, "'", "''"), strings.ReplaceAll(pwsh, "'", "''"), strings.ReplaceAll(childPath, "'", "''"))
+	if err := os.WriteFile(harnessPath, []byte(harness), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var raw bytes.Buffer
+	cmd := exec.Command(pwsh, "-NoLogo", "-NoProfile", "-NonInteractive", "-File", harnessPath)
+	cmd.Stdout = &raw
+	cmd.Stderr = &raw
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("guard harness failed: %v\n%s", err, raw.String())
+	}
+	output := raw.String()
+	if !strings.Contains(output, "same-epoch=True") || !strings.Contains(output, "child-ok") {
+		t.Fatalf("integration guard evidence missing: %q", output)
+	}
+	if strings.Contains(output, "16162;") {
+		t.Fatalf("same-process or nested source emitted lifecycle frames: %q", output)
 	}
 }

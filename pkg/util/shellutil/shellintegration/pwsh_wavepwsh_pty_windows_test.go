@@ -215,6 +215,96 @@ func TestPowerShellInteractivePTYLifecycle(t *testing.T) {
 		t.Fatalf("multiline START did not contain complete command: %q", multilineStarted.Command)
 	}
 	assertResult(t, *multilineFinished, true, 0)
+
+	// A deterministic alternate-screen command remains one outer record. The
+	// key is written to the foreground PTY consumer, not interpreted by the
+	// product layer.
+	tuiCommand := `[Console]::Write(([char]27+'[?1049hPHASE4_TUI_READY'+[char]27+'[2J'+[char]27+'[H'));$key=[Console]::ReadKey($true);[Console]::Write(('PHASE4_KEY='+$key.KeyChar+([char]27)+'[?1049l'))`
+	if _, err := term.Write([]byte(tuiCommand + "\r")); err != nil {
+		t.Fatalf("write alternate-screen command: %v", err)
+	}
+	var tuiStarted, tuiFinished terminalruntime.IntegrationEvent
+	for tuiStarted.Kind == "" {
+		select {
+		case event := <-events:
+			if event.Kind == terminalruntime.EventCommandStarted {
+				tuiStarted = event
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("timed out waiting for alternate-screen START")
+		}
+	}
+	if _, err := term.Write([]byte("x")); err != nil {
+		t.Fatalf("write alternate-screen key: %v", err)
+	}
+	for tuiFinished.Kind == "" {
+		select {
+		case event := <-events:
+			if event.Kind == terminalruntime.EventCommandStarted {
+				t.Fatal("alternate-screen command emitted duplicate START")
+			}
+			if event.Kind == terminalruntime.EventCommandFinished {
+				tuiFinished = event
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("timed out waiting for alternate-screen FINISH")
+		}
+	}
+	if tuiFinished.CommandID != tuiStarted.CommandID {
+		t.Fatalf("alternate-screen lifecycle mismatch: start=%#v finish=%#v", tuiStarted, tuiFinished)
+	}
+	records = journal.Snapshot(blockID)
+	var tuiRecord *commandjournal.CommandRecord
+	for i := range records {
+		if records[i].ID == tuiStarted.CommandID {
+			copy := records[i]
+			tuiRecord = &copy
+		}
+	}
+	if tuiRecord == nil || tuiRecord.State != commandjournal.StateFinished || tuiRecord.CompletionReason != commandjournal.CompletionNormal || !bytes.Contains(tuiRecord.Output, []byte("PHASE4_TUI_READY")) || !bytes.Contains(tuiRecord.Output, []byte("PHASE4_KEY=x")) || !bytes.Contains(tuiRecord.Output, []byte("\x1b[?1049h")) || !bytes.Contains(tuiRecord.Output, []byte("\x1b[?1049l")) {
+		t.Fatalf("alternate-screen output/lifecycle was not preserved: %#v", tuiRecord)
+	}
+
+	// A nested pwsh remains inside the outer command. Its commands do not
+	// create inner product records; only the parent prompt emits D/P.
+	if _, err := term.Write([]byte("pwsh -NoLogo -NoProfile\r")); err != nil {
+		t.Fatalf("write nested pwsh command: %v", err)
+	}
+	var nestedStarted, nestedFinished terminalruntime.IntegrationEvent
+	for nestedStarted.Kind == "" {
+		select {
+		case event := <-events:
+			if event.Kind == terminalruntime.EventCommandStarted {
+				nestedStarted = event
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("timed out waiting for nested pwsh START")
+		}
+	}
+	time.Sleep(500 * time.Millisecond)
+	if _, err := term.Write([]byte("Write-Output \"phase4-inner\"\rStart-Sleep -Milliseconds 100\rexit\r")); err != nil {
+		t.Fatalf("write nested pwsh commands: %v", err)
+	}
+	for nestedFinished.Kind == "" {
+		select {
+		case event := <-events:
+			if event.Kind == terminalruntime.EventCommandStarted {
+				t.Fatal("nested pwsh emitted an inner CommandRecord")
+			}
+			if event.Kind == terminalruntime.EventCommandFinished {
+				nestedFinished = event
+			}
+		case <-time.After(15 * time.Second):
+			t.Fatal("timed out waiting for nested pwsh FINISH")
+		}
+	}
+	if nestedFinished.CommandID != nestedStarted.CommandID {
+		t.Fatalf("nested pwsh lifecycle mismatch: start=%#v finish=%#v", nestedStarted, nestedFinished)
+	}
+	records = journal.Snapshot(blockID)
+	if len(records) != 5 || records[len(records)-1].ID != nestedStarted.CommandID || !bytes.Contains(records[len(records)-1].Output, []byte("phase4-inner")) || records[len(records)-1].State != commandjournal.StateFinished {
+		t.Fatalf("nested pwsh did not remain one outer record: %#v", records)
+	}
 }
 
 func assertResult(t *testing.T, event terminalruntime.IntegrationEvent, wantSuccess bool, wantExit int) {

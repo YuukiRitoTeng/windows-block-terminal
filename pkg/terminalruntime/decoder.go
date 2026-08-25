@@ -147,6 +147,12 @@ func (d *Decoder) decodeFrame(frame string) ([]IntegrationEvent, bool) {
 	if kind == "D" && d.sessionEpoch != "" && p.Epoch != d.sessionEpoch {
 		return nil, false
 	}
+	// While a top-level command is active, a foreign epoch belongs to a
+	// nested/remote terminal. It must not take over the decoder or abort the
+	// outer command. The raw bytes are still consumed as product control data.
+	if d.activeCommandID != "" && p.Epoch != "" && d.sessionEpoch != "" && p.Epoch != d.sessionEpoch {
+		return nil, false
+	}
 	if p.Epoch != "" && d.sessionEpoch != "" && p.Epoch != d.sessionEpoch && p.Sequence == 0 {
 		return nil, false
 	}
