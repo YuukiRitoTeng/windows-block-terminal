@@ -40,53 +40,52 @@ multiline input, Ctrl+C, shell crash, and integration loss. No product domain
 work should begin until those cases meet the Phase 1 Go/No-Go conditions in
 `docs/PHASE-0-LANDING-DESIGN.md`.
 
-## Local validation — 2026-08-24
+## Local validation — 2026-08-25
 
-### Unit verified
+### Automated CLI verified
 
-- `go test ./pkg/terminalruntime` — passed.
-- `go test ./pkg/util/shellutil/shellintegration` — passed.
-- `go test -race ./pkg/terminalruntime ./pkg/util/shellutil/shellintegration` — passed.
-- `go vet ./pkg/terminalruntime ./pkg/util/shellutil/shellintegration` — passed.
-- PowerShell parser validation of the templated integration script — passed.
-- PowerShell helper execution produced a real OSC 16162 `D` frame — passed.
+- A CLI integration harness starts PowerShell 7, loads the current
+  `pwsh_wavepwsh.sh` template, emits the same versioned OSC 16162 envelopes,
+  captures stdout/stderr, and feeds the resulting byte stream through the
+  existing `RuntimeAdapter` and decoder.
+- Success, native failure (`cmd /c exit 7`), PowerShell failure, pipeline, and
+  multiline scriptblock cases each produce exactly one C/D pair.
+- Command IDs are paired, the session epoch is stable, hook sequences are
+  strictly monotonic, and native exit code 7 is preserved.
+- Multiple captured chunks have strictly increasing `OutputChunk.Sequence`
+  values.
+- Existing decoder tests continue to cover split markers, multiple markers,
+  BEL/ST terminators, plain bytes, malformed frames, unknown versions, and
+  stale/foreign sequences.
 
-`go test ./pkg/blockcontroller` was attempted locally. It could not complete
-because the machine could not download the existing, pinned Go dependencies
-from `proxy.golang.org`; no dependency versions were changed.
+### Manual real Wave PTY verified
 
-### Local runtime verified
+- The user verified ordinary commands, pipelines, multiline input, consecutive
+  commands, Ctrl+C recovery, and the subsequent command in a real Wave PTY.
+- xterm.js and PTY surface behavior showed no regression.
 
-None. The full Electron + wavesrv + PTY + xterm.js runtime was not started in
-this validation pass, so no ordinary command, native failure, PowerShell
-failure, pipeline, multiline, consecutive-command, or Ctrl+C case is claimed
-as runtime-verified.
+### Not in Phase 1 scope
 
-### Runtime prerequisites found
+- vim, ssh, fzf, REPL, nested PowerShell, crash/reconnect, and integration-loss
+  recovery remain later-phase compatibility work.
 
-The repository's official Windows development commands are `task dev` (Vite
-development server) and `task start` (standalone Electron). `BUILD.md` requires
-Task, Zig for Windows CGO builds, Node.js 22 LTS, and the normal locked
-dependencies. This machine currently has no `task`, no `zig`, no `node_modules`
-or built `dist/bin` artifacts, and reports Node.js `v24.13.0`. Network access
-to the Go module proxy also failed. No installation, upgrade, or build-system
-change was performed.
+### Deferred to later phases
 
-### Not tested yet
+- shell crash and reconnect recovery
+- integration-loss recovery
+- background output attribution
+- vim, ssh, fzf, Python REPL, and nested PowerShell compatibility
+- Command Journal persistence
+- Command Cards
 
-- Real PowerShell 7 C/D counts and metadata inside Wave.
-- Native `cmd /c exit 7` exit-code propagation.
-- PowerShell failure `$?` mapping.
-- Pipeline single-lifecycle behavior.
-- PSReadLine multiline behavior.
-- Consecutive command output ownership and `OutputChunk.Sequence` in a live PTY.
-- Ctrl+C recovery and subsequent lifecycle pairing.
-- xterm.js behavior under the new observer in a live Electron session.
+### Known limitation
 
-### Known limitation and verdict
+The CLI harness cannot reproduce PSReadLine's physical Enter-key acceptance
+boundary. Multiline lifecycle semantics are verified for a real PowerShell
+multiline scriptblock and separately covered by the user's manual Wave PTY
+verification; physical PSReadLine editing remains manual evidence.
 
-The implementation remains a Phase 1 feasibility candidate, not a completed
-GO gate. Because the full local runtime could not be launched, the official
-verdict remains **NO-GO / runtime validation blocked**. No Command Journal,
-Command Card, UI, Wave Block, ShellController loop, or xterm renderer work was
-added.
+### Verdict
+
+The Phase 1 feasibility contract is **GO**. No Command Journal, Command Card,
+UI, Wave Block, ShellController loop, or xterm renderer work was added.
