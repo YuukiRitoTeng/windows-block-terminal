@@ -34,9 +34,11 @@ and UI projections are deferred.
 
 `ShellController` creates one runtime observer when a shell process starts and
 registers it by `BlockId` before the PTY read loop consumes output. On shell
-stop or read-loop termination, the observer unregisters and closes. The
-observer copies/enqueues raw bytes; parsing and journal updates remain off the
-PTY critical path.
+stop or read-loop termination, the observer unregisters and closes after
+accepted bytes drain; any still-active record is then recovered by the Phase 3
+termination fence. The observer copies/enqueues raw bytes; parsing and journal
+updates remain off the PTY critical path. The in-memory Journal remains
+controller-owned across observer detach.
 
 ## Deferred scope
 

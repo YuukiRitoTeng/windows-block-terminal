@@ -42,7 +42,7 @@ func TestJournalRecordsOrderedOutputAndSeparatesIdentity(t *testing.T) {
 		t.Fatalf("expected one completed record, got %d", len(records))
 	}
 	record := records[0]
-	if record.WaveBlockID != blockID || record.SessionEpoch != "shell-epoch-456" || record.State != StateFinished || !bytes.Equal(record.Output, []byte("one")) {
+	if record.WaveBlockID != blockID || record.SessionEpoch != "shell-epoch-456" || record.State != StateFinished || record.CompletionReason != CompletionNormal || !bytes.Equal(record.Output, []byte("one")) {
 		t.Fatalf("unexpected record identity/state/output: %#v", record)
 	}
 	if record.StartHookSequence != 1 || record.FinishHookSequence != 2 || record.StartedAt != startedAt || record.FinishedAt == nil || *record.FinishedAt != finishedAt {
@@ -111,5 +111,79 @@ func TestRuntimeObserverSeparatesTwoCommandsInOneSubmission(t *testing.T) {
 	records := journal.Snapshot(blockID)
 	if len(records) != 2 || !bytes.Equal(records[0].Output, []byte("one")) || !bytes.Equal(records[1].Output, []byte("two")) {
 		t.Fatalf("commands or output crossed boundaries: %#v", records)
+	}
+}
+
+func TestJournalAbortsWithoutFabricatingResult(t *testing.T) {
+	j := New()
+	blockID := "block-recovery"
+	if !j.Apply(blockID, journalEvent(terminalruntime.EventCommandStarted, "cmd-1", 1), time.Now()) {
+		t.Fatal("start was not recorded")
+	}
+	if !j.Apply(blockID, terminalruntime.StreamItem{Kind: terminalruntime.StreamOutputSegment, Output: []byte("inside")}, time.Now()) {
+		t.Fatal("output was not recorded")
+	}
+	if !j.Apply(blockID, terminalruntime.StreamItem{Kind: terminalruntime.StreamIntegrationEvent, Event: terminalruntime.IntegrationEvent{
+		Kind: terminalruntime.EventCommandAborted, CommandID: "cmd-1", SessionEpoch: "shell-epoch-456", CompletionReason: string(CompletionMissingFinish),
+	}}, time.Now()) {
+		t.Fatal("abort was not recorded")
+	}
+	records := j.Snapshot(blockID)
+	if len(records) != 1 || records[0].State != StateAborted || records[0].CompletionReason != CompletionMissingFinish || records[0].Success != nil || records[0].ExitCode != nil || records[0].FinishHookSequence != 0 || !bytes.Equal(records[0].Output, []byte("inside")) {
+		t.Fatalf("unexpected aborted record: %#v", records)
+	}
+	if j.AbortActive(blockID, CompletionSessionEnded, time.Now()) {
+		t.Fatal("second abort changed completed record")
+	}
+}
+
+func TestJournalRetainsOutputBeforeBackendAbort(t *testing.T) {
+	j := New()
+	blockID := "block-drain"
+	started := journalEvent(terminalruntime.EventCommandStarted, "cmd-1", 1)
+	if !j.Apply(blockID, started, time.Now()) {
+		t.Fatal("start was not recorded")
+	}
+	if !j.Apply(blockID, terminalruntime.StreamItem{Kind: terminalruntime.StreamOutputSegment, Output: []byte("final-output")}, time.Now()) {
+		t.Fatal("final output was not recorded")
+	}
+	if !j.AbortActive(blockID, CompletionControllerStop, time.Now()) {
+		t.Fatal("controller stop did not abort active record")
+	}
+	records := j.Snapshot(blockID)
+	if len(records) != 1 || !bytes.Equal(records[0].Output, []byte("final-output")) || records[0].CompletionReason != CompletionControllerStop {
+		t.Fatalf("drain output was lost: %#v", records)
+	}
+}
+
+func TestRuntimeObserverPromptRecoveryDoesNotAttributePromptBytes(t *testing.T) {
+	j := New()
+	blockID := "block-prompt-recovery"
+	o := NewRuntimeObserver(blockID, j)
+	raw := []byte("\x1b]16162;C;{\"v\":1,\"epoch\":\"epoch-1\",\"seq\":1,\"id\":\"cmd-1\"}\ainside")
+	raw = append(raw, []byte("\x1b]16162;P;{\"v\":1,\"epoch\":\"epoch-1\",\"seq\":2}\aprompt-text")...)
+	o.ObserveOutput(blockID, raw)
+	o.Close()
+	records := j.Snapshot(blockID)
+	if len(records) != 1 || records[0].State != StateAborted || records[0].CompletionReason != CompletionMissingFinish || !bytes.Equal(records[0].Output, []byte("inside")) {
+		t.Fatalf("prompt bytes contaminated aborted record: %#v", records)
+	}
+}
+
+func TestJournalFinishedDWinsBeforeTerminationAbort(t *testing.T) {
+	j := New()
+	blockID := "block-d-wins"
+	if !j.Apply(blockID, journalEvent(terminalruntime.EventCommandStarted, "cmd-1", 1), time.Now()) {
+		t.Fatal("start was not recorded")
+	}
+	if !j.Apply(blockID, journalEvent(terminalruntime.EventCommandFinished, "cmd-1", 2), time.Now()) {
+		t.Fatal("finish was not recorded")
+	}
+	if j.AbortActive(blockID, CompletionSessionEnded, time.Now()) {
+		t.Fatal("termination abort changed a finished record")
+	}
+	records := j.Snapshot(blockID)
+	if len(records) != 1 || records[0].State != StateFinished || records[0].CompletionReason != CompletionNormal {
+		t.Fatalf("finished record was changed by EOF: %#v", records)
 	}
 }

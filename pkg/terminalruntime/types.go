@@ -7,21 +7,24 @@ type EventKind string
 const (
 	EventCommandStarted  EventKind = "command_started"
 	EventCommandFinished EventKind = "command_finished"
+	EventCommandAborted  EventKind = "command_aborted"
+	EventPromptReady     EventKind = "prompt_ready"
 	EventShellMetadata   EventKind = "shell_metadata"
 )
 
 type IntegrationEvent struct {
-	Kind            EventKind
-	ProtocolVersion int
-	SessionEpoch    string
-	HookSequence    uint64
-	CommandID       string
-	Command         string
-	Cwd             string
-	ExitCode        *int
-	Success         *bool
-	Shell           string
-	ShellVersion    string
+	Kind             EventKind
+	ProtocolVersion  int
+	SessionEpoch     string
+	HookSequence     uint64
+	CommandID        string
+	Command          string
+	Cwd              string
+	ExitCode         *int
+	Success          *bool
+	Shell            string
+	ShellVersion     string
+	CompletionReason string
 }
 
 type StreamItemKind string
