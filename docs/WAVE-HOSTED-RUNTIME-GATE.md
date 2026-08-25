@@ -9,7 +9,7 @@ This document records the opt-in Wave/ConPTY hosted PowerShell feasibility gate.
 - Repository: `YuukiRitoTeng/windows-block-terminal`
 - Base: `7a804c51` (`Correct command execution and output attribution boundaries (#25)`)
 - Gate branch: `feat/wave-hosted-runtime-gate`
-- Gate head: `4b6f01b3`
+- Gate head: `2200d4df`
 - Wave build version: `0.14.5`
 - Windows: Windows 11 build `26200`, x64
 - Hosted runtime: `WbtHostedPowerShell.exe`
