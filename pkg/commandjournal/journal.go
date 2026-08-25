@@ -60,18 +60,36 @@ type DurableStore interface {
 	CurrentVisibilityGeneration(blockID string) (uint64, error)
 	AdvanceVisibilityGeneration(blockID string) (uint64, error)
 	DeleteHistory(blockID string) (uint64, error)
+	RetagRecordGeneration(commandID string, generation uint64) error
+}
+
+type generationTransition struct {
+	token    uint64
+	activeID string
 }
 
 type Journal struct {
-	mu         sync.RWMutex
-	completed  map[string][]CommandRecord
-	active     map[string]*CommandRecord
-	durable    DurableStore
-	generation map[string]uint64
+	mu             sync.RWMutex
+	completed      map[string][]CommandRecord
+	active         map[string]*CommandRecord
+	durable        DurableStore
+	generation     map[string]uint64
+	outputLimit    int64
+	transitions    map[string]generationTransition
+	nextTransition uint64
+	reconcileHook  func()
 }
 
 func New() *Journal {
-	return &Journal{completed: make(map[string][]CommandRecord), active: make(map[string]*CommandRecord), generation: make(map[string]uint64)}
+	return &Journal{completed: make(map[string][]CommandRecord), active: make(map[string]*CommandRecord), generation: make(map[string]uint64), outputLimit: 10 * 1024 * 1024, transitions: make(map[string]generationTransition)}
+}
+
+func (j *Journal) SetOutputLimit(limit int64) {
+	if j != nil && limit > 0 {
+		j.mu.Lock()
+		j.outputLimit = limit
+		j.mu.Unlock()
+	}
 }
 
 func (j *Journal) SetDurableStore(store DurableStore) {
@@ -109,17 +127,21 @@ func (j *Journal) Apply(blockID string, item terminalruntime.StreamItem, observe
 		if active == nil || len(item.Output) == 0 {
 			return false
 		}
-		active.Output = append(active.Output, item.Output...)
 		active.OutputTotalBytes += int64(len(item.Output))
 		stored := int64(len(item.Output))
+		limit := j.outputLimit
 		if limited, ok := j.durable.(interface{ MaxOutputBytes() int64 }); ok {
-			remaining := limited.MaxOutputBytes() - active.OutputStoredBytes
-			if remaining < stored {
-				stored = remaining
-			}
-			if stored < 0 {
-				stored = 0
-			}
+			limit = limited.MaxOutputBytes()
+		}
+		remaining := limit - active.OutputStoredBytes
+		if remaining < stored {
+			stored = remaining
+		}
+		if stored < 0 {
+			stored = 0
+		}
+		if stored > 0 {
+			active.Output = append(active.Output, item.Output[:stored]...)
 		}
 		active.OutputStoredBytes += stored
 		active.OutputTruncated = active.OutputStoredBytes < active.OutputTotalBytes
@@ -223,6 +245,10 @@ func (j *Journal) ClearVisualHistory(blockID string) (uint64, error) {
 	}
 	j.mu.RLock()
 	durable := j.durable
+	activeID := ""
+	if active := j.active[blockID]; active != nil {
+		activeID = active.ID
+	}
 	j.mu.RUnlock()
 	if durable == nil {
 		j.mu.Lock()
@@ -234,9 +260,22 @@ func (j *Journal) ClearVisualHistory(blockID string) (uint64, error) {
 		j.mu.Unlock()
 		return generation, nil
 	}
+	j.mu.Lock()
+	j.nextTransition++
+	transition := generationTransition{token: j.nextTransition, activeID: activeID}
+	j.transitions[blockID] = transition
+	j.mu.Unlock()
 	generation, err := durable.AdvanceVisibilityGeneration(blockID)
 	if err != nil {
+		j.mu.Lock()
+		if j.transitions[blockID].token == transition.token {
+			delete(j.transitions, blockID)
+		}
+		j.mu.Unlock()
 		return 0, err
+	}
+	if j.reconcileHook != nil {
+		j.reconcileHook()
 	}
 	j.mu.Lock()
 	if generation > j.generation[blockID] {
@@ -245,8 +284,21 @@ func (j *Journal) ClearVisualHistory(blockID string) (uint64, error) {
 	if active := j.active[blockID]; active != nil {
 		active.VisibilityGeneration = j.generation[blockID]
 	}
+	for i := range j.completed[blockID] {
+		if j.completed[blockID][i].ID == transition.activeID {
+			j.completed[blockID][i].VisibilityGeneration = j.generation[blockID]
+		}
+	}
+	if j.transitions[blockID].token == transition.token {
+		delete(j.transitions, blockID)
+	}
 	result := j.generation[blockID]
 	j.mu.Unlock()
+	if transition.activeID != "" {
+		if err := durable.RetagRecordGeneration(transition.activeID, result); err != nil {
+			return 0, err
+		}
+	}
 	return result, nil
 }
 
@@ -258,11 +310,29 @@ func (j *Journal) DeleteHistory(blockID string) error {
 	}
 	j.mu.RLock()
 	durable := j.durable
+	activeID := ""
+	if active := j.active[blockID]; active != nil {
+		activeID = active.ID
+	}
 	j.mu.RUnlock()
+	var transition generationTransition
 	if durable != nil {
+		j.mu.Lock()
+		j.nextTransition++
+		transition = generationTransition{token: j.nextTransition, activeID: activeID}
+		j.transitions[blockID] = transition
+		j.mu.Unlock()
 		generation, err := durable.DeleteHistory(blockID)
 		if err != nil {
+			j.mu.Lock()
+			if j.transitions[blockID].token == transition.token {
+				delete(j.transitions, blockID)
+			}
+			j.mu.Unlock()
 			return err
+		}
+		if j.reconcileHook != nil {
+			j.reconcileHook()
 		}
 		j.mu.Lock()
 		if generation > j.generation[blockID] {
@@ -272,11 +342,31 @@ func (j *Journal) DeleteHistory(blockID string) error {
 		j.mu.Lock()
 		j.generation[blockID]++
 	}
-	j.completed[blockID] = nil
+	if durable != nil {
+		preserved := j.completed[blockID][:0]
+		for _, record := range j.completed[blockID] {
+			if record.ID == activeID {
+				record.VisibilityGeneration = j.generation[blockID]
+				preserved = append(preserved, record)
+			}
+		}
+		j.completed[blockID] = preserved
+		if j.transitions[blockID].token == transition.token {
+			delete(j.transitions, blockID)
+		}
+	} else {
+		j.completed[blockID] = nil
+	}
 	if active := j.active[blockID]; active != nil {
 		active.VisibilityGeneration = j.generation[blockID]
 	}
+	resultGeneration := j.generation[blockID]
 	j.mu.Unlock()
+	if durable != nil && activeID != "" {
+		if err := durable.RetagRecordGeneration(activeID, resultGeneration); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

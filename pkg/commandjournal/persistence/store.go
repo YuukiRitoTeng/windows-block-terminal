@@ -39,17 +39,19 @@ const (
 	eventAborted
 	eventAdvance
 	eventDelete
+	eventRetag
 	eventFlush
 )
 
 type event struct {
-	kind      eventKind
-	record    commandjournal.CommandRecord
-	commandID string
-	data      []byte
-	blockID   string
-	ack       chan error
-	result    chan eventResult
+	kind       eventKind
+	record     commandjournal.CommandRecord
+	commandID  string
+	data       []byte
+	blockID    string
+	generation uint64
+	ack        chan error
+	result     chan eventResult
 }
 
 type eventResult struct {
@@ -190,6 +192,16 @@ func (s *Store) RecordFinished(record commandjournal.CommandRecord) error {
 func (s *Store) RecordAborted(record commandjournal.CommandRecord) error {
 	return s.enqueue(event{kind: eventAborted, record: record})
 }
+func (s *Store) RetagRecordGeneration(commandID string, generation uint64) error {
+	if s == nil || s.db == nil {
+		return nil
+	}
+	ack := make(chan error, 1)
+	if err := s.enqueue(event{kind: eventRetag, commandID: commandID, generation: generation, ack: ack}); err != nil {
+		return err
+	}
+	return <-ack
+}
 
 func (s *Store) Flush() error {
 	if s == nil || s.db == nil {
@@ -268,11 +280,18 @@ func (s *Store) process(e event) eventResult {
 	case eventDelete:
 		generation, err := s.deleteHistory(e.blockID)
 		return eventResult{generation: generation, err: err}
+	case eventRetag:
+		return eventResult{err: s.retagRecordGeneration(e.commandID, e.generation)}
 	case eventFlush:
 		return eventResult{}
 	default:
 		return eventResult{err: fmt.Errorf("unknown command journal persistence event %d", e.kind)}
 	}
+}
+
+func (s *Store) retagRecordGeneration(commandID string, generation uint64) error {
+	_, err := s.db.Exec(`UPDATE command_records SET visibility_generation=? WHERE id=?`, generation, commandID)
+	return err
 }
 
 func (s *Store) withTx(fn func(*sql.Tx) error) error {

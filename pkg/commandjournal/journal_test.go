@@ -33,6 +33,7 @@ func (d *blockingDurable) DeleteHistory(string) (uint64, error) {
 	d.generation++
 	return d.generation, nil
 }
+func (d *blockingDurable) RetagRecordGeneration(string, uint64) error { return nil }
 
 func journalEvent(kind terminalruntime.EventKind, id string, seq uint64) terminalruntime.StreamItem {
 	success := true
@@ -77,6 +78,28 @@ func TestJournalRecordsOrderedOutputAndSeparatesIdentity(t *testing.T) {
 	record.Output[0] = 'X'
 	if !bytes.Equal(j.Snapshot(blockID)[0].Output, []byte("one")) {
 		t.Fatal("snapshot exposed mutable output storage")
+	}
+}
+
+func TestJournalBoundsInMemoryOutputAndRetainsPrefix(t *testing.T) {
+	j := New()
+	j.SetOutputLimit(10)
+	blockID := "bounded"
+	if !j.Apply(blockID, journalEvent(terminalruntime.EventCommandStarted, "cmd", 1), time.Now()) {
+		t.Fatal("start not recorded")
+	}
+	j.Apply(blockID, terminalruntime.StreamItem{Kind: terminalruntime.StreamOutputSegment, Output: []byte("123456")}, time.Now())
+	j.Apply(blockID, terminalruntime.StreamItem{Kind: terminalruntime.StreamOutputSegment, Output: []byte("abcdefgh")}, time.Now())
+	active, ok := j.Active(blockID)
+	if !ok || string(active.Output) != "123456abcd" || active.OutputTotalBytes != 14 || active.OutputStoredBytes != 10 || !active.OutputTruncated {
+		t.Fatalf("unexpected bounded active output: %#v", active)
+	}
+	if !j.Apply(blockID, journalEvent(terminalruntime.EventCommandFinished, "cmd", 2), time.Now()) {
+		t.Fatal("finish not recorded")
+	}
+	record := j.Snapshot(blockID)[0]
+	if string(record.Output) != "123456abcd" || record.OutputTotalBytes != 14 || record.OutputStoredBytes != 10 || !record.OutputTruncated {
+		t.Fatalf("unexpected bounded snapshot: %#v", record)
 	}
 }
 
@@ -257,4 +280,54 @@ func TestDeleteDoesNotHoldJournalLockAcrossDurableAck(t *testing.T) {
 	}
 	close(d.release)
 	<-done
+}
+
+func TestClearFinishDuringReconciliationRetagsActiveCommand(t *testing.T) {
+	j := New()
+	d := &blockingDurable{entered: make(chan struct{}), release: make(chan struct{})}
+	j.SetDurableStore(d)
+	blockID := "clear-race"
+	j.Apply(blockID, journalEvent(terminalruntime.EventCommandStarted, "c1", 1), time.Now())
+	hookEntered, allow := make(chan struct{}), make(chan struct{})
+	j.reconcileHook = func() { close(hookEntered); <-allow }
+	done := make(chan struct{})
+	go func() { _, _ = j.ClearVisualHistory(blockID); close(done) }()
+	<-d.entered
+	close(d.release)
+	<-hookEntered
+	if !j.Apply(blockID, journalEvent(terminalruntime.EventCommandFinished, "c1", 2), time.Now()) {
+		t.Fatal("finish was not accepted during reconciliation")
+	}
+	close(allow)
+	<-done
+	records := j.VisibleSnapshot(blockID)
+	if len(records) != 1 || records[0].ID != "c1" || records[0].State != StateFinished || records[0].VisibilityGeneration != 1 {
+		t.Fatalf("clear race lost record or generation: %#v", records)
+	}
+}
+
+func TestDeleteFinishDuringReconciliationPreservesActiveCommand(t *testing.T) {
+	j := New()
+	d := &blockingDurable{entered: make(chan struct{}), release: make(chan struct{})}
+	j.SetDurableStore(d)
+	blockID := "delete-race"
+	j.Apply(blockID, journalEvent(terminalruntime.EventCommandStarted, "old", 1), time.Now())
+	j.Apply(blockID, journalEvent(terminalruntime.EventCommandFinished, "old", 2), time.Now())
+	j.Apply(blockID, journalEvent(terminalruntime.EventCommandStarted, "c1", 3), time.Now())
+	hookEntered, allow := make(chan struct{}), make(chan struct{})
+	j.reconcileHook = func() { close(hookEntered); <-allow }
+	done := make(chan struct{})
+	go func() { _ = j.DeleteHistory(blockID); close(done) }()
+	<-d.entered
+	close(d.release)
+	<-hookEntered
+	if !j.Apply(blockID, journalEvent(terminalruntime.EventCommandFinished, "c1", 4), time.Now()) {
+		t.Fatal("finish was not accepted during delete reconciliation")
+	}
+	close(allow)
+	<-done
+	records := j.VisibleSnapshot(blockID)
+	if len(records) != 1 || records[0].ID != "c1" || records[0].State != StateFinished || records[0].VisibilityGeneration != 1 {
+		t.Fatalf("delete race lost active completion: %#v", records)
+	}
 }
