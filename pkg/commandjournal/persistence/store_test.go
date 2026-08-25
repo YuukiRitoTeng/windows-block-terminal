@@ -73,6 +73,52 @@ func TestStoreOrderingAndRecovery(t *testing.T) {
 	}
 }
 
+func TestPendingOutputStateSurvivesRestart(t *testing.T) {
+	s, path := openTest(t, Options{Enabled: true})
+	r := testRecord()
+	if err := s.RecordStarted(r); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AppendOutput(r.ID, []byte("prefix")); err != nil {
+		t.Fatal(err)
+	}
+	ok := true
+	code := 0
+	finishedAt := time.UnixMilli(2000)
+	r.State = commandjournal.StateFinished
+	r.CompletionReason = commandjournal.CompletionNormal
+	r.Success = &ok
+	r.ExitCode = &code
+	r.FinishedAt = &finishedAt
+	r.FinishHookSequence = 2
+	r.OutputTotalBytes = 6
+	r.OutputStoredBytes = 6
+	r.OutputCompleteness = commandjournal.OutputCompletenessUnknown
+	r.OutputAttribution = commandjournal.OutputAttributionUnknown
+	r.OutputState = commandjournal.OutputStatePending
+	if err := s.RecordFinished(r); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(path, Options{Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	record, err := s.ReadRecord(r.ID)
+	if err != nil || record == nil {
+		t.Fatalf("record=%#v err=%v", record, err)
+	}
+	if record.State != commandjournal.StateFinished || record.OutputState != commandjournal.OutputStatePending || record.OutputCompleteness == commandjournal.OutputCompletenessComplete {
+		t.Fatalf("restart overclaimed pending output: %#v", record)
+	}
+}
+
 func TestStaleRunningRecoveryAndOutputLimit(t *testing.T) {
 	s, path := openTest(t, Options{Enabled: true, MaxOutputBytes: 5, MaxChunkBytes: 3})
 	var err error

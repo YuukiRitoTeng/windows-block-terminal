@@ -29,6 +29,7 @@ type RecordView struct {
 	OutputCompleteness   string `json:"output_completeness"`
 	OutputAttribution    string `json:"output_attribution"`
 	OutputTextSafety     string `json:"output_text_safety"`
+	OutputState          string `json:"output_state"`
 	StartedAtUnixMs      int64  `json:"started_at_unix_ms"`
 	FinishedAtUnixMs     *int64 `json:"finished_at_unix_ms,omitempty"`
 	Success              *bool  `json:"success,omitempty"`
@@ -43,6 +44,7 @@ type OutputView struct {
 	Completeness string `json:"completeness"`
 	Attribution  string `json:"attribution"`
 	TextSafety   string `json:"text_safety"`
+	State        string `json:"output_state"`
 }
 
 type HealthView struct {
@@ -137,7 +139,7 @@ func (s *CommandJournalService) GetOutput(ctx context.Context, commandId string)
 	if err != nil || output == nil {
 		return nil, err
 	}
-	return &OutputView{Data: output.Data, TotalBytes: output.TotalBytes, StoredBytes: output.StoredBytes, Truncated: output.Truncated, Completeness: output.Completeness, Attribution: output.Attribution, TextSafety: output.TextSafety}, nil
+	return &OutputView{Data: output.Data, TotalBytes: output.TotalBytes, StoredBytes: output.StoredBytes, Truncated: output.Truncated, Completeness: output.Completeness, Attribution: output.Attribution, TextSafety: output.TextSafety, State: output.State}, nil
 }
 
 func (*CommandJournalService) GetHealth_Meta() tsgenmeta.MethodMeta {
@@ -196,7 +198,7 @@ func (s *CommandJournalService) DeleteHistory(ctx context.Context, blockId strin
 }
 
 func recordView(record commandjournal.CommandRecord) RecordView {
-	view := RecordView{ID: record.ID, WaveBlockID: record.WaveBlockID, SessionEpoch: record.SessionEpoch, StartHookSequence: record.StartHookSequence, FinishHookSequence: record.FinishHookSequence, Command: record.Command, Cwd: record.Cwd, State: string(record.State), CompletionReason: string(record.CompletionReason), VisibilityGeneration: record.VisibilityGeneration, OutputTotalBytes: record.OutputTotalBytes, OutputStoredBytes: record.OutputStoredBytes, OutputTruncated: record.OutputTruncated, OutputCompleteness: record.OutputCompleteness, OutputAttribution: record.OutputAttribution, OutputTextSafety: record.OutputTextSafety, StartedAtUnixMs: record.StartedAt.UnixMilli(), Success: record.Success, ExitCode: record.ExitCode}
+	view := RecordView{ID: record.ID, WaveBlockID: record.WaveBlockID, SessionEpoch: record.SessionEpoch, StartHookSequence: record.StartHookSequence, FinishHookSequence: record.FinishHookSequence, Command: record.Command, Cwd: record.Cwd, State: string(record.State), CompletionReason: string(record.CompletionReason), VisibilityGeneration: record.VisibilityGeneration, OutputTotalBytes: record.OutputTotalBytes, OutputStoredBytes: record.OutputStoredBytes, OutputTruncated: record.OutputTruncated, OutputCompleteness: record.OutputCompleteness, OutputAttribution: record.OutputAttribution, OutputTextSafety: record.OutputTextSafety, OutputState: string(record.OutputState), StartedAtUnixMs: record.StartedAt.UnixMilli(), Success: record.Success, ExitCode: record.ExitCode}
 	if record.FinishedAt != nil {
 		finished := record.FinishedAt.UnixMilli()
 		view.FinishedAtUnixMs = &finished

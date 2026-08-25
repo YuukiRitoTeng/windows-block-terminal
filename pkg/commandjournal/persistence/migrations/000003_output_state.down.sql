@@ -1,0 +1,2 @@
+-- SQLite cannot reliably drop a column without rebuilding the table. This
+-- migration is intentionally irreversible in the development journal.

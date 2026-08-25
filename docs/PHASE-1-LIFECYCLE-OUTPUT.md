@@ -5,8 +5,8 @@ Command Journal persistence, Command Cards, UI, or a replacement terminal.
 
 ## Protocol
 
-PowerShell 7 emits versioned OSC 16162 `C` (command started), `D` (command
-finished), and `M` (shell metadata) envelopes. Each payload carries a session
+PowerShell 7 emits versioned OSC 16162 `C` (command started), `D` (execution
+result known), `P` (prompt lifecycle), and `M` (shell metadata) envelopes. Each payload carries a session
 epoch and monotonic hook sequence; command IDs are local to the shell epoch.
 The PowerShell hook captures command text/cwd before acceptance and captures
 `$?` plus `$LASTEXITCODE` at the prompt boundary. Native applications use
@@ -22,6 +22,12 @@ establish a new epoch; a foreign D can never switch session identity. Existing
 Wave/frontend OSC handling remains intact.
 
 ## Output seam
+
+`D` is an execution boundary, not a PTY output-drained boundary. `P` is also a
+prompt lifecycle signal, not an output fence. Output completeness and
+attribution therefore remain unknown unless a separately proven causal fence
+exists; this feasibility seam does not claim that OSC ordering is physically
+lossless on every Windows/ConPTY baseline.
 
 `blockcontroller.HandleAppendBlockFile` invokes a read-only observer immediately
 before Wave file persistence. The observer receives the same raw byte slice and
@@ -100,5 +106,7 @@ that the product read model or persistence UX is complete.
 
 ### Verdict
 
-The Phase 1 feasibility contract is **GO**. No Command Journal, Command Card,
+The Phase 1 execution-lifecycle feasibility contract is **GO**. This does not
+claim a reliable physical output fence or pass the later Product Evidence Gate.
+No Command Journal, Command Card,
 UI, Wave Block, ShellController loop, or xterm renderer work was added.

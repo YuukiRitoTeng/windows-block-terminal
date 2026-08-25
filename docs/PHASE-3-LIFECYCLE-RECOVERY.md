@@ -1,7 +1,8 @@
 # Phase 3 — Abnormal Lifecycle Recovery
 
-Phase 3 separates normal command completion from deterministic recovery. A
-valid `D` produces a finished record with the real success and exit code. A
+Phase 3 separates normal command execution completion from deterministic
+recovery. A valid `D` produces a finished execution record with the real
+success and exit code; its output may still be pending or unknown. A
 recovery fence produces an aborted record with an explicit reason and unknown
 result; recovery never fabricates a failure exit code.
 
@@ -21,9 +22,11 @@ PowerShell emits OSC 16162 `P` (`PromptReady`) after `D` and before the real
 prompt text. Its versioned payload requires a non-empty `epoch` and positive
 `seq`, and carries `cwd64`. The first prompt emits `M`, then `P`, then OSC 7.
 
-If `P` arrives while a command is active, the decoder emits an internal
+If `P` arrives while a command is executing, the decoder emits an internal
 `CommandAborted(missing_finish)` before `PromptReady`. Prompt bytes after the
-fence cannot be attributed to the aborted record.
+fence cannot be attributed to the aborted record. If execution already finished,
+`P` only closes unresolved output conservatively; it does not prove that PTY
+output was drained.
 
 ## Decoder recovery fences
 

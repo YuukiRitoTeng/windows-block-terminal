@@ -27,6 +27,16 @@ const (
 	OutputTextSafetyPlain        = "plain_text"
 )
 
+// OutputState describes capture finalization independently from command
+// execution. A finished command may still have pending or unknown output.
+type OutputState string
+
+const (
+	OutputStateOpen    OutputState = "open"
+	OutputStatePending OutputState = "pending"
+	OutputStateClosed  OutputState = "closed"
+)
+
 type CompletionReason string
 
 const (
@@ -57,6 +67,7 @@ type CommandRecord struct {
 	OutputCompleteness   string
 	OutputAttribution    string
 	OutputTextSafety     string
+	OutputState          OutputState
 	StartedAt            time.Time
 	FinishedAt           *time.Time
 	Success              *bool
@@ -71,6 +82,7 @@ type DurableStore interface {
 	RecordStarted(CommandRecord) error
 	AppendOutput(commandID string, data []byte) error
 	RecordFinished(CommandRecord) error
+	RecordOutputFinalized(CommandRecord) error
 	RecordAborted(CommandRecord) error
 	CurrentVisibilityGeneration(blockID string) (uint64, error)
 	AdvanceVisibilityGeneration(blockID string) (uint64, error)
@@ -88,6 +100,16 @@ func (j *Journal) MarkOutputIncomplete(blockID string, droppedBytes int64) {
 	defer j.mu.Unlock()
 	active := j.active[blockID]
 	if active == nil {
+		if id := j.pending[blockID]; id != "" {
+			if record := j.completedRecordLocked(blockID, id); record != nil {
+				record.OutputCompleteness = OutputCompletenessIncomplete
+				record.OutputAttribution = OutputAttributionUnknown
+				record.OutputTextSafety = OutputTextSafetyUnknown
+				if j.durable != nil {
+					_ = j.durable.RecordOutputFinalized(cloneRecord(*record))
+				}
+			}
+		}
 		return
 	}
 	active.OutputCompleteness = OutputCompletenessIncomplete
@@ -104,6 +126,7 @@ type Journal struct {
 	mu             sync.RWMutex
 	completed      map[string][]CommandRecord
 	active         map[string]*CommandRecord
+	pending        map[string]string
 	durable        DurableStore
 	generation     map[string]uint64
 	outputLimit    int64
@@ -113,7 +136,7 @@ type Journal struct {
 }
 
 func New() *Journal {
-	return &Journal{completed: make(map[string][]CommandRecord), active: make(map[string]*CommandRecord), generation: make(map[string]uint64), outputLimit: 10 * 1024 * 1024, transitions: make(map[string]generationTransition)}
+	return &Journal{completed: make(map[string][]CommandRecord), active: make(map[string]*CommandRecord), pending: make(map[string]string), generation: make(map[string]uint64), outputLimit: 10 * 1024 * 1024, transitions: make(map[string]generationTransition)}
 }
 
 func (j *Journal) SetOutputLimit(limit int64) {
@@ -157,6 +180,18 @@ func (j *Journal) Apply(blockID string, item terminalruntime.StreamItem, observe
 	case terminalruntime.StreamOutputSegment:
 		active := j.active[blockID]
 		if active == nil || len(item.Output) == 0 {
+			// Bytes after D are deliberately not attributed. They may be prompt,
+			// OSC, background, or delayed command output; without a causal fence
+			// the journal must not guess.
+			if active == nil && j.pending[blockID] != "" {
+				if record := j.completedRecordLocked(blockID, j.pending[blockID]); record != nil && record.OutputCompleteness == OutputCompletenessComplete {
+					record.OutputCompleteness = OutputCompletenessUnknown
+					record.OutputAttribution = OutputAttributionUnknown
+					if j.durable != nil {
+						_ = j.durable.RecordOutputFinalized(cloneRecord(*record))
+					}
+				}
+			}
 			return false
 		}
 		active.OutputTotalBytes += int64(len(item.Output))
@@ -177,12 +212,8 @@ func (j *Journal) Apply(blockID string, item terminalruntime.StreamItem, observe
 		}
 		active.OutputStoredBytes += stored
 		active.OutputTruncated = active.OutputStoredBytes < active.OutputTotalBytes
-		if active.OutputCompleteness != OutputCompletenessIncomplete {
-			if active.OutputTruncated {
-				active.OutputCompleteness = OutputCompletenessTruncated
-			} else {
-				active.OutputCompleteness = OutputCompletenessComplete
-			}
+		if active.OutputCompleteness != OutputCompletenessIncomplete && active.OutputTruncated {
+			active.OutputCompleteness = OutputCompletenessTruncated
 		}
 		if j.durable != nil {
 			if err := j.durable.AppendOutput(active.ID, item.Output); err != nil {
@@ -196,6 +227,9 @@ func (j *Journal) Apply(blockID string, item terminalruntime.StreamItem, observe
 		event := item.Event
 		switch event.Kind {
 		case terminalruntime.EventCommandStarted:
+			// A new command is a liveness fence for a previous execution whose
+			// output attribution was never proven.
+			j.finalizePendingLocked(blockID)
 			if j.active[blockID] != nil || event.CommandID == "" || event.SessionEpoch == "" || event.HookSequence == 0 {
 				return false
 			}
@@ -210,9 +244,10 @@ func (j *Journal) Apply(blockID string, item terminalruntime.StreamItem, observe
 				State:                StateRunning,
 				VisibilityGeneration: generation,
 				StartedAt:            observedAt,
-				OutputCompleteness:   OutputCompletenessComplete,
+				OutputCompleteness:   OutputCompletenessUnknown,
 				OutputAttribution:    OutputAttributionUnknown,
 				OutputTextSafety:     OutputTextSafetyUnknown,
+				OutputState:          OutputStateOpen,
 			}
 			if j.durable != nil {
 				_ = j.durable.RecordStarted(*j.active[blockID])
@@ -230,8 +265,10 @@ func (j *Journal) Apply(blockID string, item terminalruntime.StreamItem, observe
 			active.ExitCode = cloneInt(event.ExitCode)
 			active.State = StateFinished
 			active.CompletionReason = CompletionNormal
+			active.OutputState = OutputStatePending
 			completed := cloneRecord(*active)
 			j.completed[blockID] = append(j.completed[blockID], completed)
+			j.pending[blockID] = active.ID
 			delete(j.active, blockID)
 			if j.durable != nil {
 				_ = j.durable.RecordFinished(completed)
@@ -240,9 +277,9 @@ func (j *Journal) Apply(blockID string, item terminalruntime.StreamItem, observe
 		case terminalruntime.EventCommandAborted:
 			return j.abortActiveLocked(blockID, CompletionReason(event.CompletionReason), observedAt, event.CommandID, event.SessionEpoch)
 		case terminalruntime.EventPromptReady:
-			// Decoder emits the explicit missing_finish abort before P. Keep this
-			// event itself side-effect free so a duplicate P cannot abort twice.
-			return false
+			// For a finished execution P is only a liveness fence; it is not
+			// proof that PTY output was drained.
+			return j.finalizePendingLocked(blockID)
 		}
 	}
 	return false
@@ -260,6 +297,7 @@ func (j *Journal) AbortActive(blockID string, reason CompletionReason, observedA
 }
 
 func (j *Journal) abortActiveLocked(blockID string, reason CompletionReason, observedAt time.Time, commandID, epoch string) bool {
+	j.finalizePendingLocked(blockID)
 	active := j.active[blockID]
 	if active == nil || !validAbortReason(reason) || (commandID != "" && active.ID != commandID) || (epoch != "" && active.SessionEpoch != epoch) {
 		return false
@@ -274,6 +312,11 @@ func (j *Journal) abortActiveLocked(blockID string, reason CompletionReason, obs
 	active.FinishHookSequence = 0
 	finishedAt := observedAt
 	active.FinishedAt = &finishedAt
+	active.OutputState = OutputStateClosed
+	if active.OutputCompleteness == OutputCompletenessComplete {
+		active.OutputCompleteness = OutputCompletenessUnknown
+	}
+	active.OutputAttribution = OutputAttributionUnknown
 	completed := cloneRecord(*active)
 	j.completed[blockID] = append(j.completed[blockID], completed)
 	delete(j.active, blockID)
@@ -281,6 +324,39 @@ func (j *Journal) abortActiveLocked(blockID string, reason CompletionReason, obs
 		_ = j.durable.RecordAborted(completed)
 	}
 	return true
+}
+
+// finalizePendingLocked closes an execution-finished record without claiming
+// that its bytes were physically drained or exclusively attributable.
+func (j *Journal) finalizePendingLocked(blockID string) bool {
+	id := j.pending[blockID]
+	if id == "" {
+		return false
+	}
+	record := j.completedRecordLocked(blockID, id)
+	delete(j.pending, blockID)
+	if record == nil {
+		return false
+	}
+	record.OutputState = OutputStateClosed
+	if record.OutputCompleteness == "" || record.OutputCompleteness == OutputCompletenessComplete {
+		record.OutputCompleteness = OutputCompletenessUnknown
+	}
+	record.OutputAttribution = OutputAttributionUnknown
+	if j.durable != nil {
+		_ = j.durable.RecordOutputFinalized(cloneRecord(*record))
+	}
+	return true
+}
+
+func (j *Journal) completedRecordLocked(blockID, id string) *CommandRecord {
+	records := j.completed[blockID]
+	for i := len(records) - 1; i >= 0; i-- {
+		if records[i].ID == id {
+			return &records[i]
+		}
+	}
+	return nil
 }
 
 // ClearVisualHistory advances the durable visibility generation without

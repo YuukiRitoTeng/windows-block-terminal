@@ -33,6 +33,12 @@ visibility generation in O(1) and leaves the shell, PTY, and active command
 intact. Delete History removes finished/aborted rows with foreign-key cascade,
 while preserving a running row in the new generation.
 
+Execution completion and output completion are persisted independently. A
+finished record may have `OutputState=pending` or `closed` with
+`OutputCompleteness=unknown/incomplete`; restart preserves that uncertainty and
+never promotes it to `complete`. Only a proven causal output fence may produce
+`complete` / `exclusive` metadata.
+
 The frontend exposes only a narrow `TermWrap.clearVisualBuffer()` seam. It
 clears rendered xterm state and does not restart or truncate the shell session.
 
