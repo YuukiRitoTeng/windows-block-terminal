@@ -62,13 +62,21 @@ function Global:_waveterm_si_emit([string]$kind, [hashtable]$payload) {
     }
 }
 
-function Global:_waveterm_si_command_is_native([string]$command) {
+function Global:_waveterm_si_is_direct_native_invocation([string]$command) {
     try {
+        $tokens = $null
         $errors = $null
-        $tokens = [System.Management.Automation.PSParser]::Tokenize($command, [ref]$errors)
-        $first = $tokens | Where-Object { $_.Type -eq "Command" } | Select-Object -First 1
-        if ($null -eq $first) { return $false }
-        $resolved = Get-Command $first.Content -ErrorAction Stop
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($command, [ref]$tokens, [ref]$errors)
+        if (@($errors).Count -ne 0) { return $false }
+        $statements = @($ast.EndBlock.Statements)
+        if ($statements.Count -ne 1) { return $false }
+        $pipeline = $statements[0] -as [System.Management.Automation.Language.PipelineAst]
+        if ($null -eq $pipeline -or $pipeline.PipelineElements.Count -ne 1) { return $false }
+        $commandAst = $pipeline.PipelineElements[0] -as [System.Management.Automation.Language.CommandAst]
+        if ($null -eq $commandAst) { return $false }
+        $commandName = $commandAst.GetCommandName()
+        if ([string]::IsNullOrWhiteSpace($commandName)) { return $false }
+        $resolved = Get-Command $commandName -ErrorAction Stop
         return $resolved.CommandType -eq "Application"
     } catch { return $false }
 }
@@ -103,7 +111,7 @@ function Global:_waveterm_si_command_started {
         $sequence = _waveterm_si_next_sequence
         $id = "{0}-{1}" -f $Global:_WAVETERM_SI_SESSION_EPOCH, $sequence
         $Global:_WAVETERM_SI_LAST_COMMAND_ID = $id
-        $Global:_WAVETERM_SI_LAST_COMMAND_NATIVE = _waveterm_si_command_is_native $line
+        $Global:_WAVETERM_SI_LAST_COMMAND_NATIVE = _waveterm_si_is_direct_native_invocation $line
         _waveterm_si_emit "C" @{ v = 1; epoch = $Global:_WAVETERM_SI_SESSION_EPOCH; seq = $sequence; id = $id; cmd64 = (_waveterm_si_b64 $line); cwd64 = (_waveterm_si_b64 $PWD.Path) }
         return $true
     } catch { return $false }

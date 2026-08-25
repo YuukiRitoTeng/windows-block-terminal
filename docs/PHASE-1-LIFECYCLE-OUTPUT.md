@@ -11,6 +11,9 @@ epoch and monotonic hook sequence; command IDs are local to the shell epoch.
 The PowerShell hook captures command text/cwd before acceptance and captures
 `$?` plus `$LASTEXITCODE` at the prompt boundary. Native applications use
 `$LASTEXITCODE`; PowerShell commands map success to `$?` and use exit code 0/1.
+Direct native invocations preserve the native process exit code. PowerShell
+commands and mixed pipelines use PowerShell success semantics and map to exit
+code 0/1.
 
 The backend decoder accepts BEL and ST terminators, split frames, duplicate and
 foreign-epoch rejection, and unknown protocol versions without changing the

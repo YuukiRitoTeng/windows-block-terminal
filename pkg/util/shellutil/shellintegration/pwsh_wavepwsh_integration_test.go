@@ -22,25 +22,25 @@ func TestPowerShellLifecycleCLIContract(t *testing.T) {
 	tests := []struct {
 		name        string
 		command     string
-		native      bool
 		wantSuccess bool
 		wantExit    int
 	}{
-		{"success", `Write-Output "phase1-success"`, false, true, 0},
-		{"powershell-failure", `throw "phase1-failure"`, false, false, 1},
-		{"pipeline", `1..5 | Where-Object { $_ -gt 2 }`, false, true, 0},
+		{"success", `Write-Output "phase1-success"`, true, 0},
+		{"powershell-failure", `throw "phase1-failure"`, false, 1},
+		{"pipeline", `1..5 | Where-Object { $_ -gt 2 }`, true, 0},
 		{"multiline", `1..3 | ForEach-Object {
     $_ * 2
-}`, false, true, 0},
+}`, true, 0},
+		{"mixed-native-tail", `Write-Output x | cmd /c exit 7`, true, 0},
+		{"mixed-native-head", `cmd /c exit 7 | Write-Output`, true, 0},
 	}
 	if runtime.GOOS == "windows" {
 		tests = append(tests, struct {
 			name        string
 			command     string
-			native      bool
 			wantSuccess bool
 			wantExit    int
-		}{"native-failure", `cmd /c exit 7`, true, false, 7})
+		}{"native-failure", `cmd /c exit 7`, false, 7})
 	}
 
 	var script strings.Builder
@@ -53,12 +53,13 @@ $Global:_WAVETERM_SI_SESSION_EPOCH = "cli-phase1-epoch"
 $Global:_WAVETERM_SI_HOOK_SEQUENCE = 0
 $Global:_WAVETERM_SI_LAST_COMMAND_ID = $null
 $Global:_WAVETERM_SI_LAST_COMMAND_NATIVE = $false
-function Invoke-WaveCliCommand([string]$Name, [scriptblock]$Command, [bool]$Native) {
+function Invoke-WaveCliCommand([string]$Name, [scriptblock]$Command) {
     $sequence = _waveterm_si_next_sequence
     $id = "{0}-{1}" -f $Global:_WAVETERM_SI_SESSION_EPOCH, $sequence
     $Global:_WAVETERM_SI_LAST_COMMAND_ID = $id
-    $Global:_WAVETERM_SI_LAST_COMMAND_NATIVE = $Native
-    _waveterm_si_emit "C" @{ v = 1; epoch = $Global:_WAVETERM_SI_SESSION_EPOCH; seq = $sequence; id = $id; cmd64 = (_waveterm_si_b64 $Name); cwd64 = (_waveterm_si_b64 $PWD.Path) }
+    $commandText = $Command.ToString()
+    $Global:_WAVETERM_SI_LAST_COMMAND_NATIVE = _waveterm_si_is_direct_native_invocation $commandText
+    _waveterm_si_emit "C" @{ v = 1; epoch = $Global:_WAVETERM_SI_SESSION_EPOCH; seq = $sequence; id = $id; cmd64 = (_waveterm_si_b64 $commandText); cwd64 = (_waveterm_si_b64 $PWD.Path) }
     $success = $true
     try { & $Command } catch { $success = $false }
     $nativeExitCode = $LASTEXITCODE
@@ -70,8 +71,7 @@ function Invoke-WaveCliCommand([string]$Name, [scriptblock]$Command, [bool]$Nati
 		script.WriteString(("'" + strings.ReplaceAll(test.name, "'", "''") + "'"))
 		script.WriteString(" { ")
 		script.WriteString(test.command)
-		script.WriteString(" } ")
-		script.WriteString(fmtBool(test.native))
+		script.WriteString(" }")
 		script.WriteString("\n")
 	}
 
@@ -140,11 +140,4 @@ function Invoke-WaveCliCommand([string]$Name, [scriptblock]$Command, [bool]$Nati
 			t.Fatalf("hook sequence is not monotonic at %s", test.name)
 		}
 	}
-}
-
-func fmtBool(value bool) string {
-	if value {
-		return "$true"
-	}
-	return "$false"
 }
