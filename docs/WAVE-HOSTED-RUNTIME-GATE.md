@@ -18,17 +18,18 @@ This document records the opt-in Wave/ConPTY hosted PowerShell feasibility gate.
 - Published executable:
   `tools/hostedpwsh/bin/Release/net8.0/win-x64/publish/WbtHostedPowerShell.exe`
 
-## One-session process evidence
+## Real Wave process evidence
 
-- Wave backend: `wavesrv.x64.exe`, PID `31316`
-- Hosted PowerShell host: PID `16344`, child of PID `31316`
-- Runspace InstanceId: `0d0fa9cc-daa6-49a8-8337-1c91fa39dc44`
-- Raw host trace:
+- Session A: Wave backend `wavesrv.x64.exe` PID `17288`, hosted host PID `11460`, Runspace `ee6d778e-a510-46b2-8c3e-94c7711cc88c`.
+- Session A raw trace:
+  `C:\Users\ROG\AppData\Local\Temp\wbt-hosted-f1e1c1b0-5c74-4056-90ba-311cac6a2de0-1787672816896648100.log`
+- Session B: Wave backend `wavesrv.x64.exe` PID `31316`, hosted host PID `16344`, Runspace `0d0fa9cc-daa6-49a8-8337-1c91fa39dc44`.
+- Session B raw trace:
   `C:\Users\ROG\AppData\Local\Temp\wbt-hosted-f1e1c1b0-5c74-4056-90ba-311cac6a2de0-1787673440675511800.log`
 
-The trace contains one `HOST_START`, one `RUNSPACE_OPEN`, and all structured and interactive invocations under the same Runspace InstanceId.
+Session A covered ordinary structured success and direct native failure. Session B covered the corrected PowerShell failure path, mixed pipeline semantics, native interactive exit, native Ctrl+C, and post-interactive state continuity. The error-path correction required restarting Wave, so the complete capability set is not represented by one host/runspace/raw-log tuple.
 
-The hosted process is the shell child launched by `wavesrv`. No second `pwsh.exe` shell was found in the hosted process ancestry. Unrelated PowerShell processes owned by the development environment were excluded from that process-tree check. No second Runspace was created by the hosted runtime.
+In both sessions the hosted process was the shell child launched by `wavesrv`. No second `pwsh.exe` shell was found in the hosted process ancestry. Unrelated PowerShell processes owned by the development environment were excluded from that process-tree check. Each session created exactly one Runspace.
 
 ## Verified manual sequence
 
@@ -63,7 +64,7 @@ This proves the feasibility transport seam. A durable Product runtime consumer, 
 
 **WAVE HOSTED-RUNTIME GATE = GO**
 
-This GO is limited to the real Wave/ConPTY hosted-runtime feasibility seam:
+This GO is limited to the real Wave/ConPTY hosted-runtime feasibility seam, with the evidence split across the two sessions above:
 
 - one hosted process;
 - one persistent Runspace;
@@ -83,3 +84,5 @@ Still unproven and explicitly out of scope:
 - TUI, vim, fzf, ssh, alternate screen, and resize compatibility;
 - crash/reconnect and sidechannel backpressure;
 - final schema, RPC contract, persistence migration, and default-runtime rollout.
+
+An all-capabilities single-session integrated trace remains unproven; it is not required to establish this feasibility GO, but is required before treating the evidence as a release-grade integrated run.
