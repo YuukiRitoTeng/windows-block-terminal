@@ -333,15 +333,19 @@ func SendInput(blockId string, inputUnion *BlockInputUnion) error {
 // only call this on shutdown
 func StopAllBlockControllersForShutdown() {
 	controllers := getAllControllers()
+	var wg sync.WaitGroup
 	for blockId, controller := range controllers {
 		status := controller.GetRuntimeStatus()
 		if status != nil && status.ShellProcStatus == Status_Running {
+			wg.Add(1)
 			go func(id string, c Controller) {
+				defer wg.Done()
 				c.Stop(true, Status_Done, false)
 				wstore.DeleteRTInfo(waveobj.MakeORef(waveobj.OType_Block, id))
 			}(blockId, controller)
 		}
 	}
+	wg.Wait()
 }
 
 func getBoolFromMeta(meta map[string]any, key string, def bool) bool {

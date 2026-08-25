@@ -18,6 +18,7 @@ import (
 	"github.com/wavetermdev/waveterm/pkg/authkey"
 	"github.com/wavetermdev/waveterm/pkg/blockcontroller"
 	"github.com/wavetermdev/waveterm/pkg/blocklogger"
+	"github.com/wavetermdev/waveterm/pkg/commandjournal/persistence"
 	"github.com/wavetermdev/waveterm/pkg/filebackup"
 	"github.com/wavetermdev/waveterm/pkg/filestore"
 	"github.com/wavetermdev/waveterm/pkg/jobcontroller"
@@ -80,7 +81,7 @@ func doShutdown(reason string) {
 		log.Printf("shutting down: %s\n", reason)
 		ctx, cancelFn := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancelFn()
-		go blockcontroller.StopAllBlockControllersForShutdown()
+		blockcontroller.StopAllBlockControllersForShutdown()
 		shutdownActivityUpdate()
 		sendTelemetryWrapper()
 		// TODO deal with flush in progress
@@ -90,7 +91,9 @@ func doShutdown(reason string) {
 		if watcher != nil {
 			watcher.Close()
 		}
-		time.Sleep(500 * time.Millisecond)
+		if err := persistence.CloseDefault(); err != nil {
+			log.Printf("command journal close failed: %v", err)
+		}
 		log.Printf("shutdown complete\n")
 		os.Exit(0)
 	})

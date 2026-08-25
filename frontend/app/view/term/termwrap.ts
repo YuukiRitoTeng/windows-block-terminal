@@ -87,6 +87,12 @@ export class TermWrap {
     mainFileSubject: SubjectWithRef<WSFileEventData>;
     loaded: boolean;
     heldData: Uint8Array[];
+
+    /** Clear only rendered terminal state; the underlying shell session is untouched. */
+    clearVisualBuffer() {
+        this.terminal.clear();
+        this.heldData = [];
+    }
     handleResize_debounced: () => void;
     hasResized: boolean;
     multiInputCallback: (data: string) => void;
@@ -478,8 +484,7 @@ export class TermWrap {
 
     handleNewFileSubjectData(msg: WSFileEventData) {
         if (msg.fileop == "truncate") {
-            this.terminal.clear();
-            this.heldData = [];
+            this.clearVisualBuffer();
         } else if (msg.fileop == "append") {
             const decodedData = base64ToArray(msg.data64);
             if (this.loaded) {

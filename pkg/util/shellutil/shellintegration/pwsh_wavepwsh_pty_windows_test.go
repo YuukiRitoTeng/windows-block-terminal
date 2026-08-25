@@ -9,12 +9,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/creack/pty"
 	"github.com/wavetermdev/waveterm/pkg/commandjournal"
+	"github.com/wavetermdev/waveterm/pkg/commandjournal/persistence"
 	"github.com/wavetermdev/waveterm/pkg/terminalruntime"
 )
 
@@ -52,14 +54,31 @@ func TestPowerShellInteractivePTYLifecycle(t *testing.T) {
 
 	d := terminalruntime.NewDecoder()
 	journal := commandjournal.New()
+	store, err := persistence.Open(filepath.Join(dir, "command-journal.sqlite"), persistence.Options{Enabled: true})
+	if err != nil {
+		t.Fatalf("open phase5 journal: %v", err)
+	}
+	defer store.Close()
+	journal.SetDurableStore(store)
+	if generation, err := store.CurrentVisibilityGeneration("block-phase2-conpty"); err != nil {
+		t.Fatal(err)
+	} else {
+		journal.SetVisibilityGeneration("block-phase2-conpty", generation)
+	}
 	const blockID = "block-phase2-conpty"
 	events := make(chan terminalruntime.IntegrationEvent, 32)
+	rawChunks := make(chan []byte, 128)
 	readDone := make(chan error, 1)
 	go func() {
 		buf := make([]byte, 4096)
 		for {
 			n, readErr := term.Read(buf)
 			if n > 0 {
+				chunk := append([]byte(nil), buf[:n]...)
+				select {
+				case rawChunks <- chunk:
+				default:
+				}
 				for _, item := range d.FeedOrdered(buf[:n]) {
 					journal.Apply(blockID, item, time.Now())
 					if item.Kind == terminalruntime.StreamIntegrationEvent {
@@ -135,12 +154,22 @@ func TestPowerShellInteractivePTYLifecycle(t *testing.T) {
 		return started, finished
 	}
 
-	firstCommand := fmt.Sprintf(`Set-Location -LiteralPath '%s'; Write-Output phase2-one; Start-Sleep -Milliseconds 100`, strings.ReplaceAll(cwdTarget, "'", "''"))
+	firstCommand := fmt.Sprintf(`Set-Location -LiteralPath '%s'; $env:PHASE5_KEEP='yes'; $env:VIRTUAL_ENV='phase5-test'; Write-Output phase2-one; Write-Output "$PID|$($PWD.Path)|$env:PHASE5_KEEP|$env:VIRTUAL_ENV"; Start-Sleep -Milliseconds 100`, strings.ReplaceAll(cwdTarget, "'", "''"))
 	_, success := run(firstCommand)
 	assertResult(t, success, true, 0)
 	records := journal.Snapshot(blockID)
 	if len(records) != 1 || records[0].WaveBlockID != blockID || records[0].SessionEpoch != metadata.SessionEpoch || records[0].WaveBlockID == records[0].SessionEpoch || !bytes.Contains(records[0].Output, []byte("phase2-one")) || records[0].Success == nil || !*records[0].Success || records[0].ExitCode == nil || *records[0].ExitCode != 0 {
 		t.Fatalf("unexpected first command record: %#v", records)
+	}
+	firstLine := strings.TrimSpace(string(records[0].Output))
+	identityPattern := regexp.MustCompile(`(?m)(\d+)\|([^|\r\n]+)\|(yes)\|(phase5-test)`)
+	firstFields := identityPattern.FindStringSubmatch(firstLine)
+	if len(firstFields) != 5 {
+		t.Fatalf("missing pre-clear identity output: %q", firstLine)
+	}
+	pidBefore, cwdBefore, envBefore, venvBefore := firstFields[1], firstFields[2], firstFields[3], firstFields[4]
+	if envBefore != "yes" || venvBefore != "phase5-test" || !strings.EqualFold(filepath.Clean(cwdBefore), filepath.Clean(cwdTarget)) {
+		t.Fatalf("unexpected pre-clear identity: %q", firstLine)
 	}
 	secondStarted, native := run(`cmd /c exit 7`)
 	assertResult(t, native, false, 7)
@@ -150,6 +179,58 @@ func TestPowerShellInteractivePTYLifecycle(t *testing.T) {
 	records = journal.Snapshot(blockID)
 	if len(records) != 2 || records[1].Success == nil || *records[1].Success || records[1].ExitCode == nil || *records[1].ExitCode != 7 || bytes.Contains(records[1].Output, []byte("phase2-one")) {
 		t.Fatalf("unexpected second command record or output contamination: %#v", records)
+	}
+	if err := store.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if old, err := store.ReadVisibleRecords(blockID); err != nil || len(old) != 2 {
+		t.Fatalf("expected two durable records before clear: %d %v", len(old), err)
+	}
+	if _, err := journal.ClearVisualHistory(blockID); err != nil {
+		t.Fatalf("clear visual history: %v", err)
+	}
+	if visible := journal.VisibleSnapshot(blockID); len(visible) != 0 {
+		t.Fatalf("old generation remained visible after clear: %#v", visible)
+	}
+	if old, err := store.ReadVisibleRecords(blockID); err != nil || len(old) != 0 {
+		t.Fatalf("old generation remained durably visible: %d %v", len(old), err)
+	}
+	_, _ = run(`Write-Output "$PID|$($PWD.Path)|$env:PHASE5_KEEP|$env:VIRTUAL_ENV"`)
+	if err := store.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	var identityOutput []byte
+	identityDeadline := time.After(10 * time.Second)
+	for !identityPattern.Match(identityOutput) {
+		select {
+		case chunk := <-rawChunks:
+			identityOutput = append(identityOutput, chunk...)
+		default:
+		}
+		if identityPattern.Match(identityOutput) {
+			break
+		}
+		select {
+		case <-identityDeadline:
+			t.Fatal("timed out waiting for clear identity output")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	visible := journal.VisibleSnapshot(blockID)
+	if len(visible) != 1 || !bytes.Contains(identityOutput, []byte("phase5-test")) || !bytes.Contains(identityOutput, []byte(cwdTarget)) {
+		t.Fatalf("clear session validation failed: %#v", visible)
+	}
+	identityMatch := identityPattern.FindStringSubmatch(string(identityOutput))
+	if len(identityMatch) != 5 || identityMatch[1] != pidBefore || !strings.EqualFold(filepath.Clean(identityMatch[2]), filepath.Clean(cwdBefore)) || identityMatch[3] != envBefore || identityMatch[4] != venvBefore {
+		t.Fatalf("session identity changed across clear: before=%q match=%#v after=%q", firstLine, identityMatch, identityOutput)
+	}
+	_, _ = run(`Write-Output "after-clear"`)
+	if visible = journal.VisibleSnapshot(blockID); len(visible) != 2 || !strings.Contains(visible[1].Command, "after-clear") {
+		t.Fatalf("post-clear command was not recorded in new generation: %#v", visible)
+	}
+	physical, err := store.CountRecords(blockID)
+	if err != nil || physical != 4 {
+		t.Fatalf("expected old records to remain physically stored: count=%d err=%v", physical, err)
 	}
 
 	// Physical multiline input must not emit a lifecycle event for each
@@ -302,7 +383,7 @@ func TestPowerShellInteractivePTYLifecycle(t *testing.T) {
 		t.Fatalf("nested pwsh lifecycle mismatch: start=%#v finish=%#v", nestedStarted, nestedFinished)
 	}
 	records = journal.Snapshot(blockID)
-	if len(records) != 5 || records[len(records)-1].ID != nestedStarted.CommandID || !bytes.Contains(records[len(records)-1].Output, []byte("phase4-inner")) || records[len(records)-1].State != commandjournal.StateFinished {
+	if len(records) != 7 || records[len(records)-1].ID != nestedStarted.CommandID || !bytes.Contains(records[len(records)-1].Output, []byte("phase4-inner")) || records[len(records)-1].State != commandjournal.StateFinished {
 		t.Fatalf("nested pwsh did not remain one outer record: %#v", records)
 	}
 }
