@@ -227,12 +227,13 @@ func (j *Journal) Apply(blockID string, item terminalruntime.StreamItem, observe
 		event := item.Event
 		switch event.Kind {
 		case terminalruntime.EventCommandStarted:
-			// A new command is a liveness fence for a previous execution whose
-			// output attribution was never proven.
-			j.finalizePendingLocked(blockID)
 			if j.active[blockID] != nil || event.CommandID == "" || event.SessionEpoch == "" || event.HookSequence == 0 {
 				return false
 			}
+			// A valid new command is a liveness fence for a previous execution
+			// whose output attribution was never proven. Malformed events must
+			// not change that pending state.
+			j.finalizePendingLocked(blockID)
 			generation := j.generation[blockID]
 			j.active[blockID] = &CommandRecord{
 				ID:                   event.CommandID,

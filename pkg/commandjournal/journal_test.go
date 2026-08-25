@@ -278,6 +278,28 @@ func TestJournalRetainsOutputBeforeBackendAbort(t *testing.T) {
 	}
 }
 
+func TestJournalRejectsMalformedStartWithoutClosingPendingOutput(t *testing.T) {
+	j := New()
+	blockID := "block-malformed-start"
+	if !j.Apply(blockID, journalEvent(terminalruntime.EventCommandStarted, "cmd-1", 1), time.Now()) {
+		t.Fatal("start was not recorded")
+	}
+	if !j.Apply(blockID, terminalruntime.StreamItem{Kind: terminalruntime.StreamOutputSegment, Output: []byte("pending")}, time.Now()) {
+		t.Fatal("output was not recorded")
+	}
+	if !j.Apply(blockID, journalEvent(terminalruntime.EventCommandFinished, "cmd-1", 2), time.Now()) {
+		t.Fatal("finish was not recorded")
+	}
+	malformed := journalEvent(terminalruntime.EventCommandStarted, "", 3)
+	if j.Apply(blockID, malformed, time.Now()) {
+		t.Fatal("malformed start was accepted")
+	}
+	records := j.Snapshot(blockID)
+	if len(records) != 1 || records[0].OutputState != OutputStatePending || !bytes.Equal(records[0].Output, []byte("pending")) {
+		t.Fatalf("malformed start changed pending output state: %#v", records)
+	}
+}
+
 func TestRuntimeObserverPromptRecoveryDoesNotAttributePromptBytes(t *testing.T) {
 	j := New()
 	blockID := "block-prompt-recovery"
