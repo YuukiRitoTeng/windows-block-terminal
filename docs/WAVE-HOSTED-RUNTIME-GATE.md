@@ -55,7 +55,7 @@ Observed results:
 
 ## Structured sidechannel
 
-The Go runtime creates an opt-in loopback TCP sidechannel with a per-process token. The hosted process recorded `SIDECAR_CONNECTED` and sends `hello`, `runtime_ready`, `command_started`, `output`, and `command_finished` JSON events. The backend receiver logs event metadata and output lengths; it does not re-render sidechannel output, so terminal-visible output remains owned by the Wave/xterm PTY path.
+The Go runtime creates an opt-in loopback TCP sidechannel with a per-process token. The hosted process recorded `SIDECAR_CONNECTED` and sends `hello`, `runtime_ready`, `command_started`, `output`, and `command_finished` JSON events. The backend receiver is coded to log event metadata and output lengths; it does not re-render sidechannel output, so terminal-visible output remains owned by the Wave/xterm PTY path. This run captured the host-side connection and event-producing trace, but not a separately persisted backend receive log.
 
 This proves the feasibility transport seam. A durable Product runtime consumer, Command Journal registration, final RPC schema, and UI projection are intentionally not part of this gate.
 
