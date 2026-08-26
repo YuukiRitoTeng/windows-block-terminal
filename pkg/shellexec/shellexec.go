@@ -714,6 +714,9 @@ func StartLocalShellProc(logCtx context.Context, termSize waveobj.TermSize, cmdS
 	shellutil.AddTokenSwapEntry(cmdOpts.SwapToken)
 	cmdPty, err := pty.StartWithSize(ecmd, &pty.Winsize{Rows: uint16(termSize.Rows), Cols: uint16(termSize.Cols)})
 	if err != nil {
+		if hostedSidechannelConn != nil {
+			_ = hostedSidechannelConn.listener.Close()
+		}
 		return nil, err
 	}
 	cmdWrap := MakeCmdWrap(ecmd, cmdPty, isShell)

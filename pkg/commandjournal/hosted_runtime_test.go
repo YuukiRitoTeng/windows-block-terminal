@@ -146,8 +146,30 @@ func TestHostedRuntimeInteractiveIsNotExactStructuredOutput(t *testing.T) {
 	c.ObserveHostedRuntimeEvent(hostedOutput("python", "should-not-be-authoritative"))
 	c.ObserveHostedRuntimeEvent(hostedFinish("python", true, 0))
 	record := j.Snapshot("block-hosted")[0]
-	if record.ExecutionMode != terminalruntime.ExecutionModeInteractive || record.OutputState != OutputStateClosed || record.OutputCompleteness == OutputCompletenessComplete || record.OutputAttribution != OutputAttributionUnknown || len(record.Output) != 0 {
+	if record.ExecutionMode != terminalruntime.ExecutionModeInteractive || record.OutputState != OutputStatePending || record.OutputCompleteness == OutputCompletenessComplete || record.OutputAttribution != OutputAttributionUnknown || len(record.Output) != 0 {
 		t.Fatalf("interactive output was overclaimed: %#v", record)
+	}
+}
+
+func TestHostedInteractiveFinishRetainsDelayedPTYOutput(t *testing.T) {
+	j := New()
+	c := NewHostedRuntimeConsumer("block-hosted", j)
+	hostedReady(c)
+	c.ObserveHostedRuntimeEvent(hostedStart("python", "interactive"))
+	c.ObserveHostedRuntimeEvent(hostedFinish("python", true, 0))
+	if !j.Apply("block-hosted", terminalruntime.StreamItem{Kind: terminalruntime.StreamOutputSegment, Source: terminalruntime.OutputSourcePTY, Output: []byte("delayed-output\r\n")}, time.Now()) {
+		t.Fatal("delayed interactive PTY output was dropped")
+	}
+	record := j.Snapshot("block-hosted")[0]
+	if record.OutputState != OutputStatePending || string(record.Output) != "delayed-output\r\n" || record.OutputCompleteness == OutputCompletenessComplete || record.OutputAttribution == OutputAttributionExclusive {
+		t.Fatalf("interactive output was finalized or overclaimed: %#v", record)
+	}
+	if !j.Apply("block-hosted", terminalruntime.StreamItem{Kind: terminalruntime.StreamIntegrationEvent, Event: terminalruntime.IntegrationEvent{Kind: terminalruntime.EventPromptReady}}, time.Now()) {
+		t.Fatal("prompt did not close pending interactive output")
+	}
+	record = j.Snapshot("block-hosted")[0]
+	if record.OutputState != OutputStateClosed || record.OutputCompleteness == OutputCompletenessComplete || record.OutputAttribution != OutputAttributionUnknown || string(record.Output) != "delayed-output\r\n" {
+		t.Fatalf("interactive delayed output boundary was incorrect: %#v", record)
 	}
 }
 
