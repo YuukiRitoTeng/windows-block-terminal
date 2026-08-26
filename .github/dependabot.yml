@@ -3,10 +3,9 @@ updates:
     - package-ecosystem: "npm"
       directory: "/"
       schedule:
-          interval: "weekly"
-          day: "friday"
-          time: "09:00"
-          timezone: "America/Los_Angeles"
+          interval: "cron"
+          cronjob: "0 9 1 1,3,5,7,9,11 *"
+          timezone: "Asia/Taipei"
       groups:
           dev-dependencies-patch:
               dependency-type: "development"
@@ -146,14 +145,12 @@ updates:
     - package-ecosystem: "gomod"
       directory: "/"
       schedule:
-          interval: "weekly"
-          day: "friday"
-          time: "09:00"
-          timezone: "America/Los_Angeles"
+          interval: "cron"
+          cronjob: "0 9 1 1,3,5,7,9,11 *"
+          timezone: "Asia/Taipei"
     - package-ecosystem: "github-actions"
-      directory: "/.github/workflows"
+      directory: "/"
       schedule:
-          interval: "weekly"
-          day: "friday"
-          time: "09:00"
-          timezone: "America/Los_Angeles"
+          interval: "cron"
+          cronjob: "0 9 1 1,3,5,7,9,11 *"
+          timezone: "Asia/Taipei"
