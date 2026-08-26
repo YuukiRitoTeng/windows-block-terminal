@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
 import { canCopyOutput, clearProductHistory, HistoryRequestEpoch, limitVisibleRecords, projectOutput, sanitizeTerminalText } from "./command-history";
 
 const record = (overrides: Partial<RecordView> = {}): RecordView => ({
@@ -16,6 +17,13 @@ describe("command history product seam", () => {
         const records = Array.from({ length: 101 }, (_, index) => record({ id: `cmd-${index}` }));
         expect(limitVisibleRecords(records)).toHaveLength(100);
         expect(limitVisibleRecords(records)[0].id).toBe("cmd-1");
+    });
+
+    it("keeps history bounded by the terminal block instead of the viewport", () => {
+        const styles = readFileSync(new URL("./term.scss", import.meta.url), "utf8");
+        expect(styles).toContain("min-height: 120px");
+        expect(styles).toContain("max-height: 32%");
+        expect(styles).not.toContain("38vh");
     });
 
     it("projects safe output and rejects terminal bytes or truncation", () => {

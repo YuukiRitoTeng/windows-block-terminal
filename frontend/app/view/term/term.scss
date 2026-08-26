@@ -55,17 +55,17 @@
     }
 
     .term-connectelem {
-        flex-grow: 1;
-        min-height: 0;
+        flex: 1 1 auto;
+        min-height: 120px;
         overflow: hidden;
         line-height: 1;
         margin: 5px 1px 5px 4px;
     }
 
     .command-history {
-        flex: 0 1 38vh;
-        min-height: 96px;
-        max-height: 38vh;
+        flex: 0 1 32%;
+        min-height: 28px;
+        max-height: 32%;
         overflow: hidden;
         border-top: 1px solid var(--border-color);
         background: color-mix(in srgb, var(--main-bg-color) 94%, white);
@@ -89,7 +89,7 @@
         .command-history-health-degraded { color: var(--warning-color); }
         .command-history-health-unavailable { color: var(--error-color); }
         .command-history-message, .command-history-empty, .command-card-output-note { padding: 4px 8px; color: var(--secondary-text-color); }
-        .command-history-list { overflow: auto; max-height: calc(38vh - 32px); }
+        .command-history-list { overflow: auto; max-height: calc(100% - 32px); }
         .command-card { padding: 7px 8px; border-bottom: 1px solid var(--border-color); user-select: text; }
         .command-card-header, .command-card-meta, .command-card-actions { display: flex; align-items: center; gap: 8px; }
         .command-card-command { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: pre; }
