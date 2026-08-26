@@ -34,20 +34,23 @@ const (
 )
 
 type IntegrationEvent struct {
-	Kind             EventKind
-	ProtocolVersion  int
-	SessionEpoch     string
-	HookSequence     uint64
-	CommandID        string
-	Command          string
-	Cwd              string
-	ExitCode         *int
-	Success          *bool
-	Shell            string
-	ShellVersion     string
-	CompletionReason string
-	ExecutionMode    ExecutionMode
-	OutputSource     OutputSource
+	Kind                   EventKind
+	ProtocolVersion        int
+	SessionEpoch           string
+	HookSequence           uint64
+	CommandID              string
+	Command                string
+	Cwd                    string
+	ExitCode               *int
+	Success                *bool
+	Shell                  string
+	ShellVersion           string
+	CompletionReason       string
+	ExecutionMode          ExecutionMode
+	OutputSource           OutputSource
+	RuntimeHostID          string
+	RuntimeRunspaceID      string
+	CaptureContractVersion int
 }
 
 type StreamItemKind string

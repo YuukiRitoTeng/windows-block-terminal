@@ -25,6 +25,7 @@ func CloseDefault() error {
 	defaultMu.Lock()
 	defer defaultMu.Unlock()
 	if defaultStore == nil {
+		defaultErr = nil
 		return nil
 	}
 	err := defaultStore.Close()

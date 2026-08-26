@@ -79,14 +79,18 @@ func (c *HostedRuntimeConsumer) ObserveHostedRuntimeEvent(event shellexec.Hosted
 		accepted := c.journal.Apply(c.blockID, terminalruntime.StreamItem{
 			Kind: terminalruntime.StreamIntegrationEvent,
 			Event: terminalruntime.IntegrationEvent{
-				Kind:          terminalruntime.EventCommandStarted,
-				SessionEpoch:  c.runspaceID,
-				HookSequence:  sequence,
-				CommandID:     event.CommandID,
-				Command:       event.Command,
-				Cwd:           event.Cwd,
-				ExecutionMode: mode,
-				OutputSource:  source,
+				Kind:                   terminalruntime.EventCommandStarted,
+				SessionEpoch:           c.runspaceID,
+				HookSequence:           sequence,
+				CommandID:              event.CommandID,
+				Command:                event.Command,
+				Cwd:                    event.Cwd,
+				ExecutionMode:          mode,
+				OutputSource:           source,
+				RuntimeHostID:          event.HostID,
+				RuntimeRunspaceID:      event.RunspaceID,
+				CaptureContractVersion: 1,
+				ProtocolVersion:        1,
 			},
 		}, time.Now())
 		if accepted {
@@ -111,14 +115,18 @@ func (c *HostedRuntimeConsumer) ObserveHostedRuntimeEvent(event shellexec.Hosted
 		accepted := c.journal.Apply(c.blockID, terminalruntime.StreamItem{
 			Kind: terminalruntime.StreamIntegrationEvent,
 			Event: terminalruntime.IntegrationEvent{
-				Kind:          terminalruntime.EventCommandFinished,
-				SessionEpoch:  c.runspaceID,
-				HookSequence:  sequence,
-				CommandID:     event.CommandID,
-				Success:       event.Success,
-				ExitCode:      event.ExitCode,
-				ExecutionMode: c.activeMode,
-				OutputSource:  c.activeSource,
+				Kind:                   terminalruntime.EventCommandFinished,
+				SessionEpoch:           c.runspaceID,
+				HookSequence:           sequence,
+				CommandID:              event.CommandID,
+				Success:                event.Success,
+				ExitCode:               event.ExitCode,
+				ExecutionMode:          c.activeMode,
+				OutputSource:           c.activeSource,
+				RuntimeHostID:          c.hostID,
+				RuntimeRunspaceID:      c.runspaceID,
+				CaptureContractVersion: 1,
+				ProtocolVersion:        1,
 			},
 		}, time.Now())
 		if accepted {

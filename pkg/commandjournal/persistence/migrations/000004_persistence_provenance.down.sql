@@ -1,0 +1,2 @@
+-- SQLite cannot reliably drop these columns across supported versions.
+-- This migration is intentionally forward-only.
