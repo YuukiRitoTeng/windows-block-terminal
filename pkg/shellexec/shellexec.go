@@ -37,14 +37,15 @@ import (
 const DefaultGracefulKillWait = 400 * time.Millisecond
 
 type CommandOptsType struct {
-	Interactive bool                      `json:"interactive,omitempty"`
-	Login       bool                      `json:"login,omitempty"`
-	Cwd         string                    `json:"cwd,omitempty"`
-	BlockID     string                    `json:"blockId,omitempty"`
-	ShellPath   string                    `json:"shellPath,omitempty"`
-	ShellOpts   []string                  `json:"shellOpts,omitempty"`
-	SwapToken   *shellutil.TokenSwapEntry `json:"swapToken,omitempty"`
-	ForceJwt    bool                      `json:"forcejwt,omitempty"`
+	Interactive    bool                      `json:"interactive,omitempty"`
+	Login          bool                      `json:"login,omitempty"`
+	Cwd            string                    `json:"cwd,omitempty"`
+	BlockID        string                    `json:"blockId,omitempty"`
+	ShellPath      string                    `json:"shellPath,omitempty"`
+	ShellOpts      []string                  `json:"shellOpts,omitempty"`
+	SwapToken      *shellutil.TokenSwapEntry `json:"swapToken,omitempty"`
+	ForceJwt       bool                      `json:"forcejwt,omitempty"`
+	HostedObserver HostedRuntimeObserver     `json:"-"`
 }
 
 type ShellProc struct {
@@ -697,7 +698,7 @@ func StartLocalShellProc(logCtx context.Context, termSize waveobj.TermSize, cmdS
 	shellutil.UpdateCmdEnv(ecmd, envToAdd)
 	if useHostedPowerShell {
 		var err error
-		hostedSidechannelConn, err = prepareHostedPowerShell(&ecmd.Env, cmdOpts.BlockID)
+		hostedSidechannelConn, err = prepareHostedPowerShell(&ecmd.Env, cmdOpts.BlockID, cmdOpts.HostedObserver)
 		if err != nil {
 			return nil, err
 		}
@@ -713,6 +714,9 @@ func StartLocalShellProc(logCtx context.Context, termSize waveobj.TermSize, cmdS
 	shellutil.AddTokenSwapEntry(cmdOpts.SwapToken)
 	cmdPty, err := pty.StartWithSize(ecmd, &pty.Winsize{Rows: uint16(termSize.Rows), Cols: uint16(termSize.Cols)})
 	if err != nil {
+		if hostedSidechannelConn != nil {
+			_ = hostedSidechannelConn.listener.Close()
+		}
 		return nil, err
 	}
 	cmdWrap := MakeCmdWrap(ecmd, cmdPty, isShell)

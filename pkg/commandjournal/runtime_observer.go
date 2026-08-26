@@ -23,6 +23,9 @@ func NewRuntimeObserver(blockID string, journal *Journal) *RuntimeObserver {
 			observer.journal.MarkOutputIncomplete(blockID, chunk.DroppedBytes)
 		}
 		for _, item := range items {
+			if item.Kind == terminalruntime.StreamOutputSegment && (item.Source == "" || item.Source == terminalruntime.OutputSourceUnknown) {
+				item.Source = terminalruntime.OutputSourcePTY
+			}
 			observer.journal.Apply(blockID, item, time.Now())
 		}
 	})

@@ -58,6 +58,8 @@ type CommandRecord struct {
 	FinishHookSequence   uint64
 	Command              string
 	Cwd                  string
+	ExecutionMode        terminalruntime.ExecutionMode
+	OutputSource         terminalruntime.OutputSource
 	State                CommandState
 	CompletionReason     CompletionReason
 	VisibilityGeneration uint64
@@ -166,7 +168,8 @@ func (j *Journal) SetVisibilityGeneration(blockID string, generation uint64) {
 }
 
 // Apply consumes one ordered runtime item. It returns true only when the item
-// changes the journal state; output outside an active command is ignored.
+// changes the journal state; pending interactive records may still accept
+// PTY bytes until their liveness fence closes them.
 func (j *Journal) Apply(blockID string, item terminalruntime.StreamItem, observedAt time.Time) bool {
 	if j == nil || blockID == "" {
 		return false
@@ -180,48 +183,43 @@ func (j *Journal) Apply(blockID string, item terminalruntime.StreamItem, observe
 	case terminalruntime.StreamOutputSegment:
 		active := j.active[blockID]
 		if active == nil || len(item.Output) == 0 {
-			// Bytes after D are deliberately not attributed. They may be prompt,
-			// OSC, background, or delayed command output; without a causal fence
-			// the journal must not guess.
 			if active == nil && j.pending[blockID] != "" {
-				if record := j.completedRecordLocked(blockID, j.pending[blockID]); record != nil && record.OutputCompleteness == OutputCompletenessComplete {
-					record.OutputCompleteness = OutputCompletenessUnknown
-					record.OutputAttribution = OutputAttributionUnknown
-					if j.durable != nil {
-						_ = j.durable.RecordOutputFinalized(cloneRecord(*record))
+				if record := j.completedRecordLocked(blockID, j.pending[blockID]); record != nil {
+					source := item.Source
+					if source == "" || source == terminalruntime.OutputSourceUnknown {
+						source = terminalruntime.OutputSourcePTY
+					}
+					// Interactive hosted commands remain PTY-backed after D. Their
+					// delayed bytes are accepted until the normal liveness fence.
+					if len(item.Output) > 0 && record.ExecutionMode == terminalruntime.ExecutionModeInteractive && record.OutputSource == terminalruntime.OutputSourcePTY && source == terminalruntime.OutputSourcePTY {
+						j.appendOutputLocked(record, item.Output)
+						return true
+					}
+					if record.OutputCompleteness == OutputCompletenessComplete {
+						record.OutputCompleteness = OutputCompletenessUnknown
+						record.OutputAttribution = OutputAttributionUnknown
+						if j.durable != nil {
+							_ = j.durable.RecordOutputFinalized(cloneRecord(*record))
+						}
 					}
 				}
 			}
 			return false
 		}
-		active.OutputTotalBytes += int64(len(item.Output))
-		stored := int64(len(item.Output))
-		limit := j.outputLimit
-		if limited, ok := j.durable.(interface{ MaxOutputBytes() int64 }); ok {
-			limit = limited.MaxOutputBytes()
+		source := item.Source
+		if source == "" || source == terminalruntime.OutputSourceUnknown {
+			source = terminalruntime.OutputSourcePTY
 		}
-		remaining := limit - active.OutputStoredBytes
-		if remaining < stored {
-			stored = remaining
+		if active.OutputSource == terminalruntime.OutputSourceHostStructured && source != terminalruntime.OutputSourceHostStructured {
+			return false
 		}
-		if stored < 0 {
-			stored = 0
+		if active.OutputSource != terminalruntime.OutputSourceHostStructured && source == terminalruntime.OutputSourceHostStructured {
+			return false
 		}
-		if stored > 0 {
-			active.Output = append(active.Output, item.Output[:stored]...)
+		if active.OutputSource == "" || active.OutputSource == terminalruntime.OutputSourceUnknown {
+			active.OutputSource = source
 		}
-		active.OutputStoredBytes += stored
-		active.OutputTruncated = active.OutputStoredBytes < active.OutputTotalBytes
-		if active.OutputCompleteness != OutputCompletenessIncomplete && active.OutputTruncated {
-			active.OutputCompleteness = OutputCompletenessTruncated
-		}
-		if j.durable != nil {
-			if err := j.durable.AppendOutput(active.ID, item.Output); err != nil {
-				active.OutputCompleteness = OutputCompletenessIncomplete
-				active.OutputAttribution = OutputAttributionUnknown
-				active.OutputTextSafety = OutputTextSafetyUnknown
-			}
-		}
+		j.appendOutputLocked(active, item.Output)
 		return true
 	case terminalruntime.StreamIntegrationEvent:
 		event := item.Event
@@ -235,6 +233,14 @@ func (j *Journal) Apply(blockID string, item terminalruntime.StreamItem, observe
 			// not change that pending state.
 			j.finalizePendingLocked(blockID)
 			generation := j.generation[blockID]
+			mode := event.ExecutionMode
+			if mode == "" {
+				mode = terminalruntime.ExecutionModeUnknown
+			}
+			source := event.OutputSource
+			if source == "" {
+				source = terminalruntime.OutputSourceUnknown
+			}
 			j.active[blockID] = &CommandRecord{
 				ID:                   event.CommandID,
 				WaveBlockID:          blockID,
@@ -242,6 +248,8 @@ func (j *Journal) Apply(blockID string, item terminalruntime.StreamItem, observe
 				StartHookSequence:    event.HookSequence,
 				Command:              event.Command,
 				Cwd:                  event.Cwd,
+				ExecutionMode:        mode,
+				OutputSource:         source,
 				State:                StateRunning,
 				VisibilityGeneration: generation,
 				StartedAt:            observedAt,
@@ -266,13 +274,36 @@ func (j *Journal) Apply(blockID string, item terminalruntime.StreamItem, observe
 			active.ExitCode = cloneInt(event.ExitCode)
 			active.State = StateFinished
 			active.CompletionReason = CompletionNormal
-			active.OutputState = OutputStatePending
+			if active.ExecutionMode == terminalruntime.ExecutionModeStructured && active.OutputSource == terminalruntime.OutputSourceHostStructured {
+				active.OutputState = OutputStateClosed
+				if active.OutputCompleteness != OutputCompletenessIncomplete && !active.OutputTruncated {
+					active.OutputCompleteness = OutputCompletenessComplete
+					active.OutputAttribution = OutputAttributionExclusive
+				}
+			} else if active.ExecutionMode == terminalruntime.ExecutionModeInteractive {
+				// D completes execution only. Interactive output remains PTY-backed
+				// and can arrive until the existing liveness fence closes pending.
+				active.OutputState = OutputStatePending
+				if active.OutputCompleteness == "" {
+					active.OutputCompleteness = OutputCompletenessUnknown
+				}
+				active.OutputAttribution = OutputAttributionUnknown
+			} else {
+				active.OutputState = OutputStatePending
+			}
 			completed := cloneRecord(*active)
 			j.completed[blockID] = append(j.completed[blockID], completed)
-			j.pending[blockID] = active.ID
+			if completed.OutputState == OutputStatePending {
+				j.pending[blockID] = active.ID
+			} else {
+				delete(j.pending, blockID)
+			}
 			delete(j.active, blockID)
 			if j.durable != nil {
 				_ = j.durable.RecordFinished(completed)
+				if completed.OutputState == OutputStateClosed {
+					_ = j.durable.RecordOutputFinalized(completed)
+				}
 			}
 			return true
 		case terminalruntime.EventCommandAborted:
@@ -284,6 +315,40 @@ func (j *Journal) Apply(blockID string, item terminalruntime.StreamItem, observe
 		}
 	}
 	return false
+}
+
+func (j *Journal) appendOutputLocked(record *CommandRecord, output []byte) {
+	if record == nil || len(output) == 0 {
+		return
+	}
+	record.OutputTotalBytes += int64(len(output))
+	stored := int64(len(output))
+	limit := j.outputLimit
+	if limited, ok := j.durable.(interface{ MaxOutputBytes() int64 }); ok {
+		limit = limited.MaxOutputBytes()
+	}
+	remaining := limit - record.OutputStoredBytes
+	if remaining < stored {
+		stored = remaining
+	}
+	if stored < 0 {
+		stored = 0
+	}
+	if stored > 0 {
+		record.Output = append(record.Output, output[:stored]...)
+	}
+	record.OutputStoredBytes += stored
+	record.OutputTruncated = record.OutputStoredBytes < record.OutputTotalBytes
+	if record.OutputCompleteness != OutputCompletenessIncomplete && record.OutputTruncated {
+		record.OutputCompleteness = OutputCompletenessTruncated
+	}
+	if j.durable != nil {
+		if err := j.durable.AppendOutput(record.ID, output); err != nil {
+			record.OutputCompleteness = OutputCompletenessIncomplete
+			record.OutputAttribution = OutputAttributionUnknown
+			record.OutputTextSafety = OutputTextSafetyUnknown
+		}
+	}
 }
 
 // AbortActive closes the current record without inventing a finish result.

@@ -72,6 +72,7 @@ type ShellController struct {
 	commandJournal           *commandjournal.Journal
 	journalPersistence       *persistence.Store
 	journalObserver          *commandjournal.RuntimeObserver
+	hostedRuntimeObserver    *commandjournal.HostedRuntimeConsumer
 	journalUnregister        func()
 	terminationMu            sync.Mutex
 	pendingTerminationReason commandjournal.CompletionReason
@@ -161,6 +162,7 @@ func (sc *ShellController) attachCommandJournal() {
 	}
 	sc.journalMu.Unlock()
 	observer := commandjournal.NewRuntimeObserver(sc.BlockId, journal)
+	hostedObserver := commandjournal.NewHostedRuntimeConsumer(sc.BlockId, journal)
 	unregister := RegisterOutputObserver(sc.BlockId, observer)
 	sc.journalMu.Lock()
 	if sc.journalObserver != nil {
@@ -170,6 +172,7 @@ func (sc *ShellController) attachCommandJournal() {
 		return
 	}
 	sc.journalObserver = observer
+	sc.hostedRuntimeObserver = hostedObserver
 	sc.journalUnregister = unregister
 	sc.journalMu.Unlock()
 }
@@ -177,9 +180,11 @@ func (sc *ShellController) attachCommandJournal() {
 func (sc *ShellController) detachCommandJournal(reason commandjournal.CompletionReason) {
 	sc.journalMu.Lock()
 	observer := sc.journalObserver
+	hostedObserver := sc.hostedRuntimeObserver
 	unregister := sc.journalUnregister
 	journal := sc.commandJournal
 	sc.journalObserver = nil
+	sc.hostedRuntimeObserver = nil
 	sc.journalUnregister = nil
 	sc.journalMu.Unlock()
 	if unregister != nil {
@@ -187,6 +192,9 @@ func (sc *ShellController) detachCommandJournal(reason commandjournal.Completion
 	}
 	if observer != nil {
 		observer.Close()
+	}
+	if hostedObserver != nil {
+		hostedObserver.Close()
 	}
 	if journal != nil {
 		journal.AbortActive(sc.BlockId, reason, time.Now())
@@ -517,6 +525,16 @@ func (bc *ShellController) setupAndStartShellProcess(logCtx context.Context, rc 
 	swapToken := makeSwapToken(ctx, logCtx, bc.BlockId, blockMeta, remoteName, connUnion.ShellType)
 	cmdOpts.SwapToken = swapToken
 	cmdOpts.BlockID = bc.BlockId
+	bc.attachCommandJournal()
+	journalStarted := false
+	defer func() {
+		if !journalStarted {
+			bc.detachCommandJournal(commandjournal.CompletionPTYError)
+		}
+	}()
+	bc.journalMu.Lock()
+	cmdOpts.HostedObserver = bc.hostedRuntimeObserver
+	bc.journalMu.Unlock()
 	blocklogger.Debugf(logCtx, "[conndebug] created swaptoken: %s\n", swapToken.Token)
 	if connUnion.ConnType == ConnType_Wsl {
 		wslConn := connUnion.WslConn
@@ -613,7 +631,7 @@ func (bc *ShellController) setupAndStartShellProcess(logCtx context.Context, rc 
 		bc.ProcStatus = Status_Running
 		return true
 	})
-	bc.attachCommandJournal()
+	journalStarted = true
 	return shellProc, nil
 }
 

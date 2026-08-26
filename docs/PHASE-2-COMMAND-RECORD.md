@@ -37,21 +37,24 @@ exit code finalizes execution; output finalization is independent and requires
 a proven output boundary.
 Output snapshots and record getters use defensive copies.
 
-This is an in-memory vertical slice. Persistence, normalization, pagination,
-and UI projections are deferred.
+The Journal remains the product-owned domain boundary. The hosted structured
+runtime now feeds it through the production adapter, while the existing
+persistence seam stores the resulting records. This phase does not add a new
+SQLite schema migration, final normalization policy, pagination API, or UI
+projection.
 
 ## Production wiring
 
-`ShellController` creates one runtime observer when a shell process starts and
-registers it by `BlockId` before the PTY read loop consumes output. On shell
-stop or read-loop termination, the observer unregisters and closes after
-accepted bytes drain; any still-active record is then recovered by the Phase 3
-termination fence. The observer copies/enqueues raw bytes; parsing and journal
-updates remain off the PTY critical path. The in-memory Journal remains
-controller-owned across observer detach.
+`ShellController` creates the PTY observer and the hosted structured consumer
+before the shell process starts. Hosted sidechannel events are authenticated,
+bound to one host/Runspace/command identity, and applied directly to the
+controller-owned Journal. PTY observation remains asynchronous and does not
+block the authoritative terminal path. On shell stop or read-loop termination,
+both observers close fail-closed; any still-active record is recovered by the
+existing termination fence.
 
 ## Deferred scope
 
-Command Cards, persistence, output normalization, Clear Visual History,
+Command Cards, final persistence schema/UX, output normalization, Clear Visual History,
 crash/reconnect recovery, integration-loss recovery, advanced TUI/REPL
 compatibility, and UI work remain future phases.
