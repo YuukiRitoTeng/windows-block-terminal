@@ -376,7 +376,7 @@ func plainTextOutput(data []byte) bool {
 		return false
 	}
 	for _, r := range string(data) {
-		if (r < 0x20 && r != '\r' && r != '\n' && r != '\t') || r == 0x7f || r == 0x1b {
+		if (r < 0x20 && r != '\r' && r != '\n' && r != '\t') || (r >= 0x80 && r <= 0x9f) || r == 0x7f || r == 0x1b {
 			return false
 		}
 	}

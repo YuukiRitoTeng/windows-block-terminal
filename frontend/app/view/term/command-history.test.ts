@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { canCopyOutput, clearProductHistory, limitVisibleRecords, projectOutput, sanitizeTerminalText } from "./command-history";
+import { canCopyOutput, clearProductHistory, HistoryRequestEpoch, limitVisibleRecords, projectOutput, sanitizeTerminalText } from "./command-history";
 
 const record = (overrides: Partial<RecordView> = {}): RecordView => ({
     id: "cmd-1", wave_block_id: "block-1", session_epoch: "epoch", start_hook_sequence: 1,
@@ -34,6 +34,19 @@ describe("command history product seam", () => {
         expect(sanitizeTerminalText("\u001b[mmanual-success\u001b[0m\r\n")).toBe("manual-success\r\n");
         expect(sanitizeTerminalText("manual-success")).toBe("manual-success");
         expect(sanitizeTerminalText("bad\u0007output")).toBeNull();
+        expect(sanitizeTerminalText("bad\u009boutput")).toBeNull();
+        expect(sanitizeTerminalText("bad\u0085output")).toBeNull();
+        expect(sanitizeTerminalText("正常\t文本\n仍然\r可用")).toBe("正常\t文本\n仍然\r可用");
+    });
+
+    it("rejects stale history responses after clear or block changes", () => {
+        const epoch = new HistoryRequestEpoch();
+        const beforeClear = epoch.capture();
+        epoch.bump();
+        expect(epoch.isCurrent(beforeClear)).toBe(false);
+        const oldBlock = epoch.capture();
+        epoch.bump();
+        expect(epoch.isCurrent(oldBlock)).toBe(false);
     });
 
     it("clears the terminal only after backend success", async () => {

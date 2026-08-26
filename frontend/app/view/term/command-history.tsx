@@ -13,6 +13,20 @@ export type OutputProjection =
     | { kind: "safe"; text: string }
     | { kind: "unsafe"; reason: string };
 
+export class HistoryRequestEpoch {
+    private value = 0;
+    bump(): number {
+        this.value += 1;
+        return this.value;
+    }
+    capture(): number {
+        return this.value;
+    }
+    isCurrent(captured: number): boolean {
+        return captured === this.value;
+    }
+}
+
 // PTY text commonly contains ANSI styling (for example ESC[m).  Those
 // sequences are terminal presentation bytes, not binary command output.  Strip
 // the well-known CSI/OSC forms before projecting text into cards/clipboard,
@@ -26,7 +40,7 @@ export function sanitizeTerminalText(text: string): string | null {
         .replace(new RegExp(`${esc}[()][0-2A-Z0-9]`, "g"), "");
     for (const char of sanitized) {
         const code = char.charCodeAt(0);
-        if ((code <= 0x08 || (code >= 0x0b && code <= 0x1f) || code === 0x7f || code === 0x1b) && code !== 0x09 && code !== 0x0a && code !== 0x0d) {
+        if ((code <= 0x08 || (code >= 0x0b && code <= 0x1f) || (code >= 0x80 && code <= 0x9f) || code === 0x7f || code === 0x1b) && code !== 0x09 && code !== 0x0a && code !== 0x0d) {
             return null;
         }
     }
@@ -113,18 +127,15 @@ const CommandCard = ({
     onLoadOutput,
     onCopy,
     onCopyAll,
-    onFocusTerminal,
 }: {
     record: RecordView;
     output?: OutputState;
     onLoadOutput: () => void;
     onCopy: (kind: "command" | "output") => void;
     onCopyAll: () => void;
-    onFocusTerminal: () => void;
 }) => {
     const copyButtonProps = {
         onMouseDown: (event: React.MouseEvent<HTMLButtonElement>) => event.preventDefault(),
-        onBlur: onFocusTerminal,
         type: "button" as const,
     };
     return (
@@ -163,18 +174,23 @@ export const CommandHistory = ({ blockId, model }: CommandHistoryProps) => {
     const [outputs, setOutputs] = React.useState<Record<string, OutputState>>({});
     const [message, setMessage] = React.useState<string | null>(null);
     const mounted = React.useRef(true);
+    const requestEpoch = React.useRef(new HistoryRequestEpoch());
 
     const refresh = React.useCallback(async () => {
+        const capturedEpoch = requestEpoch.current.capture();
         try {
             const next = await services.CommandJournalService.ListVisibleRecords(blockId);
-            if (mounted.current) setRecords(limitVisibleRecords(next ?? []));
+            if (mounted.current && requestEpoch.current.isCurrent(capturedEpoch)) setRecords(limitVisibleRecords(next ?? []));
         } catch (error) {
-            if (mounted.current) setMessage(`History unavailable: ${String(error)}`);
+            if (mounted.current && requestEpoch.current.isCurrent(capturedEpoch)) setMessage(`History unavailable: ${String(error)}`);
         }
     }, [blockId]);
 
     React.useEffect(() => {
         mounted.current = true;
+        requestEpoch.current.bump();
+        setRecords([]);
+        setOutputs({});
         void refresh();
         const interval = window.setInterval(() => void refresh(), 750);
         const healthInterval = window.setInterval(async () => {
@@ -192,7 +208,6 @@ export const CommandHistory = ({ blockId, model }: CommandHistoryProps) => {
         };
     }, [refresh]);
 
-    const focusTerminal = React.useCallback(() => model.giveFocus(), [model]);
     const loadOutput = React.useCallback(async (record: RecordView) => {
         const current = outputs[record.id];
         if (current?.projection) {
@@ -238,6 +253,7 @@ export const CommandHistory = ({ blockId, model }: CommandHistoryProps) => {
 
     const clear = React.useCallback(async () => {
         try {
+            requestEpoch.current.bump();
             await clearProductHistory(blockId, services.CommandJournalService, () => model.termRef.current?.clearVisualBuffer());
             setOutputs({});
             await refresh();
@@ -266,7 +282,6 @@ export const CommandHistory = ({ blockId, model }: CommandHistoryProps) => {
                         onLoadOutput={() => void loadOutput(record)}
                         onCopy={(kind) => void copyRecord(record, kind)}
                         onCopyAll={() => void copyRecord(record, "all")}
-                        onFocusTerminal={focusTerminal}
                     />
                 ))}
                 {records.length === 0 && <div className="command-history-empty">No completed commands in the current visible generation.</div>}

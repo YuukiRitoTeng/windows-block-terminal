@@ -14,6 +14,15 @@ type blockingDurable struct {
 	generation uint64
 }
 
+func TestPlainTextOutputRejectsC1Controls(t *testing.T) {
+	if !plainTextOutput([]byte("normal\ttext\n")) {
+		t.Fatal("ordinary UTF-8 text should be trusted")
+	}
+	if plainTextOutput([]byte("bad\x9bcontrol")) || plainTextOutput([]byte("bad\x85control")) {
+		t.Fatal("C1 control bytes must remain unsafe")
+	}
+}
+
 func (d *blockingDurable) RecordStarted(CommandRecord) error         { return nil }
 func (d *blockingDurable) AppendOutput(string, []byte) error         { return nil }
 func (d *blockingDurable) RecordFinished(CommandRecord) error        { return nil }
