@@ -396,6 +396,31 @@ func TestRowsAffectedFailureIsReturned(t *testing.T) {
 	if err := s.RetagRecordGeneration("missing", 1); !errors.Is(err, ErrRecordNotFound) {
 		t.Fatalf("missing row retag error=%v", err)
 	}
+	if err := s.Degraded(); !errors.Is(err, ErrRecordNotFound) {
+		t.Fatalf("missing row retag did not fail closed: %v", err)
+	}
+	_ = s.Close()
+}
+
+func TestMissingCommandEventIsCommandScoped(t *testing.T) {
+	s, _ := openTest(t, Options{Enabled: true})
+	missing := testRecord()
+	if err := s.RecordFinished(missing); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Flush(); err != nil {
+		t.Fatalf("missing command poisoned store: %v", err)
+	}
+	if err := s.Degraded(); err != nil {
+		t.Fatalf("missing command set global degraded state: %v", err)
+	}
+	r := testRecord()
+	if err := s.RecordStarted(r); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Flush(); err != nil {
+		t.Fatal(err)
+	}
 	_ = s.Close()
 }
 
@@ -439,7 +464,7 @@ func TestAsyncWriterFailureCannotRemainDurablyComplete(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer reopened.Close()
+	defer func() { _ = reopened.Close() }()
 	record, err := reopened.ReadRecord(r.ID)
 	if err != nil || record == nil || record.OutputCompleteness == commandjournal.OutputCompletenessComplete || record.OutputAttribution == commandjournal.OutputAttributionExclusive {
 		t.Fatalf("writer failure left trusted metadata: %#v err=%v", record, err)

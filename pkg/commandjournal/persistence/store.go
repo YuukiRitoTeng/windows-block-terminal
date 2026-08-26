@@ -330,9 +330,10 @@ func (s *Store) run() {
 		err := result.err
 		if err != nil {
 			s.mu.Lock()
-			s.degraded = err
-			if e.kind == eventOutput && e.commandID != "" {
-				s.failedCommands[e.commandID] = err
+			if commandID, scoped := commandScopedMissing(e, err); scoped {
+				s.failedCommands[commandID] = err
+			} else {
+				s.degraded = err
 			}
 			s.mu.Unlock()
 			if s.errorHandler != nil {
@@ -348,6 +349,23 @@ func (s *Store) run() {
 			e.result <- result
 		}
 	}
+}
+
+func commandScopedMissing(e event, err error) (string, bool) {
+	if !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, ErrRecordNotFound) {
+		return "", false
+	}
+	if e.kind == eventRetag || e.kind == eventStarted {
+		return "", false
+	}
+	commandID := e.commandID
+	if commandID == "" {
+		commandID = e.record.ID
+	}
+	if commandID == "" {
+		return "", false
+	}
+	return commandID, true
 }
 
 func (s *Store) process(e event) eventResult {
