@@ -90,7 +90,11 @@ export class TermWrap {
 
     /** Clear only rendered terminal state; the underlying shell session is untouched. */
     clearVisualBuffer() {
-        this.terminal.clear();
+        // Feed display-only controls through xterm's parser. This clears both the
+        // visible screen (ED 2J) and scrollback (ED 3J), then leaves the cursor at
+        // the home position without sending anything to the shell or resetting
+        // terminal modes/session state.
+        this.terminal.write("\x1b[2J\x1b[3J\x1b[H");
         this.heldData = [];
     }
     handleResize_debounced: () => void;

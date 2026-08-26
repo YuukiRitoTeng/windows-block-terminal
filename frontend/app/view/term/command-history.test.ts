@@ -26,6 +26,14 @@ describe("command history product seam", () => {
         expect(styles).not.toContain("38vh");
     });
 
+    it("clears the rendered terminal through xterm display controls only", () => {
+        const termwrap = readFileSync(new URL("./termwrap.ts", import.meta.url), "utf8");
+        expect(termwrap).toContain(String.raw`this.terminal.write("\x1b[2J\x1b[3J\x1b[H")`);
+        expect(termwrap).toContain("this.heldData = [];");
+        expect(termwrap).not.toContain("this.sendDataHandler(\"\\x1b[2J");
+        expect(termwrap).not.toContain("this.terminal.reset()");
+    });
+
     it("projects safe output and rejects terminal bytes or truncation", () => {
         expect(projectOutput(record(), "b2s=")).toEqual({ kind: "safe", text: "ok" });
         expect(projectOutput(record(), "G1t") .kind).toBe("unsafe");
