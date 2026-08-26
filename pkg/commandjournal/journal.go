@@ -3,6 +3,7 @@ package commandjournal
 import (
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/wavetermdev/waveterm/pkg/terminalruntime"
 )
@@ -25,6 +26,7 @@ const (
 	OutputAttributionMixed       = "mixed"
 	OutputTextSafetyUnknown      = "unknown"
 	OutputTextSafetyPlain        = "plain_text"
+	OutputTextSafetyUnsafe       = "unsafe"
 )
 
 // OutputState describes capture finalization independently from command
@@ -280,6 +282,9 @@ func (j *Journal) Apply(blockID string, item terminalruntime.StreamItem, observe
 			active.FinishedAt = &finishedAt
 			active.Success = cloneBool(event.Success)
 			active.ExitCode = cloneInt(event.ExitCode)
+			if active.ExecutionMode == terminalruntime.ExecutionModeStructured && active.OutputSource == terminalruntime.OutputSourceHostStructured && active.OutputTotalBytes == 0 {
+				active.OutputTextSafety = OutputTextSafetyPlain
+			}
 			active.State = StateFinished
 			active.CompletionReason = CompletionNormal
 			if active.ExecutionMode == terminalruntime.ExecutionModeStructured && active.OutputSource == terminalruntime.OutputSourceHostStructured {
@@ -345,6 +350,13 @@ func (j *Journal) appendOutputLocked(record *CommandRecord, output []byte) {
 	if stored > 0 {
 		record.Output = append(record.Output, output[:stored]...)
 	}
+	if record.OutputSource == terminalruntime.OutputSourceHostStructured {
+		if record.OutputTextSafety != OutputTextSafetyUnsafe && plainTextOutput(output) {
+			record.OutputTextSafety = OutputTextSafetyPlain
+		} else if !plainTextOutput(output) {
+			record.OutputTextSafety = OutputTextSafetyUnsafe
+		}
+	}
 	record.OutputStoredBytes += stored
 	record.OutputTruncated = record.OutputStoredBytes < record.OutputTotalBytes
 	if record.OutputCompleteness != OutputCompletenessIncomplete && record.OutputTruncated {
@@ -357,6 +369,18 @@ func (j *Journal) appendOutputLocked(record *CommandRecord, output []byte) {
 			record.OutputTextSafety = OutputTextSafetyUnknown
 		}
 	}
+}
+
+func plainTextOutput(data []byte) bool {
+	if !utf8.Valid(data) {
+		return false
+	}
+	for _, r := range string(data) {
+		if (r < 0x20 && r != '\r' && r != '\n' && r != '\t') || (r >= 0x80 && r <= 0x9f) || r == 0x7f || r == 0x1b {
+			return false
+		}
+	}
+	return true
 }
 
 // AbortActive closes the current record without inventing a finish result.

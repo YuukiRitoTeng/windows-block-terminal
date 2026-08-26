@@ -1273,6 +1273,7 @@ declare global {
         completeness: string;
         attribution: string;
         text_safety: string;
+        output_state: string;
     };
 
     // wshrpc.PathCommandData
@@ -1346,6 +1347,12 @@ declare global {
         finish_hook_sequence: number;
         command: string;
         cwd: string;
+        execution_mode: string;
+        output_source: string;
+        runtime_host_id: string;
+        runtime_runspace_id: string;
+        capture_contract_version: number;
+        protocol_version: number;
         state: string;
         completion_reason: string;
         visibility_generation: number;
@@ -1355,6 +1362,7 @@ declare global {
         output_completeness: string;
         output_attribution: string;
         output_text_safety: string;
+        output_state: string;
         started_at_unix_ms: number;
         finished_at_unix_ms?: number;
         success?: boolean;
