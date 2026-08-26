@@ -6,9 +6,9 @@ Windows 11 + PowerShell 7 Block Terminal.
 
 ## Current Status
 
-Phase 0–5 currently constitute a backend feasibility and domain foundation.
-They are not a fully frozen product architecture. The next gate is Product
-Evidence Gate preparation / Phase 0–5 remediation.
+Phase 2 — Hosted Structured Output Migration is the active implementation
+phase. The hosted runtime is opt-in; the default Wave runtime remains
+unchanged.
 
 ## Runtime Authority
 
@@ -37,6 +37,11 @@ Terminal Session
    └─ future presentation / Card projections
 ```
 
+For the hosted runtime, structured ordinary output reaches the Journal through
+an authenticated sidechannel and `HostedRuntimeConsumer`. Interactive programs
+remain live PTY/xterm sessions and are not represented as exact structured
+output.
+
 Core invariants that are currently retained:
 
 - Wave Block = terminal session
@@ -57,8 +62,9 @@ Copy output
 ```
 
 The current backend exposes raw captured output together with truncation,
-completeness, attribution and text-safety metadata. Raw PTY bytes are not yet
-the final Card or Copy Output contract.
+completeness, attribution and text-safety metadata. Hosted structured output
+is authoritative for hosted ordinary commands; PTY bytes remain the live
+terminal path and are not duplicated into those records.
 
 ## Lifecycle and Output Boundary Contract
 
@@ -95,7 +101,7 @@ The following remain conditional until a real product vertical slice exists:
 
 ## Current Phase
 
-Product Evidence Gate preparation / Phase 0–5 remediation.
+Phase 2 — Hosted Structured Output Migration.
 
-The next product work must prove a minimal read/control path beside xterm.js
-before a broader architecture freeze or visual productization.
+No frontend productization, final schema freeze, persistence redesign, or
+default-runtime migration is implied by this phase.

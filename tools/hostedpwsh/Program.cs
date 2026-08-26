@@ -231,7 +231,7 @@ static class Program
         var id = $"{runspace!.InstanceId:N}-{Interlocked.Increment(ref commandNumber)}";
         var directNative = IsDirectNative(command);
         trace!.Write($"INVOKE_BEGIN command_id={id} mode=structured direct_native={directNative} command={Escape(command)} runspace_id={runspace.InstanceId}");
-        sidechannel!.Send(new { kind = "command_started", hostId = Environment.ProcessId.ToString(CultureInfo.InvariantCulture), runspaceId = runspace.InstanceId.ToString("N"), commandId = id, mode = "structured", command });
+        sidechannel!.Send(new { kind = "command_started", hostId = Environment.ProcessId.ToString(CultureInfo.InvariantCulture), runspaceId = runspace.InstanceId.ToString("N"), commandId = id, mode = "structured", command, cwd = CurrentCwd() });
         using var ps = PowerShell.Create();
         currentInvocation = ps;
         ps.Runspace = runspace;
@@ -279,7 +279,7 @@ static class Program
         var id = $"{runspace!.InstanceId:N}-{Interlocked.Increment(ref commandNumber)}";
         interactiveChildActive = true;
         trace!.Write($"INTERACTIVE_BEGIN command_id={id} executable={Escape(executable)} runspace_id={runspace.InstanceId}");
-        sidechannel!.Send(new { kind = "command_started", hostId = Environment.ProcessId.ToString(CultureInfo.InvariantCulture), runspaceId = runspace.InstanceId.ToString("N"), commandId = id, mode = "interactive", command = executable });
+        sidechannel!.Send(new { kind = "command_started", hostId = Environment.ProcessId.ToString(CultureInfo.InvariantCulture), runspaceId = runspace.InstanceId.ToString("N"), commandId = id, mode = "interactive", command = executable, cwd = CurrentCwd() });
         using var child = new System.Diagnostics.Process
         {
             StartInfo = new System.Diagnostics.ProcessStartInfo
@@ -331,6 +331,12 @@ static class Program
     static void EmitOutput(string text, string? commandId, string stream)
     {
         sidechannel?.Send(new { kind = "output", hostId = Environment.ProcessId.ToString(CultureInfo.InvariantCulture), runspaceId = runspace?.InstanceId.ToString("N"), commandId, mode = "structured", stream, data = text });
+    }
+
+    static string CurrentCwd()
+    {
+        try { return runspace?.SessionStateProxy.Path.CurrentFileSystemLocation.Path ?? ""; }
+        catch { return ""; }
     }
 
     static void EmitFinished(string id, bool success, int exitCode, bool interrupted)

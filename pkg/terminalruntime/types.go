@@ -12,6 +12,27 @@ const (
 	EventShellMetadata   EventKind = "shell_metadata"
 )
 
+// ExecutionMode identifies whether a lifecycle event belongs to a structured
+// command or an interactive program handed to the live terminal.
+type ExecutionMode string
+
+const (
+	ExecutionModeUnknown     ExecutionMode = "unknown"
+	ExecutionModeStructured  ExecutionMode = "structured"
+	ExecutionModeInteractive ExecutionMode = "interactive"
+)
+
+// OutputSource identifies the authority for command output bytes. PTY bytes
+// remain useful for the live terminal, but hosted structured commands use the
+// authenticated host sidechannel as their journal authority.
+type OutputSource string
+
+const (
+	OutputSourceUnknown        OutputSource = "unknown"
+	OutputSourcePTY            OutputSource = "pty"
+	OutputSourceHostStructured OutputSource = "hostStructured"
+)
+
 type IntegrationEvent struct {
 	Kind             EventKind
 	ProtocolVersion  int
@@ -25,6 +46,8 @@ type IntegrationEvent struct {
 	Shell            string
 	ShellVersion     string
 	CompletionReason string
+	ExecutionMode    ExecutionMode
+	OutputSource     OutputSource
 }
 
 type StreamItemKind string
@@ -40,6 +63,7 @@ type StreamItem struct {
 	Kind   StreamItemKind
 	Output []byte
 	Event  IntegrationEvent
+	Source OutputSource
 }
 
 type OutputChunk struct {

@@ -58,6 +58,8 @@ type CommandRecord struct {
 	FinishHookSequence   uint64
 	Command              string
 	Cwd                  string
+	ExecutionMode        terminalruntime.ExecutionMode
+	OutputSource         terminalruntime.OutputSource
 	State                CommandState
 	CompletionReason     CompletionReason
 	VisibilityGeneration uint64
@@ -194,6 +196,19 @@ func (j *Journal) Apply(blockID string, item terminalruntime.StreamItem, observe
 			}
 			return false
 		}
+		source := item.Source
+		if source == "" || source == terminalruntime.OutputSourceUnknown {
+			source = terminalruntime.OutputSourcePTY
+		}
+		if active.OutputSource == terminalruntime.OutputSourceHostStructured && source != terminalruntime.OutputSourceHostStructured {
+			return false
+		}
+		if active.OutputSource != terminalruntime.OutputSourceHostStructured && source == terminalruntime.OutputSourceHostStructured {
+			return false
+		}
+		if active.OutputSource == "" || active.OutputSource == terminalruntime.OutputSourceUnknown {
+			active.OutputSource = source
+		}
 		active.OutputTotalBytes += int64(len(item.Output))
 		stored := int64(len(item.Output))
 		limit := j.outputLimit
@@ -235,6 +250,14 @@ func (j *Journal) Apply(blockID string, item terminalruntime.StreamItem, observe
 			// not change that pending state.
 			j.finalizePendingLocked(blockID)
 			generation := j.generation[blockID]
+			mode := event.ExecutionMode
+			if mode == "" {
+				mode = terminalruntime.ExecutionModeUnknown
+			}
+			source := event.OutputSource
+			if source == "" {
+				source = terminalruntime.OutputSourceUnknown
+			}
 			j.active[blockID] = &CommandRecord{
 				ID:                   event.CommandID,
 				WaveBlockID:          blockID,
@@ -242,6 +265,8 @@ func (j *Journal) Apply(blockID string, item terminalruntime.StreamItem, observe
 				StartHookSequence:    event.HookSequence,
 				Command:              event.Command,
 				Cwd:                  event.Cwd,
+				ExecutionMode:        mode,
+				OutputSource:         source,
 				State:                StateRunning,
 				VisibilityGeneration: generation,
 				StartedAt:            observedAt,
@@ -266,13 +291,34 @@ func (j *Journal) Apply(blockID string, item terminalruntime.StreamItem, observe
 			active.ExitCode = cloneInt(event.ExitCode)
 			active.State = StateFinished
 			active.CompletionReason = CompletionNormal
-			active.OutputState = OutputStatePending
+			if active.ExecutionMode == terminalruntime.ExecutionModeStructured && active.OutputSource == terminalruntime.OutputSourceHostStructured {
+				active.OutputState = OutputStateClosed
+				if active.OutputCompleteness != OutputCompletenessIncomplete && !active.OutputTruncated {
+					active.OutputCompleteness = OutputCompletenessComplete
+					active.OutputAttribution = OutputAttributionExclusive
+				}
+			} else if active.ExecutionMode == terminalruntime.ExecutionModeInteractive {
+				active.OutputState = OutputStateClosed
+				if active.OutputCompleteness == "" {
+					active.OutputCompleteness = OutputCompletenessUnknown
+				}
+				active.OutputAttribution = OutputAttributionUnknown
+			} else {
+				active.OutputState = OutputStatePending
+			}
 			completed := cloneRecord(*active)
 			j.completed[blockID] = append(j.completed[blockID], completed)
-			j.pending[blockID] = active.ID
+			if completed.OutputState == OutputStatePending {
+				j.pending[blockID] = active.ID
+			} else {
+				delete(j.pending, blockID)
+			}
 			delete(j.active, blockID)
 			if j.durable != nil {
 				_ = j.durable.RecordFinished(completed)
+				if completed.OutputState == OutputStateClosed {
+					_ = j.durable.RecordOutputFinalized(completed)
+				}
 			}
 			return true
 		case terminalruntime.EventCommandAborted:
