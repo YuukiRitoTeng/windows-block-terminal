@@ -40,7 +40,7 @@ func TestHostedRuntimeConsumerBuildsAuthoritativeRecord(t *testing.T) {
 		t.Fatalf("records=%#v", records)
 	}
 	record := records[0]
-	if !bytes.Equal(record.Output, []byte("hello world\r\n")) || record.State != StateFinished || record.OutputState != OutputStateClosed || record.OutputCompleteness != OutputCompletenessComplete || record.OutputAttribution != OutputAttributionExclusive {
+	if !bytes.Equal(record.Output, []byte("hello world\r\n")) || record.State != StateFinished || record.OutputState != OutputStateClosed || record.OutputCompleteness != OutputCompletenessComplete || record.OutputAttribution != OutputAttributionExclusive || record.OutputTextSafety != OutputTextSafetyPlain {
 		t.Fatalf("unexpected hosted record: %#v", record)
 	}
 	if record.OutputSource != terminalruntime.OutputSourceHostStructured || record.ExecutionMode != terminalruntime.ExecutionModeStructured || record.Success == nil || !*record.Success || record.ExitCode == nil || *record.ExitCode != 0 {
