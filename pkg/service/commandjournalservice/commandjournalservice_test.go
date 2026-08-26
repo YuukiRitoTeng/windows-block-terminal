@@ -2,6 +2,7 @@ package commandjournalservice
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -101,12 +102,12 @@ func TestRecorderOverflowIsNotReportedAsComplete(t *testing.T) {
 	if !j.Apply("block-incomplete", terminalruntime.StreamItem{Kind: terminalruntime.StreamIntegrationEvent, Event: terminalruntime.IntegrationEvent{Kind: terminalruntime.EventCommandFinished, SessionEpoch: start.SessionEpoch, HookSequence: 2, CommandID: start.ID, Success: &success, ExitCode: &code}}, time.Now()) {
 		t.Fatal("finish not recorded")
 	}
-	if err := store.Flush(); err != nil {
-		t.Fatal(err)
+	if err := store.Flush(); !errors.Is(err, persistence.ErrOutputQueueOverflow) {
+		t.Fatalf("flush error=%v", err)
 	}
-	view, err := (&CommandJournalService{Store: store}).GetRecord(context.Background(), start.ID)
-	if err != nil || view == nil || view.OutputCompleteness != commandjournal.OutputCompletenessIncomplete {
-		t.Fatalf("incomplete output was reported complete: %#v err=%v", view, err)
+	record, err := store.ReadRecord(start.ID)
+	if err != nil || record == nil || record.OutputCompleteness != commandjournal.OutputCompletenessIncomplete || record.OutputAttribution == commandjournal.OutputAttributionExclusive {
+		t.Fatalf("incomplete output was reported complete: %#v err=%v", record, err)
 	}
 }
 

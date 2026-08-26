@@ -1,6 +1,7 @@
 package persistence
 
 import (
+	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
@@ -8,11 +9,14 @@ import (
 	"time"
 
 	"github.com/wavetermdev/waveterm/pkg/commandjournal"
+	"github.com/wavetermdev/waveterm/pkg/terminalruntime"
 )
 
 func testRecord() commandjournal.CommandRecord {
 	return commandjournal.CommandRecord{ID: "c1", WaveBlockID: "b1", SessionEpoch: "e1", StartHookSequence: 1, Command: "echo hi", Cwd: "C:\\", State: commandjournal.StateRunning, StartedAt: time.UnixMilli(1000)}
 }
+
+func ptrTime(value time.Time) *time.Time { return &value }
 
 func openTest(t *testing.T, opts Options) (*Store, string) {
 	t.Helper()
@@ -76,6 +80,10 @@ func TestStoreOrderingAndRecovery(t *testing.T) {
 func TestPendingOutputStateSurvivesRestart(t *testing.T) {
 	s, path := openTest(t, Options{Enabled: true})
 	r := testRecord()
+	r.ExecutionMode = terminalruntime.ExecutionModeInteractive
+	r.OutputSource = terminalruntime.OutputSourcePTY
+	r.RuntimeHostID = "host-1"
+	r.RuntimeRunspaceID = "runspace-1"
 	if err := s.RecordStarted(r); err != nil {
 		t.Fatal(err)
 	}
@@ -114,8 +122,11 @@ func TestPendingOutputStateSurvivesRestart(t *testing.T) {
 	if err != nil || record == nil {
 		t.Fatalf("record=%#v err=%v", record, err)
 	}
-	if record.State != commandjournal.StateFinished || record.OutputState != commandjournal.OutputStatePending || record.OutputCompleteness == commandjournal.OutputCompletenessComplete {
+	if record.State != commandjournal.StateFinished || record.OutputState != commandjournal.OutputStateClosed || record.OutputCompleteness == commandjournal.OutputCompletenessComplete || record.OutputAttribution == commandjournal.OutputAttributionExclusive {
 		t.Fatalf("restart overclaimed pending output: %#v", record)
+	}
+	if record.ExecutionMode != terminalruntime.ExecutionModeInteractive || record.OutputSource != terminalruntime.OutputSourcePTY || record.RuntimeHostID != "host-1" || record.RuntimeRunspaceID != "runspace-1" {
+		t.Fatalf("restart lost interactive provenance: %#v", record)
 	}
 }
 
@@ -244,7 +255,193 @@ func TestOutputQueueBudgetReportsIncompleteHistory(t *testing.T) {
 	if health.Status != HealthDegraded || health.OutputComplete || health.DroppedOutputBytes != 5 {
 		t.Fatalf("unexpected degraded health: %#v", health)
 	}
+	if err := s.Close(); !errors.Is(err, ErrOutputQueueOverflow) {
+		t.Fatalf("close error=%v", err)
+	}
+}
+
+func TestProvenanceRoundTrip(t *testing.T) {
+	s, path := openTest(t, Options{Enabled: true})
+	r := testRecord()
+	r.ExecutionMode = terminalruntime.ExecutionModeStructured
+	r.OutputSource = terminalruntime.OutputSourceHostStructured
+	r.RuntimeHostID = "host-1"
+	r.RuntimeRunspaceID = "runspace-1"
+	r.CaptureContractVersion = 1
+	r.ProtocolVersion = 1
+	if err := s.RecordStarted(r); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AppendOutput(r.ID, []byte("structured\r\n")); err != nil {
+		t.Fatal(err)
+	}
+	ok, code := true, 0
+	finished := r
+	finished.State = commandjournal.StateFinished
+	finished.CompletionReason = commandjournal.CompletionNormal
+	finished.Success = &ok
+	finished.ExitCode = &code
+	finished.FinishedAt = ptrTime(time.UnixMilli(2))
+	finished.FinishHookSequence = 2
+	finished.OutputTotalBytes = 12
+	finished.OutputStoredBytes = 12
+	finished.OutputCompleteness = commandjournal.OutputCompletenessComplete
+	finished.OutputAttribution = commandjournal.OutputAttributionExclusive
+	finished.OutputState = commandjournal.OutputStateClosed
+	if err := s.RecordFinished(finished); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Flush(); err != nil {
+		t.Fatal(err)
+	}
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
+	}
+	s, err := Open(path, Options{Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	record, err := s.ReadRecord(r.ID)
+	if err != nil || record == nil {
+		t.Fatalf("record=%#v err=%v", record, err)
+	}
+	if record.ExecutionMode != r.ExecutionMode || record.OutputSource != r.OutputSource || record.RuntimeHostID != r.RuntimeHostID || record.RuntimeRunspaceID != r.RuntimeRunspaceID || record.CaptureContractVersion != 1 || record.ProtocolVersion != 1 {
+		t.Fatalf("provenance was not preserved: %#v", record)
+	}
+}
+
+func TestMetadataChunkMismatchDowngradesGuarantee(t *testing.T) {
+	s, _ := openTest(t, Options{Enabled: true})
+	r := testRecord()
+	if err := s.RecordStarted(r); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AppendOutput(r.ID, []byte("abc")); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`DELETE FROM command_output_chunks WHERE command_id=?`, r.ID); err != nil {
+		t.Fatal(err)
+	}
+	ok, code := true, 0
+	r.State = commandjournal.StateFinished
+	r.CompletionReason = commandjournal.CompletionNormal
+	r.Success = &ok
+	r.ExitCode = &code
+	r.FinishedAt = ptrTime(time.UnixMilli(2))
+	r.FinishHookSequence = 2
+	r.OutputTotalBytes = 3
+	r.OutputStoredBytes = 3
+	r.OutputCompleteness = commandjournal.OutputCompletenessComplete
+	r.OutputAttribution = commandjournal.OutputAttributionExclusive
+	r.OutputState = commandjournal.OutputStateClosed
+	if err := s.RecordFinished(r); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	record, err := s.ReadRecord(r.ID)
+	if err != nil || record == nil || record.OutputCompleteness != commandjournal.OutputCompletenessIncomplete || record.OutputAttribution == commandjournal.OutputAttributionExclusive {
+		t.Fatalf("mismatch retained trusted metadata: %#v err=%v", record, err)
+	}
+	_ = s.Close()
+}
+
+func TestLegacyMigrationDoesNotInferHostedAuthority(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "legacy.sqlite")
+	db, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"000001_init.up.sql", "000002_output_contract.up.sql", "000003_output_state.up.sql"} {
+		data, err := os.ReadFile(filepath.Join("migrations", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(string(data)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.Exec(`CREATE TABLE schema_migrations (version INTEGER NOT NULL PRIMARY KEY, dirty BOOLEAN NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO schema_migrations(version,dirty) VALUES(3,0)`); err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`INSERT INTO command_records (id,wave_block_id,session_epoch,protocol_version,start_hook_sequence,command,cwd,state,completion_reason,started_at_ms,visibility_generation,output_completeness,output_attribution,output_text_safety,output_state) VALUES ('legacy','block','epoch',1,1,'echo','C:\\','finished','normal',1,0,'complete','exclusive','unknown','closed')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(path, Options{Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	record, err := s.ReadRecord("legacy")
+	if err != nil || record == nil || record.ExecutionMode != terminalruntime.ExecutionModeUnknown || record.OutputSource != terminalruntime.OutputSourceUnknown || record.CaptureContractVersion != 0 || record.OutputCompleteness == commandjournal.OutputCompletenessComplete || record.OutputAttribution == commandjournal.OutputAttributionExclusive {
+		t.Fatalf("legacy record was overclaimed: %#v err=%v", record, err)
+	}
+}
+
+func TestRowsAffectedFailureIsReturned(t *testing.T) {
+	s, _ := openTest(t, Options{Enabled: true})
+	if err := s.RetagRecordGeneration("missing", 1); !errors.Is(err, ErrRecordNotFound) {
+		t.Fatalf("missing row retag error=%v", err)
+	}
+	_ = s.Close()
+}
+
+func TestAsyncWriterFailureCannotRemainDurablyComplete(t *testing.T) {
+	s, path := openTest(t, Options{Enabled: true})
+	r := testRecord()
+	if err := s.RecordStarted(r); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AppendOutput(r.ID, []byte("lost")); err != nil {
+		t.Fatal(err)
+	}
+	ok, code := true, 0
+	r.State = commandjournal.StateFinished
+	r.CompletionReason = commandjournal.CompletionNormal
+	r.Success = &ok
+	r.ExitCode = &code
+	r.FinishedAt = ptrTime(time.UnixMilli(2))
+	r.FinishHookSequence = 2
+	r.OutputTotalBytes = 4
+	r.OutputStoredBytes = 4
+	r.OutputCompleteness = commandjournal.OutputCompletenessComplete
+	r.OutputAttribution = commandjournal.OutputAttributionExclusive
+	r.OutputState = commandjournal.OutputStateClosed
+	if err := s.RecordFinished(r); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Flush(); err == nil {
+		t.Fatal("flush hid async writer failure")
+	}
+	if err := s.Close(); err == nil {
+		t.Fatal("close hid async writer failure")
+	}
+	reopened, err := Open(path, Options{Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	record, err := reopened.ReadRecord(r.ID)
+	if err != nil || record == nil || record.OutputCompleteness == commandjournal.OutputCompletenessComplete || record.OutputAttribution == commandjournal.OutputAttributionExclusive {
+		t.Fatalf("writer failure left trusted metadata: %#v err=%v", record, err)
 	}
 }

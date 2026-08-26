@@ -51,30 +51,34 @@ const (
 )
 
 type CommandRecord struct {
-	ID                   string
-	WaveBlockID          string
-	SessionEpoch         string
-	StartHookSequence    uint64
-	FinishHookSequence   uint64
-	Command              string
-	Cwd                  string
-	ExecutionMode        terminalruntime.ExecutionMode
-	OutputSource         terminalruntime.OutputSource
-	State                CommandState
-	CompletionReason     CompletionReason
-	VisibilityGeneration uint64
-	OutputTotalBytes     int64
-	OutputStoredBytes    int64
-	OutputTruncated      bool
-	OutputCompleteness   string
-	OutputAttribution    string
-	OutputTextSafety     string
-	OutputState          OutputState
-	StartedAt            time.Time
-	FinishedAt           *time.Time
-	Success              *bool
-	ExitCode             *int
-	Output               []byte
+	ID                     string
+	WaveBlockID            string
+	SessionEpoch           string
+	StartHookSequence      uint64
+	FinishHookSequence     uint64
+	Command                string
+	Cwd                    string
+	ExecutionMode          terminalruntime.ExecutionMode
+	OutputSource           terminalruntime.OutputSource
+	RuntimeHostID          string
+	RuntimeRunspaceID      string
+	CaptureContractVersion int
+	ProtocolVersion        int
+	State                  CommandState
+	CompletionReason       CompletionReason
+	VisibilityGeneration   uint64
+	OutputTotalBytes       int64
+	OutputStoredBytes      int64
+	OutputTruncated        bool
+	OutputCompleteness     string
+	OutputAttribution      string
+	OutputTextSafety       string
+	OutputState            OutputState
+	StartedAt              time.Time
+	FinishedAt             *time.Time
+	Success                *bool
+	ExitCode               *int
+	Output                 []byte
 }
 
 // DurableStore is the narrow persistence seam used by the in-memory journal.
@@ -242,21 +246,25 @@ func (j *Journal) Apply(blockID string, item terminalruntime.StreamItem, observe
 				source = terminalruntime.OutputSourceUnknown
 			}
 			j.active[blockID] = &CommandRecord{
-				ID:                   event.CommandID,
-				WaveBlockID:          blockID,
-				SessionEpoch:         event.SessionEpoch,
-				StartHookSequence:    event.HookSequence,
-				Command:              event.Command,
-				Cwd:                  event.Cwd,
-				ExecutionMode:        mode,
-				OutputSource:         source,
-				State:                StateRunning,
-				VisibilityGeneration: generation,
-				StartedAt:            observedAt,
-				OutputCompleteness:   OutputCompletenessUnknown,
-				OutputAttribution:    OutputAttributionUnknown,
-				OutputTextSafety:     OutputTextSafetyUnknown,
-				OutputState:          OutputStateOpen,
+				ID:                     event.CommandID,
+				WaveBlockID:            blockID,
+				SessionEpoch:           event.SessionEpoch,
+				StartHookSequence:      event.HookSequence,
+				Command:                event.Command,
+				Cwd:                    event.Cwd,
+				ExecutionMode:          mode,
+				OutputSource:           source,
+				RuntimeHostID:          event.RuntimeHostID,
+				RuntimeRunspaceID:      event.RuntimeRunspaceID,
+				CaptureContractVersion: event.CaptureContractVersion,
+				ProtocolVersion:        event.ProtocolVersion,
+				State:                  StateRunning,
+				VisibilityGeneration:   generation,
+				StartedAt:              observedAt,
+				OutputCompleteness:     OutputCompletenessUnknown,
+				OutputAttribution:      OutputAttributionUnknown,
+				OutputTextSafety:       OutputTextSafetyUnknown,
+				OutputState:            OutputStateOpen,
 			}
 			if j.durable != nil {
 				_ = j.durable.RecordStarted(*j.active[blockID])

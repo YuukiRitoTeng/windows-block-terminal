@@ -13,27 +13,33 @@ import (
 )
 
 type RecordView struct {
-	ID                   string `json:"id"`
-	WaveBlockID          string `json:"wave_block_id"`
-	SessionEpoch         string `json:"session_epoch"`
-	StartHookSequence    uint64 `json:"start_hook_sequence"`
-	FinishHookSequence   uint64 `json:"finish_hook_sequence"`
-	Command              string `json:"command"`
-	Cwd                  string `json:"cwd"`
-	State                string `json:"state"`
-	CompletionReason     string `json:"completion_reason"`
-	VisibilityGeneration uint64 `json:"visibility_generation"`
-	OutputTotalBytes     int64  `json:"output_total_bytes"`
-	OutputStoredBytes    int64  `json:"output_stored_bytes"`
-	OutputTruncated      bool   `json:"output_truncated"`
-	OutputCompleteness   string `json:"output_completeness"`
-	OutputAttribution    string `json:"output_attribution"`
-	OutputTextSafety     string `json:"output_text_safety"`
-	OutputState          string `json:"output_state"`
-	StartedAtUnixMs      int64  `json:"started_at_unix_ms"`
-	FinishedAtUnixMs     *int64 `json:"finished_at_unix_ms,omitempty"`
-	Success              *bool  `json:"success,omitempty"`
-	ExitCode             *int   `json:"exit_code,omitempty"`
+	ID                     string `json:"id"`
+	WaveBlockID            string `json:"wave_block_id"`
+	SessionEpoch           string `json:"session_epoch"`
+	StartHookSequence      uint64 `json:"start_hook_sequence"`
+	FinishHookSequence     uint64 `json:"finish_hook_sequence"`
+	Command                string `json:"command"`
+	Cwd                    string `json:"cwd"`
+	ExecutionMode          string `json:"execution_mode"`
+	OutputSource           string `json:"output_source"`
+	RuntimeHostID          string `json:"runtime_host_id"`
+	RuntimeRunspaceID      string `json:"runtime_runspace_id"`
+	CaptureContractVersion int    `json:"capture_contract_version"`
+	ProtocolVersion        int    `json:"protocol_version"`
+	State                  string `json:"state"`
+	CompletionReason       string `json:"completion_reason"`
+	VisibilityGeneration   uint64 `json:"visibility_generation"`
+	OutputTotalBytes       int64  `json:"output_total_bytes"`
+	OutputStoredBytes      int64  `json:"output_stored_bytes"`
+	OutputTruncated        bool   `json:"output_truncated"`
+	OutputCompleteness     string `json:"output_completeness"`
+	OutputAttribution      string `json:"output_attribution"`
+	OutputTextSafety       string `json:"output_text_safety"`
+	OutputState            string `json:"output_state"`
+	StartedAtUnixMs        int64  `json:"started_at_unix_ms"`
+	FinishedAtUnixMs       *int64 `json:"finished_at_unix_ms,omitempty"`
+	Success                *bool  `json:"success,omitempty"`
+	ExitCode               *int   `json:"exit_code,omitempty"`
 }
 
 type OutputView struct {
@@ -198,7 +204,7 @@ func (s *CommandJournalService) DeleteHistory(ctx context.Context, blockId strin
 }
 
 func recordView(record commandjournal.CommandRecord) RecordView {
-	view := RecordView{ID: record.ID, WaveBlockID: record.WaveBlockID, SessionEpoch: record.SessionEpoch, StartHookSequence: record.StartHookSequence, FinishHookSequence: record.FinishHookSequence, Command: record.Command, Cwd: record.Cwd, State: string(record.State), CompletionReason: string(record.CompletionReason), VisibilityGeneration: record.VisibilityGeneration, OutputTotalBytes: record.OutputTotalBytes, OutputStoredBytes: record.OutputStoredBytes, OutputTruncated: record.OutputTruncated, OutputCompleteness: record.OutputCompleteness, OutputAttribution: record.OutputAttribution, OutputTextSafety: record.OutputTextSafety, OutputState: string(record.OutputState), StartedAtUnixMs: record.StartedAt.UnixMilli(), Success: record.Success, ExitCode: record.ExitCode}
+	view := RecordView{ID: record.ID, WaveBlockID: record.WaveBlockID, SessionEpoch: record.SessionEpoch, StartHookSequence: record.StartHookSequence, FinishHookSequence: record.FinishHookSequence, Command: record.Command, Cwd: record.Cwd, ExecutionMode: string(record.ExecutionMode), OutputSource: string(record.OutputSource), RuntimeHostID: record.RuntimeHostID, RuntimeRunspaceID: record.RuntimeRunspaceID, CaptureContractVersion: record.CaptureContractVersion, ProtocolVersion: record.ProtocolVersion, State: string(record.State), CompletionReason: string(record.CompletionReason), VisibilityGeneration: record.VisibilityGeneration, OutputTotalBytes: record.OutputTotalBytes, OutputStoredBytes: record.OutputStoredBytes, OutputTruncated: record.OutputTruncated, OutputCompleteness: record.OutputCompleteness, OutputAttribution: record.OutputAttribution, OutputTextSafety: record.OutputTextSafety, OutputState: string(record.OutputState), StartedAtUnixMs: record.StartedAt.UnixMilli(), Success: record.Success, ExitCode: record.ExitCode}
 	if record.FinishedAt != nil {
 		finished := record.FinishedAt.UnixMilli()
 		view.FinishedAtUnixMs = &finished

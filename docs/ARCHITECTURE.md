@@ -6,7 +6,7 @@ Windows 11 + PowerShell 7 Block Terminal.
 
 ## Current Status
 
-Phase 2 — Hosted Structured Output Migration is the active implementation
+Phase 5 — Persistence Contract & Migration is the active implementation
 phase. The hosted runtime is opt-in; the default Wave runtime remains
 unchanged.
 
@@ -34,6 +34,7 @@ Terminal Session
 └─ Command Journal
    ├─ CommandRecord
    ├─ raw captured output metadata
+   ├─ durable provenance (mode/source/host/runspace/contract versions)
    └─ future presentation / Card projections
 ```
 
@@ -101,7 +102,8 @@ The following remain conditional until a real product vertical slice exists:
 
 ## Current Phase
 
-Phase 2 — Hosted Structured Output Migration.
+Phase 5 — Persistence Contract & Migration.
 
-No frontend productization, final schema freeze, persistence redesign, or
-default-runtime migration is implied by this phase.
+This phase freezes the durable persistence contract and migration safety
+boundaries. It does not productize the frontend, change the default runtime,
+or claim exact PTY output attribution.
