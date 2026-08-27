@@ -24,4 +24,4 @@ This command generates static content into the `build` directory and can be serv
 
 ### Deployment
 
-Deployments are handled automatically by the [Docsite CI/CD workflow](../.github/workflows/deploy-docsite.yml)
+The downstream Windows Block Terminal repository currently uses the [Docsite CI workflow](../.github/workflows/deploy-docsite.yml) for build validation only. GitHub Pages deployment is intentionally disabled until the project has its own documentation URL, base path, and branding.
