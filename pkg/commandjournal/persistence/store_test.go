@@ -3,6 +3,7 @@ package persistence
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -74,6 +75,46 @@ func TestStoreOrderingAndRecovery(t *testing.T) {
 	}
 	if recs[0].Success == nil || !*recs[0].Success || recs[0].ExitCode == nil || *recs[0].ExitCode != 0 {
 		t.Fatalf("bad completion: %+v", recs[0])
+	}
+}
+
+func TestReadVisibleRecordsIsBoundedToRecentHistory(t *testing.T) {
+	s, _ := openTest(t, Options{Enabled: true})
+	defer func() { _ = s.Close() }()
+	ok := true
+	code := 0
+	for i := 0; i < DefaultVisibleRecordLimit+50; i++ {
+		started := time.UnixMilli(int64(i + 1))
+		r := commandjournal.CommandRecord{
+			ID: "history-" + fmt.Sprintf("%03d", i), WaveBlockID: "history-block", SessionEpoch: "epoch",
+			StartHookSequence: uint64(i + 1), Command: "echo", Cwd: "C:\\", State: commandjournal.StateRunning, StartedAt: started,
+		}
+		if err := s.RecordStarted(r); err != nil {
+			t.Fatal(err)
+		}
+		finished := r
+		finished.State = commandjournal.StateFinished
+		finished.CompletionReason = commandjournal.CompletionNormal
+		finished.FinishedAt = &started
+		finished.Success = &ok
+		finished.ExitCode = &code
+		finished.FinishHookSequence = uint64(i + 1)
+		if err := s.RecordFinished(finished); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	records, err := s.ReadVisibleRecords("history-block")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != DefaultVisibleRecordLimit {
+		t.Fatalf("visible records=%d, want %d", len(records), DefaultVisibleRecordLimit)
+	}
+	if records[0].ID != "history-050" || records[len(records)-1].ID != "history-149" {
+		t.Fatalf("unexpected bounded history range: first=%s last=%s", records[0].ID, records[len(records)-1].ID)
 	}
 }
 

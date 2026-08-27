@@ -535,7 +535,7 @@ func (bc *ShellController) setupAndStartShellProcess(logCtx context.Context, rc 
 	bc.journalMu.Lock()
 	cmdOpts.HostedObserver = bc.hostedRuntimeObserver
 	bc.journalMu.Unlock()
-	blocklogger.Debugf(logCtx, "[conndebug] created swaptoken: %s\n", swapToken.Token)
+	blocklogger.Debugf(logCtx, "[conndebug] created swaptoken\n")
 	if connUnion.ConnType == ConnType_Wsl {
 		wslConn := connUnion.WslConn
 		if !connUnion.WshEnabled {
