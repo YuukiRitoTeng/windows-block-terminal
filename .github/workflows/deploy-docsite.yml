@@ -50,6 +50,8 @@ jobs:
                   retry_on: error
                   max_attempts: 3
                   timeout_minutes: 5
+            - name: Ensure sharp for Docusaurus ideal-image
+              run: npm install --no-save --package-lock=false --no-audit --no-fund sharp@0.34.3
             - name: Build docsite
               run: task docsite:build:public
             - name: Upload Build Artifact
