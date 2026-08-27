@@ -3,7 +3,7 @@
 
 import { dialog, ipcMain, Notification } from "electron";
 import { autoUpdater } from "electron-updater";
-import { readFileSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import path from "path";
 import YAML from "yaml";
 import { RpcApi } from "../frontend/app/store/wshclientapi";
@@ -230,6 +230,10 @@ let autoUpdateLock = false;
 export async function configureAutoUpdater() {
     if (isDev()) {
         console.log("skipping auto-updater in dev mode");
+        return;
+    }
+    if (!existsSync(path.join(process.resourcesPath!, "app-update.yml"))) {
+        console.log("skipping auto-updater: no downstream update feed configured");
         return;
     }
 

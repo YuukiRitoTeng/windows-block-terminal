@@ -3,7 +3,6 @@ const pkg = require("./package.json");
 const fs = require("fs");
 const path = require("path");
 
-const windowsShouldSign = !!process.env.SM_CODE_SIGNING_CERT_SHA1_HASH;
 
 /**
  * @type {import('electron-builder').Configuration}
@@ -12,12 +11,13 @@ const windowsShouldSign = !!process.env.SM_CODE_SIGNING_CERT_SHA1_HASH;
 const config = {
     appId: pkg.build.appId,
     productName: pkg.productName,
-    executableName: pkg.productName,
+    executableName: "WindowsBlockTerminal",
     artifactName: "${productName}-${platform}-${arch}-${version}.${ext}",
     generateUpdatesFilesForAllChannels: true,
     npmRebuild: false,
     nodeGypRebuild: false,
     electronCompile: false,
+    electronDist: path.join(__dirname, "node_modules/electron/dist"),
     files: [
         {
             from: "./dist",
@@ -36,6 +36,14 @@ const config = {
             from: "dist/tsunamiscaffold",
             to: "tsunamiscaffold",
         },
+        ...(process.platform === "win32"
+            ? [
+                  {
+                      from: "dist/hostedpwsh/win-x64",
+                      to: "hostedpwsh/win-x64",
+                  },
+              ]
+            : []),
     ],
     directories: {
         output: "make",
@@ -97,12 +105,8 @@ const config = {
     },
     win: {
         target: ["nsis", "msi", "zip"],
-        signtoolOptions: windowsShouldSign && {
-            signingHashAlgorithms: ["sha256"],
-            publisherName: "Command Line Inc",
-            certificateSubjectName: "Command Line Inc",
-            certificateSha1: process.env.SM_CODE_SIGNING_CERT_SHA1_HASH,
-        },
+        forceCodeSigning: false,
+        signAndEditExecutable: false,
     },
     appImage: {
         license: "LICENSE",
@@ -116,10 +120,6 @@ const config = {
     rpm: {
         // this should remove /usr/lib/.build-id/ links which can conflict with other electron apps like slack
         fpm: ["--rpm-rpmbuild-define", "_build_id_links none"],
-    },
-    publish: {
-        provider: "generic",
-        url: "https://dl.waveterm.dev/releases-w2",
     },
     afterPack: (context) => {
         // This is a workaround to restore file permissions to the wavesrv binaries on macOS after packaging the universal binary.
