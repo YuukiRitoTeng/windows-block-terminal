@@ -5,137 +5,118 @@ on:
         workflows: ["TestDriver.ai Build"]
         types:
             - completed
+        branches:
+            - main
 
 env:
-    GO_VERSION: "1.25.6"
     NODE_VERSION: 22
 
 permissions:
+    actions: read
     contents: read
+    id-token: write
     statuses: write
 
+concurrency:
+    group: testdriver-main
+    cancel-in-progress: true
+
 jobs:
-    context:
-        runs-on: ubuntu-22.04
-        steps:
-            - name: Dump GitHub context
-              env:
-                  GITHUB_CONTEXT: ${{ toJson(github) }}
-              run: echo "$GITHUB_CONTEXT"
-            - name: Dump job context
-              env:
-                  JOB_CONTEXT: ${{ toJson(job) }}
-              run: echo "$JOB_CONTEXT"
-            - name: Dump steps context
-              env:
-                  STEPS_CONTEXT: ${{ toJson(steps) }}
-              run: echo "$STEPS_CONTEXT"
-            - name: Dump runner context
-              env:
-                  RUNNER_CONTEXT: ${{ toJson(runner) }}
-              run: echo "$RUNNER_CONTEXT"
-            - name: Dump strategy context
-              env:
-                  STRATEGY_CONTEXT: ${{ toJson(strategy) }}
-              run: echo "$STRATEGY_CONTEXT"
-            - name: Dump matrix context
-              env:
-                  MATRIX_CONTEXT: ${{ toJson(matrix) }}
-              run: echo "$MATRIX_CONTEXT"
     run_testdriver:
         name: Run TestDriver.ai
         runs-on: windows-latest
+        timeout-minutes: 40
         if: github.event.workflow_run.conclusion == 'success'
         steps:
-            - uses: testdriverai/action@main
-              id: testdriver
+            - name: Checkout
+              uses: actions/checkout@v6
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v6
+              with:
+                  node-version: ${{ env.NODE_VERSION }}
+
+            - name: Authenticate to TestDriver
+              uses: testdriverai/action@dae708d6ddf79ce83a3735de225336dc03d4c6e8
+              with:
+                  api-key: ${{ secrets.DASHCAM_API }}
+
+            - name: Download, install, and launch Wave
+              shell: pwsh
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              run: |
+                  $headers = @{
+                      Authorization = "token $env:GITHUB_TOKEN"
+                  }
+
+                  $downloadFolder = "./download"
+
+                  Write-Host "Starting the artifact download process..."
+
+                  if (-not (Test-Path -Path $downloadFolder)) {
+                      Write-Host "Creating download folder..."
+                      New-Item -ItemType Directory -Path $downloadFolder | Out-Null
+                  } else {
+                      Write-Host "Download folder already exists."
+                  }
+
+                  Write-Host "Fetching the artifact download URL..."
+                  $artifacts = (Invoke-RestMethod -Uri "https://api.github.com/repos/${{ github.repository }}/actions/runs/${{ github.event.workflow_run.id }}/artifacts" -Headers $headers).artifacts
+                  $artifactUrl = $artifacts | Where-Object { $_.name -eq "windows-exe" } | Select-Object -First 1 -ExpandProperty archive_download_url
+
+                  if (-not $artifactUrl) {
+                      Write-Error "windows-exe artifact was not found."
+                      exit 1
+                  }
+
+                  $artifactZipPath = "$env:TEMP\artifact.zip"
+                  try {
+                      Invoke-WebRequest -Uri $artifactUrl `
+                          -Headers $headers `
+                          -OutFile $artifactZipPath `
+                          -MaximumRedirection 5
+                      Write-Host "Artifact downloaded successfully to $artifactZipPath"
+                  } catch {
+                      Write-Error "Error downloading artifact: $_"
+                      exit 1
+                  }
+
+                  $artifactUnzipPath = "$env:TEMP\artifact"
+                  Write-Host "Unzipping the artifact to $artifactUnzipPath..."
+                  try {
+                      Expand-Archive -Path $artifactZipPath -DestinationPath $artifactUnzipPath -Force
+                  } catch {
+                      Write-Error "Failed to unzip the artifact: $_"
+                      exit 1
+                  }
+
+                  $artifactInstallerPath = Get-ChildItem -Path $artifactUnzipPath -Filter *.exe -Recurse | Select-Object -First 1
+
+                  if (-not $artifactInstallerPath) {
+                      Write-Error "Executable file not found. Exiting."
+                      exit 1
+                  }
+
+                  Write-Host "Running the installer: $($artifactInstallerPath.FullName)..."
+                  try {
+                      Start-Process -FilePath $artifactInstallerPath.FullName -Wait
+                  } catch {
+                      Write-Error "Failed to run the installer: $_"
+                      exit 1
+                  }
+
+                  $wavePath = Join-Path $env:USERPROFILE "AppData\Local\Programs\waveterm\Wave.exe"
+                  if (-not (Test-Path $wavePath)) {
+                      Write-Error "Wave executable was not found at $wavePath"
+                      exit 1
+                  }
+
+                  Write-Host "Launching the application: $wavePath"
+                  Start-Process -FilePath $wavePath
+
+            - name: Run onboarding test
+              shell: pwsh
               env:
                   FORCE_COLOR: "3"
-                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-              with:
-                  key: ${{ secrets.DASHCAM_API }}
-                  prerun: |
-                      $headers = @{
-                          Authorization = "token ${{ secrets.GITHUB_TOKEN }}"
-                      }
-
-                      $downloadFolder = "./download"
-                      $artifactFileName = "waveterm.exe"
-                      $artifactFilePath = "$downloadFolder/$artifactFileName"
-
-                      Write-Host "Starting the artifact download process..."
-
-                      # Create the download directory if it doesn't exist
-                      if (-not (Test-Path -Path $downloadFolder)) {
-                          Write-Host "Creating download folder..."
-                          mkdir $downloadFolder
-                      } else {
-                          Write-Host "Download folder already exists."
-                      }
-
-                      # Fetch the artifact upload URL
-                      Write-Host "Fetching the artifact upload URL..."
-                      $artifactUrl = (Invoke-RestMethod -Uri "https://api.github.com/repos/${{ github.repository }}/actions/runs/${{ github.event.workflow_run.id }}/artifacts" -Headers $headers).artifacts[0].archive_download_url
-
-                      if ($artifactUrl) {
-                          Write-Host "Artifact URL successfully fetched: $artifactUrl"
-                      } else {
-                          Write-Error "Failed to fetch the artifact URL."
-                          exit 1
-                      }
-
-                      # Download the artifact (zipped file)
-                      Write-Host "Starting artifact download..."
-                      $artifactZipPath = "$env:TEMP\artifact.zip"
-                      try {
-                          Invoke-WebRequest -Uri $artifactUrl `
-                              -Headers $headers `
-                              -OutFile $artifactZipPath `
-                              -MaximumRedirection 5
-
-                          Write-Host "Artifact downloaded successfully to $artifactZipPath"
-                      } catch {
-                          Write-Error "Error downloading artifact: $_"
-                          exit 1
-                      }
-
-                      # Unzip the artifact
-                      $artifactUnzipPath = "$env:TEMP\artifact"
-                      Write-Host "Unzipping the artifact to $artifactUnzipPath..."
-                      try {
-                          Expand-Archive -Path $artifactZipPath -DestinationPath $artifactUnzipPath -Force
-                          Write-Host "Artifact unzipped successfully to $artifactUnzipPath"
-                      } catch {
-                          Write-Error "Failed to unzip the artifact: $_"
-                          exit 1
-                      }
-
-                      # Find the installer or app executable
-                      $artifactInstallerPath = Get-ChildItem -Path $artifactUnzipPath -Filter *.exe -Recurse | Select-Object -First 1
-
-                      if ($artifactInstallerPath) {
-                          Write-Host "Executable file found: $($artifactInstallerPath.FullName)"
-                      } else {
-                          Write-Error "Executable file not found. Exiting."
-                          exit 1
-                      }
-
-                      # Run the installer and log the result
-                      Write-Host "Running the installer: $($artifactInstallerPath.FullName)..."
-                      try {
-                          Start-Process -FilePath $artifactInstallerPath.FullName -Wait
-                          Write-Host "Installer ran successfully."
-                      } catch {
-                          Write-Error "Failed to run the installer: $_"
-                          exit 1
-                      }
-
-                      # Optional: If the app executable is different from the installer, find and launch it
-                      $wavePath = Join-Path $env:USERPROFILE "AppData\Local\Programs\waveterm\Wave.exe"
-
-                      Write-Host "Launching the application: $($wavePath)"
-                      Start-Process -FilePath $wavePath
-                      Write-Host "Application launched."
-
-                  prompt: |
-                      1. /run testdriver/onboarding.yml
+              run: npx --yes testdriverai@latest run testdriver/onboarding.yml
