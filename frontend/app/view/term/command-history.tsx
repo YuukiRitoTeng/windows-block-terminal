@@ -175,14 +175,19 @@ export const CommandHistory = ({ blockId, model }: CommandHistoryProps) => {
     const [message, setMessage] = React.useState<string | null>(null);
     const mounted = React.useRef(true);
     const requestEpoch = React.useRef(new HistoryRequestEpoch());
+    const refreshInFlight = React.useRef(false);
 
     const refresh = React.useCallback(async () => {
+        if (refreshInFlight.current) return;
+        refreshInFlight.current = true;
         const capturedEpoch = requestEpoch.current.capture();
         try {
             const next = await services.CommandJournalService.ListVisibleRecords(blockId);
             if (mounted.current && requestEpoch.current.isCurrent(capturedEpoch)) setRecords(limitVisibleRecords(next ?? []));
         } catch (error) {
             if (mounted.current && requestEpoch.current.isCurrent(capturedEpoch)) setMessage(`History unavailable: ${String(error)}`);
+        } finally {
+            refreshInFlight.current = false;
         }
     }, [blockId]);
 

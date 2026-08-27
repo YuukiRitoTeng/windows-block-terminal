@@ -19,10 +19,11 @@ import (
 )
 
 const (
-	DefaultFileName       = "command-journal.sqlite"
-	DefaultMaxOutputBytes = 10 * 1024 * 1024
-	DefaultMaxChunkBytes  = 256 * 1024
-	DefaultMaxQueueBytes  = 32 * 1024 * 1024
+	DefaultFileName           = "command-journal.sqlite"
+	DefaultMaxOutputBytes     = 10 * 1024 * 1024
+	DefaultMaxChunkBytes      = 256 * 1024
+	DefaultMaxQueueBytes      = 32 * 1024 * 1024
+	DefaultVisibleRecordLimit = 100
 )
 
 var ErrOutputQueueOverflow = errors.New("command journal output queue budget exceeded")
@@ -910,7 +911,7 @@ func (s *Store) ReadVisibleRecords(blockID string) ([]commandjournal.CommandReco
 	if s == nil || s.db == nil {
 		return nil, nil
 	}
-	rows, err := s.db.Queryx(`SELECT id,wave_block_id,session_epoch,protocol_version,start_hook_sequence,finish_hook_sequence,command,cwd,state,completion_reason,started_at_ms,finished_at_ms,success,exit_code,visibility_generation,output_total_bytes,output_stored_bytes,output_truncated,output_completeness,output_attribution,output_text_safety,output_state,execution_mode,output_source,runtime_host_id,runtime_runspace_id,capture_contract_version FROM command_records WHERE wave_block_id=? AND visibility_generation=COALESCE((SELECT current_visibility_generation FROM journal_state WHERE wave_block_id=?),0) ORDER BY started_at_ms ASC`, blockID, blockID)
+	rows, err := s.db.Queryx(`SELECT id,wave_block_id,session_epoch,protocol_version,start_hook_sequence,finish_hook_sequence,command,cwd,state,completion_reason,started_at_ms,finished_at_ms,success,exit_code,visibility_generation,output_total_bytes,output_stored_bytes,output_truncated,output_completeness,output_attribution,output_text_safety,output_state,execution_mode,output_source,runtime_host_id,runtime_runspace_id,capture_contract_version FROM command_records WHERE wave_block_id=? AND visibility_generation=COALESCE((SELECT current_visibility_generation FROM journal_state WHERE wave_block_id=?),0) ORDER BY started_at_ms DESC, id DESC LIMIT ?`, blockID, blockID, DefaultVisibleRecordLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -951,7 +952,13 @@ func (s *Store) ReadVisibleRecords(blockID string) ([]commandjournal.CommandReco
 		}
 		records = append(records, r)
 	}
-	return records, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for left, right := 0, len(records)-1; left < right; left, right = left+1, right-1 {
+		records[left], records[right] = records[right], records[left]
+	}
+	return records, nil
 }
 
 // CountRecords is a diagnostic/read-model helper used by persistence
