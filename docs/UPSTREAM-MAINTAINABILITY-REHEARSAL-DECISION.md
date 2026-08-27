@@ -11,6 +11,7 @@ This document records the approved result of the first candidate-based Fork Isol
 - Architecture Review: **NOT TRIGGERED**
 - Conditional Architecture Freeze: **KEEP**
 - Evidence level: **candidate-level only**
+- `.NET publish` evidence gap: **CLOSED**
 - Release-level upstream maintainability: **not yet proven**
 
 ## Fixed inputs
@@ -107,12 +108,38 @@ The merged rehearsal tree passed:
 
 Baseline ESLint had previously been invoked with an invalid command; no false baseline PASS is claimed. The merged-tree touched-file ESLint result is the valid evidence recorded here.
 
-## Evidence gaps
+## .NET publish evidence closure
 
-Two limitations remain and must not be silently upgraded away:
+The previously blocked `.NET publish` check was rerun against a reconstructed copy of the same fixed candidate merge tree and passed without modifying the formal repository.
 
-1. `dotnet publish` was **BLOCKED** because the local environment did not have a .NET SDK. This is an environment/evidence gap, not an architecture failure, and it does not block the candidate-level `PASS WITH CONDITIONS` verdict.
-2. upstream PR #3484 was still unmerged when this rehearsal was performed. The result therefore does **not** prove release-level upstream maintainability.
+Closure evidence:
+
+- SDK source: official Microsoft `dotnet-install.ps1`
+- SDK version: `.NET SDK 8.0.424`
+- SDK installation: isolated / temporary; no system modification
+- merge reconstruction: **clean**
+- manual adaptations: **none**
+- `dotnet restore`: **PASS**, exit code `0`
+- `dotnet build --configuration Release --framework net8.0`: **PASS**, exit code `0`
+- `dotnet publish --configuration Release --framework net8.0 --runtime win-x64`: **PASS**, exit code `0`
+- published artifact: `WbtHostedPowerShell.exe`
+- artifact size: `152064` bytes
+- artifact SHA-256: `E2A18611D991627AA59467E9A5FA98869E12934F5C3C5EE77BE902E6BBAD8450`
+- formal repository branch before/after: `feat/product-evidence-gate`
+- formal repository HEAD before/after: `c86bb63bc9b827e59a887ca81400f8df9aed1d92`
+- formal repository working tree before/after: **clean**
+
+The retained closure evidence directory is:
+
+`C:\Users\ROG\AppData\Local\Temp\wbt-upstream-rehearsal-20260827-131703-974\dotnet-publish-closure`
+
+This closes the `.NET publish` evidence gap only. It does not strengthen the rehearsal beyond candidate-level while upstream PR #3484 remains unmerged.
+
+## Remaining evidence limitation
+
+One limitation remains and must not be silently upgraded away:
+
+1. upstream PR #3484 was still unmerged when this rehearsal was performed. The result therefore does **not** prove release-level upstream maintainability.
 
 The retained local evidence directory from the rehearsal was:
 
@@ -129,7 +156,7 @@ Do not reinterpret this decision as either of the following:
 
 The supported conclusion is narrower:
 
-> Against the fixed upstream PR #3484 candidate head, the current downstream architecture demonstrated clean three-way integration, expected seam-only overlap, no new Wave→product dependency, no manual adaptation, preserved frozen invariants, and passing available regression evidence.
+> Against the fixed upstream PR #3484 candidate head, the current downstream architecture demonstrated clean three-way integration, expected seam-only overlap, no new Wave→product dependency, no manual adaptation, preserved frozen invariants, and passing regression evidence including the hosted PowerShell `.NET 8` restore/build/publish closure.
 
 Future upstream rehearsals must continue to assess conflict locality **and** dependency direction. A clean merge with new Wave→product coupling is not a PASS.
 
@@ -140,8 +167,7 @@ Do not open a new architecture redesign from this result.
 The approved follow-up is:
 
 1. preserve this candidate-level decision and its evidence;
-2. when a .NET SDK is available, fill the `dotnet publish` evidence gap without changing the verdict criteria;
-3. if PR #3484 is merged upstream, rerun the same rehearsal policy against the final upstream merge SHA;
-4. continue to describe the current result as candidate-level until final upstream evidence justifies a stronger statement.
+2. if PR #3484 is merged upstream, rerun the same rehearsal policy against the final upstream merge SHA;
+3. continue to describe the current result as candidate-level until final upstream evidence justifies a stronger statement.
 
 Any future evidence that triggers the Architecture Review conditions in `CONDITIONAL-ARCHITECTURE-FREEZE.md` takes precedence over this candidate-level positive result.
