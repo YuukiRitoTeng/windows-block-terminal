@@ -135,6 +135,7 @@ tasks:
 
     build:hostedpwsh:
         desc: Publish the bundled hosted PowerShell runtime for Windows x64 packaging.
+        platforms: [windows]
         cmds:
             - dotnet publish tools/hostedpwsh/WbtHostedPowerShell.csproj --configuration Release --runtime win-x64 --self-contained true --output dist/hostedpwsh/win-x64
 

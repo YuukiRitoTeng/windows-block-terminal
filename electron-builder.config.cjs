@@ -36,10 +36,14 @@ const config = {
             from: "dist/tsunamiscaffold",
             to: "tsunamiscaffold",
         },
-        {
-            from: "dist/hostedpwsh/win-x64",
-            to: "hostedpwsh/win-x64",
-        },
+        ...(process.platform === "win32"
+            ? [
+                  {
+                      from: "dist/hostedpwsh/win-x64",
+                      to: "hostedpwsh/win-x64",
+                  },
+              ]
+            : []),
     ],
     directories: {
         output: "make",
