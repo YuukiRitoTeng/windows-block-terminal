@@ -1,16 +1,16 @@
 {
-    "name": "waveterm",
+    "name": "windows-block-terminal",
     "author": {
-        "name": "Command Line Inc",
-        "email": "info@commandline.dev"
+        "name": "Windows Block Terminal",
+        "email": "opensource@windows-block-terminal.example"
     },
-    "productName": "Wave",
-    "description": "Open-Source AI-Native Terminal Built for Seamless Workflows",
+    "productName": "Windows Block Terminal",
+    "description": "A modern block-based terminal for Windows 11 and PowerShell 7",
     "license": "Apache-2.0",
     "version": "0.14.5",
-    "homepage": "https://waveterm.dev",
+    "homepage": "https://github.com/YuukiRitoTeng/windows-block-terminal",
     "build": {
-        "appId": "dev.commandline.waveterm"
+        "appId": "com.yuukiritoteng.windowsblockterminal"
     },
     "private": true,
     "main": "./dist/main/index.js",

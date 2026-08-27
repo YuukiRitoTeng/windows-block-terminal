@@ -4,15 +4,16 @@
 version: "3"
 
 vars:
-    APP_NAME: "Wave"
+    APP_NAME: "Windows Block Terminal"
     BIN_DIR: "bin"
     VERSION:
         sh: node version.cjs
     RMRF: '{{if eq OS "windows"}}powershell -NoProfile -NonInteractive Remove-Item -Force -Recurse -ErrorAction SilentlyContinue{{else}}rm -rf{{end}}'
     DATE: '{{if eq OS "windows"}}powershell -NoProfile -NonInteractive Get-Date -UFormat{{else}}date{{end}}'
     ARTIFACTS_BUCKET: waveterm-github-artifacts/staging-w2
-    RELEASES_BUCKET: dl.waveterm.dev/releases-w2
-    WINGET_PACKAGE: CommandLine.Wave
+    # Downstream packaging deliberately does not publish to Wave's release feed.
+    RELEASES_BUCKET: windows-block-terminal.invalid/releases
+    WINGET_PACKAGE: YuukiRitoTeng.WindowsBlockTerminal
 
 tasks:
     electron:dev:
@@ -130,6 +131,12 @@ tasks:
             - npm:install
             - build:backend
             - build:tsunamiscaffold
+            - build:hostedpwsh
+
+    build:hostedpwsh:
+        desc: Publish the bundled hosted PowerShell runtime for Windows x64 packaging.
+        cmds:
+            - dotnet publish tools/hostedpwsh/WbtHostedPowerShell.csproj --configuration Release --runtime win-x64 --self-contained true --output dist/hostedpwsh/win-x64
 
     build:frontend:dev:
         desc: Build the frontend in development mode.
@@ -569,7 +576,7 @@ tasks:
             - npm --no-workspaces init -y --init-license Apache-2.0
             - npm pkg set name=tsunami-scaffold
             - npm pkg delete author
-            - npm pkg set author.name="Command Line Inc"
+            - npm pkg set author.name="Windows Block Terminal"
             - npm pkg set author.email="info@commandline.dev"
             - npm --no-workspaces install tailwindcss@4.1.13 @tailwindcss/cli@4.1.13
 

@@ -3,6 +3,8 @@
 
 import * as electron from "electron";
 import * as child_process from "node:child_process";
+import { existsSync } from "node:fs";
+import path from "node:path";
 import * as readline from "readline";
 import { WebServerEndpointVarName, WSServerEndpointVarName } from "../frontend/util/endpoints";
 import { AuthKey, WaveAuthKeyEnv } from "./authkey";
@@ -70,6 +72,13 @@ export function runWaveSrv(handleWSEvent: (evtMsg: WSEventType) => void): Promis
     envCopy[WaveAuthKeyEnv] = AuthKey;
     envCopy[WaveDataHomeVarName] = getWaveDataDir();
     envCopy[WaveConfigHomeVarName] = getWaveConfigDir();
+    if (process.platform === "win32" && !process.env.WBT_HOSTED_PWSH) {
+        const hostedPowerShell = path.join(getElectronAppResourcesPath(), "hostedpwsh", "win-x64", "WbtHostedPowerShell.exe");
+        if (existsSync(hostedPowerShell)) {
+            envCopy.WBT_HOSTED_PWSH = "1";
+            envCopy.WBT_HOSTED_PWSH_EXE = hostedPowerShell;
+        }
+    }
     const waveSrvCmd = getWaveSrvPath();
     console.log("trying to run local server", waveSrvCmd);
     const proc = child_process.spawn(getWaveSrvPath(), {
