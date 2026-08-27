@@ -50,9 +50,11 @@ jobs:
                   retry_on: error
                   max_attempts: 3
                   timeout_minutes: 5
-            - name: Ensure sharp for Docusaurus ideal-image
-              run: npm install --no-save --package-lock=false --no-audit --no-fund sharp@0.34.3
+            - name: Install isolated sharp for Docusaurus ideal-image
+              run: npm install --prefix "${{ runner.temp }}/docsite-sharp" --no-save --package-lock=false --no-audit --no-fund sharp@0.34.3
             - name: Build docsite
+              env:
+                  NODE_PATH: ${{ runner.temp }}/docsite-sharp/node_modules
               run: task docsite:build:public
             - name: Upload Build Artifact
               # Only upload the build artifact when pushed to the main branch
