@@ -1,14 +1,14 @@
 version: 4.0.65
 steps:
-  - prompt: complete the onboarding of wave terminal
+  - prompt: complete the onboarding of Windows Block Terminal
     commands:
       - command: hover-text
         text: Continue
-        description: button to complete onboarding
+        description: button to continue onboarding
         action: click
       - command: hover-text
         text: Get Started
         description: button to complete onboarding
         action: click
       - command: assert
-        expect: the cpu usage graph is being displayed
+        expect: the Windows Block Terminal main terminal interface is displayed and ready for terminal input
