@@ -365,12 +365,17 @@ Normal feature work must stop for architecture review if a change requires any o
 - introducing a second durable history truth source;
 - broad invasive changes to ShellController/PTY/xterm parsing to support Cards.
 
-## 9. Next project stage
+## 9. Current project-stage note
 
-The next main-line objective is **Fork Isolation / Upstream Maintainability Rehearsal**.
+The timeline that originally followed this freeze has advanced.
 
-The objective is no longer to re-prove whether Command Cards can coexist with a live terminal. That product hypothesis has passed the Product Evidence Gate.
+Since this decision, the project has completed the candidate-based Fork Isolation / Upstream Maintainability Rehearsal, release hardening, Windows packaging and upgrade evidence, and the first Visual Productization pass. The upstream rehearsal remains **PASS WITH CONDITIONS** and is not release-level proof while its candidate condition remains open.
 
-The next work should prove that the architecture can absorb real Wave upstream change while keeping downstream product logic concentrated in narrow adapters and product-owned modules.
+The active main-line stage is now the **Release Candidate Readiness Gate**.
 
-After that, continue the existing roadmap toward release hardening, Windows packaging/MVP performance, and finally visual productization.
+For current project status and next-stage exit criteria, use:
+
+- `docs/PROJECT-STATUS.md`;
+- `docs/ROADMAP.md`.
+
+This timeline update does not change any frozen invariant, condition, or Architecture Review trigger in this document.

@@ -1,8 +1,12 @@
 # Wave Hosted Runtime Gate Evidence
 
+> **Historical gate evidence.** This document records the hosted-runtime feasibility state at the time of this gate. Its GO verdict remains valid evidence for the one-host / one-Runspace architecture, but its project-state and “still unproven” statements are not current roadmap authority. For the current product state and next stage, read `docs/PROJECT-STATUS.md` and `docs/ROADMAP.md`. For architecture authority, read `docs/CONDITIONAL-ARCHITECTURE-FREEZE.md`.
+
 ## Scope
 
-This document records the opt-in Wave/ConPTY hosted PowerShell feasibility gate. It is not a Product Evidence Gate, a Command Journal migration, or a default-runtime decision.
+This document records the opt-in Wave/ConPTY hosted PowerShell feasibility gate. It was not a Product Evidence Gate, a Command Journal migration, or a default-runtime decision.
+
+Later work integrated the hosted runtime into the Product Evidence, persistence, packaging and visual-product flows. This document should therefore be read as evidence for the gate it actually ran, not as a description of the current product surface.
 
 ## Baseline
 
@@ -58,7 +62,7 @@ Observed results:
 
 The Go runtime creates an opt-in loopback TCP sidechannel with a per-process token. The hosted process recorded `SIDECAR_CONNECTED` and sends `hello`, `runtime_ready`, `command_started`, `output`, and `command_finished` JSON events. The backend receiver is coded to log event metadata and output lengths; it does not re-render sidechannel output, so terminal-visible output remains owned by the Wave/xterm PTY path. This run captured the host-side connection and event-producing trace, but not a separately persisted backend receive log.
 
-This proves the feasibility transport seam. A durable Product runtime consumer, Command Journal registration, final RPC schema, and UI projection are intentionally not part of this gate.
+This proves the feasibility transport seam. A durable Product runtime consumer, Command Journal registration, final RPC schema, and UI projection were intentionally not part of this gate.
 
 ## Verdict
 
@@ -76,7 +80,9 @@ This GO is limited to the real Wave/ConPTY hosted-runtime feasibility seam, with
 - same-session continuity;
 - no second shell session and no second Runspace.
 
-Still unproven and explicitly out of scope:
+## What was still unproven at this gate
+
+At the time this gate ran, the following were explicitly outside its evidence scope:
 
 - Command Journal production consumer registration;
 - Command Card, Copy Output, Copy All, and Product Evidence UI;
@@ -85,4 +91,6 @@ Still unproven and explicitly out of scope:
 - crash/reconnect and sidechannel backpressure;
 - final schema, RPC contract, persistence migration, and default-runtime rollout.
 
-An all-capabilities single-session integrated trace remains unproven; it is not required to establish this feasibility GO, but is required before treating the evidence as a release-grade integrated run.
+Later Product Evidence and packaging work closed the first two product-integration gaps and established durable persistence. The broader interactive/recovery matrix, large-scale release behavior and final hosted-runtime rollout/fallback policy remain Release Candidate Readiness concerns. Exact interactive output is still intentionally not promised without independent causal evidence.
+
+The split-session limitation described by this original gate remains part of this gate record; later evidence must be consulted for any stronger integrated-run claim.
