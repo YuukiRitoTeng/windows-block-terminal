@@ -18,6 +18,7 @@
     height: 100%;
     overflow: hidden;
     position: relative;
+    background: var(--wbt-surface);
 
     .term-header {
         display: flex;
@@ -56,19 +57,24 @@
 
     .term-connectelem {
         flex: 1 1 auto;
-        min-height: 120px;
+        min-height: 0;
         overflow: hidden;
         line-height: 1;
         margin: 5px 1px 5px 4px;
     }
 
     .command-history {
-        flex: 0 1 32%;
+        // Size against the current terminal block, never the viewport. The
+        // live xterm flex item therefore remains the primary usable surface.
+        flex: 0 1 clamp(28px, 30%, 340px);
         min-height: 28px;
-        max-height: 32%;
+        max-height: min(36%, 340px);
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
         overflow: hidden;
-        border-top: 1px solid var(--border-color);
-        background: color-mix(in srgb, var(--main-bg-color) 94%, white);
+        border-top: 1px solid var(--wbt-border-strong);
+        background: var(--wbt-surface);
         font-size: 12px;
         z-index: 1;
 
@@ -76,30 +82,130 @@
             display: flex;
             align-items: center;
             gap: 8px;
-            min-height: 28px;
-            padding: 3px 8px;
-            border-bottom: 1px solid var(--border-color);
-            color: var(--secondary-text-color);
+            flex: 0 0 34px;
+            min-width: 0;
+            padding: 4px 10px;
+            border-bottom: 1px solid var(--wbt-border-subtle);
+            color: var(--wbt-text-secondary);
+            letter-spacing: 0.01em;
 
-            button { margin-left: auto; }
+            .command-history-title {
+                display: inline-flex;
+                align-items: center;
+                gap: 7px;
+                color: var(--wbt-text-primary);
+                font-weight: 600;
+            }
+
+            .command-history-title-icon {
+                color: var(--accent-color);
+                font-size: 11px;
+            }
+
+            button {
+                margin-left: auto;
+                display: inline-flex;
+                align-items: center;
+                gap: 6px;
+                min-height: 24px;
+                padding: 3px 9px;
+                border: 1px solid transparent;
+                border-radius: 5px;
+                background: transparent;
+                color: var(--wbt-text-secondary);
+                font: inherit;
+                cursor: pointer;
+
+                &:hover {
+                    border-color: var(--wbt-border-subtle);
+                    background: var(--wbt-surface-muted);
+                    color: var(--wbt-text-primary);
+                }
+
+                &:focus-visible {
+                    outline: 2px solid var(--wbt-focus-ring);
+                    outline-offset: 1px;
+                }
+            }
         }
 
-        .command-history-health { margin-left: 8px; }
-        .command-history-health-available { color: var(--success-color); }
-        .command-history-health-degraded { color: var(--warning-color); }
-        .command-history-health-unavailable { color: var(--error-color); }
-        .command-history-message, .command-history-empty, .command-card-output-note { padding: 4px 8px; color: var(--secondary-text-color); }
-        .command-history-list { overflow: auto; max-height: calc(100% - 32px); }
-        .command-card { padding: 7px 8px; border-bottom: 1px solid var(--border-color); user-select: text; }
+        .command-history-health {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            font-size: 11px;
+        }
+
+        .command-history-health-available { color: var(--wbt-status-success); opacity: 0.78; }
+        .command-history-health-degraded { color: var(--wbt-status-unknown); }
+        .command-history-health-unavailable { color: var(--wbt-status-error); }
+        .command-history-message, .command-history-empty, .command-card-output-note { padding: 6px 10px; color: var(--wbt-text-secondary); }
+        .command-history-list { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 3px 0 6px; }
+        .command-card {
+            position: relative;
+            margin: 4px 8px;
+            padding: 9px 10px 10px 12px;
+            border: 1px solid var(--wbt-border-subtle);
+            border-left: 2px solid var(--wbt-border-subtle);
+            border-radius: 6px;
+            background: var(--wbt-surface-elevated);
+            user-select: text;
+            transition: border-color 120ms ease, background-color 120ms ease;
+
+            &:hover { border-color: var(--wbt-border-strong); }
+            &[data-status="success"] { border-left-color: var(--wbt-status-success); }
+            &[data-status="failed"] { border-left-color: var(--wbt-status-error); }
+            &[data-status="running"] { border-left-color: var(--wbt-status-running); }
+            &[data-status="unknown"] { border-left-color: var(--wbt-status-unknown); }
+        }
         .command-card-header, .command-card-meta, .command-card-actions { display: flex; align-items: center; gap: 8px; }
-        .command-card-command { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: pre; }
-        .command-card-status-success { color: var(--success-color); }
-        .command-card-status-failed { color: var(--error-color); }
-        .command-card-meta { color: var(--secondary-text-color); padding-top: 3px; overflow: hidden; }
+        .command-card-header { min-width: 0; }
+        .command-card-command { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: pre; color: var(--wbt-text-primary); font-size: 12px; }
+        .command-card-status {
+            display: inline-flex;
+            align-items: center;
+            flex: 0 0 auto;
+            gap: 5px;
+            padding: 2px 7px;
+            border: 1px solid currentColor;
+            border-radius: 999px;
+            font-size: 10px;
+            font-weight: 600;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+        .command-card-status::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+        .command-card-status-success { color: var(--wbt-status-success); }
+        .command-card-status-failed { color: var(--wbt-status-error); }
+        .command-card-status-running { color: var(--wbt-status-running); }
+        .command-card-status-unknown { color: var(--wbt-status-unknown); }
+        .command-card-meta { color: var(--wbt-text-secondary); padding-top: 6px; overflow: hidden; font-size: 11px; }
         .command-card-meta span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .command-card-actions { padding-top: 5px; }
-        .command-card-actions button { font-size: 11px; }
-        .command-card-output { max-height: 120px; overflow: auto; margin: 6px 0 0; padding: 6px; white-space: pre-wrap; user-select: text; background: var(--term-bg-color); }
+        .command-card-meta .command-card-meta-primary { color: var(--wbt-text-primary); }
+        .command-card-meta .command-card-meta-cwd { flex: 1; min-width: 0; }
+        .command-card-actions { padding-top: 8px; gap: 5px; }
+        .command-card-actions button {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 3px 7px;
+            border: 1px solid transparent;
+            border-radius: 4px;
+            background: transparent;
+            color: var(--wbt-text-secondary);
+            font-size: 11px;
+            cursor: pointer;
+
+            &:hover:not(:disabled) { border-color: var(--wbt-border-subtle); background: var(--wbt-surface-muted); color: var(--wbt-text-primary); }
+            &:focus-visible { outline: 2px solid var(--wbt-focus-ring); outline-offset: 1px; }
+            &:disabled { cursor: not-allowed; opacity: 0.38; }
+            i { font-size: 10px; }
+        }
+        .command-card-output { max-height: 120px; overflow: auto; margin: 8px 0 0; padding: 8px; border: 1px solid var(--wbt-border-subtle); border-radius: 4px; white-space: pre-wrap; user-select: text; background: var(--term-background); color: var(--wbt-text-primary); }
     }
 
     .term-htmlelem {

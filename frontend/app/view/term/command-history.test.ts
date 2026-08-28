@@ -21,8 +21,8 @@ describe("command history product seam", () => {
 
     it("keeps history bounded by the terminal block instead of the viewport", () => {
         const styles = readFileSync(new URL("./term.scss", import.meta.url), "utf8");
-        expect(styles).toContain("min-height: 120px");
-        expect(styles).toContain("max-height: 32%");
+        expect(styles).toContain("min-height: 0");
+        expect(styles).toContain("max-height: min(36%, 340px)");
         expect(styles).not.toContain("38vh");
     });
 

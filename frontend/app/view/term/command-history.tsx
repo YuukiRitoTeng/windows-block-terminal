@@ -118,7 +118,7 @@ const statusLabel = (record: RecordView) => {
     if (record.state === "running") return "running";
     if (record.success === true) return "success";
     if (record.success === false) return "failed";
-    return record.state || "unknown";
+    return "unknown";
 };
 
 const CommandCard = ({
@@ -139,7 +139,7 @@ const CommandCard = ({
         type: "button" as const,
     };
     return (
-        <article className="command-card" data-command-id={record.id}>
+        <article className="command-card" data-command-id={record.id} data-status={statusLabel(record)}>
             <div className="command-card-header">
                 <code className="command-card-command">{record.command}</code>
                 <span className={`command-card-status command-card-status-${statusLabel(record)}`}>
@@ -147,19 +147,25 @@ const CommandCard = ({
                 </span>
             </div>
             <div className="command-card-meta">
-                <span>exit {record.exit_code ?? "—"}</span>
+                <span className="command-card-meta-primary">exit {record.exit_code ?? "—"}</span>
                 <span>{record.execution_mode || "unknown"}</span>
                 <span>{formatDuration(record)}</span>
-                {record.cwd && <span title={record.cwd}>{record.cwd}</span>}
+                {record.cwd && <span className="command-card-meta-cwd" title={record.cwd}>{record.cwd}</span>}
                 <span>{record.output_stored_bytes}/{record.output_total_bytes} bytes{record.output_truncated ? " · truncated" : ""}</span>
             </div>
             <div className="command-card-actions">
-                <button {...copyButtonProps} onClick={() => onCopy("command")}>Copy Command</button>
-                <button {...copyButtonProps} disabled={!canCopyOutput(record)} onClick={() => onCopy("output")}>
-                    Copy Output
+                <button {...copyButtonProps} aria-label="Copy command" title="Copy command" onClick={() => onCopy("command")}>
+                    <i className="fa-sharp fa-light fa-copy" aria-hidden="true" /> <span>Command</span>
                 </button>
-                <button {...copyButtonProps} disabled={!canCopyOutput(record)} onClick={onCopyAll}>Copy All</button>
-                <button {...copyButtonProps} onClick={onLoadOutput}>{output?.projection ? "Hide Output" : "Show Output"}</button>
+                <button {...copyButtonProps} aria-label="Copy output" title="Copy output" disabled={!canCopyOutput(record)} onClick={() => onCopy("output")}>
+                    <i className="fa-sharp fa-light fa-file-lines" aria-hidden="true" /> <span>Output</span>
+                </button>
+                <button {...copyButtonProps} aria-label="Copy command and output" title="Copy command and output" disabled={!canCopyOutput(record)} onClick={onCopyAll}>
+                    <i className="fa-sharp fa-light fa-clipboard" aria-hidden="true" /> <span>All</span>
+                </button>
+                <button {...copyButtonProps} aria-label={output?.projection ? "Hide output" : "Show output"} title={output?.projection ? "Hide output" : "Show output"} onClick={onLoadOutput}>
+                    <i className={`fa-sharp fa-light ${output?.projection ? "fa-eye-slash" : "fa-eye"}`} aria-hidden="true" /> <span>{output?.projection ? "Hide" : "Show"}</span>
+                </button>
             </div>
             {output?.loading && <div className="command-card-output-note">Loading bounded output projection…</div>}
             {output?.projection?.kind === "safe" && <pre className="command-card-output">{output.projection.text}</pre>}
@@ -271,11 +277,13 @@ export const CommandHistory = ({ blockId, model }: CommandHistoryProps) => {
     return (
         <section className="command-history" aria-label="Command history">
             <div className="command-history-toolbar">
-                <span>Command History</span>
+                <span className="command-history-title"><i className="command-history-title-icon fa-sharp fa-light fa-terminal" aria-hidden="true" />Command History</span>
                 {health && <span className={`command-history-health command-history-health-${health.status}`}>
-                    persistence: {health.status}{health.output_complete === false ? " · output may be incomplete" : ""}
+                    <i className="fa-sharp fa-light fa-database" aria-hidden="true" />{health.status}{health.output_complete === false ? " · output may be incomplete" : ""}
                 </span>}
-                <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={clear}>Clear Visual History</button>
+                <button type="button" aria-label="Clear visual history" title="Clear visual history" onMouseDown={(event) => event.preventDefault()} onClick={clear}>
+                    <i className="fa-sharp fa-light fa-broom" aria-hidden="true" /> <span>Clear</span>
+                </button>
             </div>
             {message && <div className="command-history-message" role="status">{message}</div>}
             <div className="command-history-list">
