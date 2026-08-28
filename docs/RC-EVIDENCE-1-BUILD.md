@@ -36,3 +36,10 @@ used as the current RC-EVIDENCE-1 revalidation target.
 TestDriver: NOT RUN — manual RC gate.
 
 MSI and ZIP are not part of this candidate.
+
+## Availability at Interactive Batch 1 Preflight
+
+Exact declared artifact was not available at Interactive Batch 1 preflight.
+A same-name local installer had a different size and SHA-256 and was rejected.
+RC-EVIDENCE-1 remains historical build evidence but is no longer the active
+revalidation artifact.
