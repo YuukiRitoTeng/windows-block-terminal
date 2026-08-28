@@ -27,6 +27,21 @@
     --block-bg-solid-color: rgb(0, 0, 0);
     --block-border-radius: 8px;
 
+    // Windows Block Terminal product surfaces. These stay semantic so the
+    // terminal and history presentation can evolve without scattering colors.
+    --wbt-surface: rgba(24, 27, 29, 0.94);
+    --wbt-surface-elevated: rgba(35, 39, 42, 0.96);
+    --wbt-surface-muted: rgba(255, 255, 255, 0.045);
+    --wbt-border-subtle: rgba(255, 255, 255, 0.12);
+    --wbt-border-strong: rgba(255, 255, 255, 0.22);
+    --wbt-text-primary: #f4f7f5;
+    --wbt-text-secondary: #aeb7b1;
+    --wbt-status-success: #69d58a;
+    --wbt-status-error: #ff8371;
+    --wbt-status-running: #7fc8ff;
+    --wbt-status-unknown: #d8bd72;
+    --wbt-focus-ring: #9be7af;
+
     --keybinding-color: #e0e0e0;
     --keybinding-bg-color: #333;
     --keybinding-border-color: #444;

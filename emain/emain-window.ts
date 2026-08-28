@@ -168,6 +168,7 @@ export class WaveBrowserWindow extends BaseWindow {
             minWidth: MinWindowWidth,
             minHeight: MinWindowHeight,
             show: false,
+            title: "Windows Block Terminal",
         };
 
         const isTransparent = settings?.["window:transparent"] ?? false;
@@ -208,9 +209,13 @@ export class WaveBrowserWindow extends BaseWindow {
             if (isTransparent) {
                 winOpts.transparent = true;
             } else if (isBlur) {
-                winOpts.backgroundMaterial = "acrylic";
+                // Mica is the Windows 11 long-lived window material. Electron
+                // and DWM fall back to the solid color below when unsupported
+                // or when the user disables transparency effects.
+                winOpts.backgroundColor = "#181b1d";
+                winOpts.backgroundMaterial = "mica";
             } else {
-                winOpts.backgroundColor = "#222222";
+                winOpts.backgroundColor = "#181b1d";
             }
         }
 
