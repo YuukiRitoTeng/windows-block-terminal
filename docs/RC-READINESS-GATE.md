@@ -1,7 +1,7 @@
 # Release Candidate Readiness Gate
 
 Status date: 2026-08-28<br>
-Baseline: `origin/main` at `11275389612f7c5763ab736699797d2379eb99c1`
+Baseline: `origin/main` at `d445e828d19a124467cb5d7c63923cc8b2ee93c6`
 
 This document defines the evidence gate for entering a Windows Block Terminal
 Release Candidate. It is a readiness contract, not a new architecture design.
@@ -132,7 +132,40 @@ The 100-record limit and current frontend/persistence implementation are product
 decisions, not architecture invariants. They may evolve without changing the
 frozen ownership and truth boundaries.
 
-## 6. RC exit criteria
+## 6. TestDriver RC acceptance gate
+
+TestDriver is a release-candidate GUI acceptance gate, not routine PR or
+`main`-push CI. The policy established by PR #76 is:
+
+- `.github/workflows/testdriver-build.yml` is manual-only through
+  `workflow_dispatch` unless a future documented RC automation explicitly
+  changes this policy;
+- `.github/workflows/testdriver.yml` may run acceptance only after a successful
+  manual TestDriver build; failed or non-manual upstream runs are not acceptance
+  evidence;
+- `Build for TestDriver.ai` and `TestDriver.ai Run` are not required status
+  checks for ordinary PRs or routine `main` updates, and branch protection must
+  not require the manual TestDriver build while this policy is in force;
+- a TestDriver `PASS` requires the real TestDriver job to execute through
+  authentication, exact `windows-exe` artifact retrieval, installation,
+  Windows Block Terminal launch, and the onboarding scenario with a successful
+  exit;
+- `skipped`, authentication failure, artifact failure, installation failure,
+  immediate application exit, or onboarding failure must never be interpreted
+  as a TestDriver `PASS`;
+- OIDC is the primary authentication path and requires the repository/account to
+  be authorized in the TestDriver console; `TD_API_KEY` is an optional fallback.
+  Missing authorization or credentials is `BLOCKED BY AUTH`, not a product test
+  result;
+- until a formal RC artifact/tag convention is declared, TestDriver is started
+  manually against the chosen RC-target commit and the workflow run URL plus
+  commit SHA should be recorded as RC evidence.
+
+A future automatic RC-tag integration is a separate workflow-policy change. It
+must not silently restore TestDriver execution on ordinary PRs, routine
+`main` pushes, or scheduled dependency churn.
+
+## 7. RC exit criteria
 
 The Release Candidate Readiness Gate passes only when every RC-blocking item is
 either:
@@ -154,7 +187,7 @@ The following conditions are mandatory:
 - the upstream condition is handled according to the established rehearsal
   policy, without treating an unmerged candidate as a dependency.
 
-## 7. First execution batch
+## 8. First execution batch
 
 Do not execute this batch as part of creating the gate. It is the first planned
 RC evidence batch, limited to high-value terminal compatibility and recovery
