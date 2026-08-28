@@ -182,6 +182,7 @@ static class Program
     static TraceLog? trace;
     static int commandNumber;
     static bool interactiveChildActive;
+    static int structuredInvocationInterrupted;
 
     public static int Main()
     {
@@ -230,46 +231,65 @@ static class Program
     {
         var id = $"{runspace!.InstanceId:N}-{Interlocked.Increment(ref commandNumber)}";
         var directNative = IsDirectNative(command);
+        Interlocked.Exchange(ref structuredInvocationInterrupted, 0);
         trace!.Write($"INVOKE_BEGIN command_id={id} mode=structured direct_native={directNative} command={Escape(command)} runspace_id={runspace.InstanceId}");
         sidechannel!.Send(new { kind = "command_started", hostId = Environment.ProcessId.ToString(CultureInfo.InvariantCulture), runspaceId = runspace.InstanceId.ToString("N"), commandId = id, mode = "structured", command, cwd = CurrentCwd() });
         using var ps = PowerShell.Create();
         currentInvocation = ps;
         ps.Runspace = runspace;
         ps.AddScript(command + Environment.NewLine + "$__wbt_success=[bool]$?; $__wbt_lastExit=$LASTEXITCODE; Write-Output ('__WBT_META__|success=' + $__wbt_success + '|lastExit=' + $__wbt_lastExit)");
-        Collection<PSObject> output;
-        try { output = ps.Invoke(); }
+        var output = new PSDataCollection<PSObject>();
+        string? meta = null;
+        var errorCount = 0;
+        output.DataAdded += (_, args) =>
+        {
+            var item = output[args.Index];
+            var text = item?.ToString() ?? "";
+            trace.Write($"INVOKE_OUTPUT_ITEM command_id={id} value={Escape(text)}");
+            if (text.StartsWith("__WBT_META__|", StringComparison.Ordinal))
+            {
+                meta = text;
+                return;
+            }
+            Console.WriteLine(text);
+            EmitOutput(text + Environment.NewLine, id, "success");
+        };
+        ps.Streams.Error.DataAdded += (_, args) =>
+        {
+            var error = ps.Streams.Error[args.Index];
+            var text = error.ToString();
+            Interlocked.Exchange(ref errorCount, 1);
+            Console.Error.WriteLine(text);
+            EmitOutput(text + Environment.NewLine, id, "error");
+        };
+        try
+        {
+            var asyncResult = ps.BeginInvoke<PSObject, PSObject>(null, output);
+            ps.EndInvoke(asyncResult);
+        }
         catch (Exception ex)
         {
             var rendered = RenderInvocationError(ps, ex);
             Console.Error.WriteLine(rendered);
             EmitOutput(rendered + Environment.NewLine, id, "error");
             trace.Write($"INVOKE_EXCEPTION command_id={id} type={ex.GetType().Name} message={Escape(ex.Message)}");
-            EmitFinished(id, false, 1, false);
+            var wasInterrupted = Volatile.Read(ref structuredInvocationInterrupted) != 0 || ps.InvocationStateInfo.State == PSInvocationState.Stopped;
+            EmitFinished(id, false, 1, wasInterrupted);
             currentInvocation = null;
             return;
         }
-        var meta = output.LastOrDefault(x => x?.ToString()?.StartsWith("__WBT_META__|", StringComparison.Ordinal) == true)?.ToString();
         var success = ParseMeta(meta, "success", false);
         var nativeExit = ParseMeta(meta, "lastExit", 0);
-        trace.Write($"INVOKE_OUTPUT_COUNT command_id={id} count={output.Count} meta={Escape(meta)}");
-        foreach (var item in output)
+        var interrupted = Volatile.Read(ref structuredInvocationInterrupted) != 0 || ps.InvocationStateInfo.State == PSInvocationState.Stopped;
+        if (errorCount != 0 || ps.InvocationStateInfo.State == PSInvocationState.Failed) success = false;
+        var exitCode = directNative && !interrupted ? nativeExit : (success ? 0 : 1);
+        if (interrupted)
         {
-            var text = item?.ToString() ?? "";
-            trace.Write($"INVOKE_OUTPUT_ITEM command_id={id} value={Escape(text)}");
-            if (text.StartsWith("__WBT_META__|", StringComparison.Ordinal)) continue;
-            Console.WriteLine(text);
-            EmitOutput(text + Environment.NewLine, id, "success");
-        }
-        foreach (var error in ps.Streams.Error)
-        {
-            var text = error.ToString();
-            Console.Error.WriteLine(text);
-            EmitOutput(text + Environment.NewLine, id, "error");
             success = false;
+            exitCode = 1;
         }
-        if (ps.InvocationStateInfo.State == PSInvocationState.Failed) success = false;
-        var exitCode = directNative ? nativeExit : (success ? 0 : 1);
-        EmitFinished(id, success, exitCode, false);
+        trace.Write($"INVOKE_OUTPUT_COUNT command_id={id} count={output.Count} meta={Escape(meta)} interrupted={interrupted}");
+        EmitFinished(id, success, exitCode, interrupted);
         trace.Write($"INVOKE_END command_id={id} success={success} exit_code={exitCode} state={ps.InvocationStateInfo.State} runspace_id={runspace.InstanceId}");
         currentInvocation = null;
     }
@@ -357,7 +377,15 @@ static class Program
         trace?.Write("CTRL_C_RECEIVED");
         if (!interactiveChildActive)
         {
-            try { currentInvocation?.Stop(); trace?.Write("CTRL_C_STOP_REQUESTED"); }
+            try
+            {
+                if (currentInvocation is not null)
+                {
+                    Interlocked.Exchange(ref structuredInvocationInterrupted, 1);
+                    currentInvocation.Stop();
+                    trace?.Write("CTRL_C_STOP_REQUESTED");
+                }
+            }
             catch (Exception ex) { trace?.Write($"CTRL_C_STOP_ERROR message={Escape(ex.Message)}"); }
         }
     }

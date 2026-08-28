@@ -50,6 +50,7 @@ const (
 	CompletionPTYError           CompletionReason = "pty_error"
 	CompletionEpochChanged       CompletionReason = "epoch_changed"
 	CompletionAppRestartRecovery CompletionReason = "app_restart_recovery"
+	CompletionInterrupted        CompletionReason = "interrupted"
 )
 
 type CommandRecord struct {
@@ -286,10 +287,18 @@ func (j *Journal) Apply(blockID string, item terminalruntime.StreamItem, observe
 				active.OutputTextSafety = OutputTextSafetyPlain
 			}
 			active.State = StateFinished
-			active.CompletionReason = CompletionNormal
+			if event.Interrupted {
+				active.CompletionReason = CompletionInterrupted
+			} else {
+				active.CompletionReason = CompletionNormal
+			}
 			if active.ExecutionMode == terminalruntime.ExecutionModeStructured && active.OutputSource == terminalruntime.OutputSourceHostStructured {
 				active.OutputState = OutputStateClosed
-				if active.OutputCompleteness != OutputCompletenessIncomplete && !active.OutputTruncated {
+				if event.Interrupted {
+					active.OutputCompleteness = OutputCompletenessUnknown
+					active.OutputAttribution = OutputAttributionUnknown
+					active.OutputTextSafety = OutputTextSafetyUnknown
+				} else if active.OutputCompleteness != OutputCompletenessIncomplete && !active.OutputTruncated {
 					active.OutputCompleteness = OutputCompletenessComplete
 					active.OutputAttribution = OutputAttributionExclusive
 				}
