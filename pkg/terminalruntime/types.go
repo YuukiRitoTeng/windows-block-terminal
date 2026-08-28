@@ -43,6 +43,7 @@ type IntegrationEvent struct {
 	Cwd                    string
 	ExitCode               *int
 	Success                *bool
+	Interrupted            bool
 	Shell                  string
 	ShellVersion           string
 	CompletionReason       string

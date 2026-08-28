@@ -121,6 +121,7 @@ func (c *HostedRuntimeConsumer) ObserveHostedRuntimeEvent(event shellexec.Hosted
 				CommandID:              event.CommandID,
 				Success:                event.Success,
 				ExitCode:               event.ExitCode,
+				Interrupted:            event.Interrupted,
 				ExecutionMode:          c.activeMode,
 				OutputSource:           c.activeSource,
 				RuntimeHostID:          c.hostID,

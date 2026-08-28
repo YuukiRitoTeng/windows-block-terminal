@@ -108,6 +108,28 @@ func TestHostedRuntimeConsumerPreservesExitSemantics(t *testing.T) {
 	}
 }
 
+func TestHostedRuntimeConsumerPreservesInterruptedSemantics(t *testing.T) {
+	j := New()
+	c := NewHostedRuntimeConsumer("block-hosted", j)
+	hostedReady(c)
+	c.ObserveHostedRuntimeEvent(hostedStart("interrupted", "structured"))
+	code := 1
+	success := false
+	c.ObserveHostedRuntimeEvent(shellexec.HostedRuntimeEvent{
+		Kind:        "command_finished",
+		HostID:      "host-1",
+		RunspaceID:  "runspace-1",
+		CommandID:   "interrupted",
+		Success:     &success,
+		ExitCode:    &code,
+		Interrupted: true,
+	})
+	records := j.Snapshot("block-hosted")
+	if len(records) != 1 || records[0].CompletionReason != CompletionInterrupted || records[0].Success == nil || *records[0].Success || records[0].ExitCode == nil || *records[0].ExitCode == 0 || records[0].OutputCompleteness != OutputCompletenessUnknown || records[0].OutputAttribution != OutputAttributionUnknown {
+		t.Fatalf("interrupted semantics were not preserved: %#v", records)
+	}
+}
+
 func TestHostedRuntimeConsumerRejectsStaleIdentity(t *testing.T) {
 	j := New()
 	c := NewHostedRuntimeConsumer("block-hosted", j)
