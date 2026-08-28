@@ -26,7 +26,9 @@ jobs:
         name: Run TestDriver.ai
         runs-on: windows-latest
         timeout-minutes: 40
-        if: github.event.workflow_run.conclusion == 'success'
+        if: >-
+            github.event.workflow_run.conclusion == 'success' &&
+            github.event.workflow_run.event == 'workflow_dispatch'
         steps:
             - name: Checkout
               uses: actions/checkout@v7
@@ -40,11 +42,11 @@ jobs:
                   node-version: ${{ env.NODE_VERSION }}
 
             - name: Authenticate to TestDriver
-              uses: testdriverai/action@dae708d6ddf79ce83a3735de225336dc03d4c6e8
+              uses: testdriverai/action@f0d0f45fdd684db628baa843fe9313f3ca3a8aa8
               with:
-                  api-key: ${{ secrets.DASHCAM_API }}
+                  api-key: ${{ secrets.TD_API_KEY }}
 
-            - name: Download, install, and launch Wave
+            - name: Download, install, and launch Windows Block Terminal
               shell: pwsh
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -66,7 +68,12 @@ jobs:
 
                   Write-Host "Fetching the artifact download URL..."
                   $artifacts = (Invoke-RestMethod -Uri "https://api.github.com/repos/${{ github.repository }}/actions/runs/${{ github.event.workflow_run.id }}/artifacts" -Headers $headers).artifacts
-                  $artifactUrl = $artifacts | Where-Object { $_.name -eq "windows-exe" } | Select-Object -First 1 -ExpandProperty archive_download_url
+                  $matchingArtifacts = @($artifacts | Where-Object { $_.name -eq "windows-exe" })
+                  if ($matchingArtifacts.Count -ne 1) {
+                      Write-Error "Expected exactly one windows-exe artifact, found $($matchingArtifacts.Count)."
+                      exit 1
+                  }
+                  $artifactUrl = $matchingArtifacts[0].archive_download_url
 
                   if (-not $artifactUrl) {
                       Write-Error "windows-exe artifact was not found."
@@ -103,20 +110,29 @@ jobs:
 
                   Write-Host "Running the installer: $($artifactInstallerPath.FullName)..."
                   try {
-                      Start-Process -FilePath $artifactInstallerPath.FullName -Wait
+                      $installerProcess = Start-Process -FilePath $artifactInstallerPath.FullName -Wait -PassThru
                   } catch {
                       Write-Error "Failed to run the installer: $_"
                       exit 1
                   }
-
-                  $wavePath = Join-Path $env:USERPROFILE "AppData\Local\Programs\waveterm\Wave.exe"
-                  if (-not (Test-Path $wavePath)) {
-                      Write-Error "Wave executable was not found at $wavePath"
+                  if ($installerProcess.ExitCode -ne 0) {
+                      Write-Error "Installer exited with code $($installerProcess.ExitCode)."
                       exit 1
                   }
 
-                  Write-Host "Launching the application: $wavePath"
-                  Start-Process -FilePath $wavePath
+                  $appPath = Join-Path $env:LOCALAPPDATA "Programs\Windows Block Terminal\WindowsBlockTerminal.exe"
+                  if (-not (Test-Path $appPath)) {
+                      Write-Error "Windows Block Terminal executable was not found at $appPath"
+                      exit 1
+                  }
+
+                  Write-Host "Launching the application: $appPath"
+                  $appProcess = Start-Process -FilePath $appPath -PassThru
+                  Start-Sleep -Seconds 5
+                  if ($appProcess.HasExited) {
+                      Write-Error "Windows Block Terminal exited immediately with code $($appProcess.ExitCode)."
+                      exit 1
+                  }
 
             - name: Run onboarding test
               shell: pwsh
