@@ -1,109 +1,175 @@
 # Architecture Baseline
 
-## Product Direction
+## Current status
+
+Windows Block Terminal is an **installable Windows MVP foundation / preview**.
+
+The architecture foundation is conditionally frozen. The active project stage is the **Release Candidate Readiness Gate**; the project is no longer in Phase 5 implementation.
+
+For current roadmap state, read `PROJECT-STATUS.md`. For frozen architecture responsibilities and truth semantics, read `CONDITIONAL-ARCHITECTURE-FREEZE.md`.
+
+## Product direction
 
 Windows 11 + PowerShell 7 Block Terminal.
 
-## Current Status
+The product keeps a real terminal as the live interaction surface and adds a product-owned structured command/history layer for ordinary commands.
 
-Phase 5 — Persistence Contract & Migration is the active implementation
-phase. The hosted runtime is opt-in; the default Wave runtime remains
-unchanged.
+## Runtime authority
 
-## Runtime Authority
+Wave / ConPTY / xterm.js remains the authoritative live terminal compatibility path.
 
-Wave Terminal remains the runtime for the real terminal session. Wave owns:
+Wave owns the real PTY/session/controller/rendering path. The product must not block, replace or reconstruct this path in order to create Command Cards.
 
-- PTY and shell process
-- session lifecycle
-- controller / RPC
-- terminal byte stream
-- xterm.js terminal compatibility and rendering
+Interactive programs remain owned by the live PTY/xterm surface.
 
-The product observes the PTY path asynchronously. Observation must never alter
-or block the authoritative Wave/xterm terminal path.
+## Hosted PowerShell direction
 
-## Product Domain
+The supported architecture uses:
 
-```text
-Terminal Session
-│
-├─ Wave Runtime
-│  └─ xterm.js active terminal
-│
-└─ Command Journal
-   ├─ CommandRecord
-   ├─ raw captured output metadata
-   ├─ durable provenance (mode/source/host/runspace/contract versions)
-   └─ future presentation / Card projections
-```
+- one hosted PowerShell process;
+- one persistent Runspace;
+- terminal-visible stdout/stderr through the PTY/xterm path;
+- an authenticated structured sidechannel for ordinary-command lifecycle/output.
 
-For the hosted runtime, structured ordinary output reaches the Journal through
-an authenticated sidechannel and `HostedRuntimeConsumer`. Interactive programs
-remain live PTY/xterm sessions and are not represented as exact structured
-output.
+A synchronized second long-lived PowerShell session is not part of the architecture.
 
-Core invariants that are currently retained:
-
-- Wave Block = terminal session
-- CommandRecord = one product command, independent of Wave Block
-- interactive applications remain in the real PTY/xterm path
-- Command Cards must not replace the active xterm terminal
-- Clear Visual History must not kill or reset the shell / PTY / session
-- no custom terminal emulator is planned
-
-## Product Data Boundary
+## Product domain
 
 ```text
-Raw captured output
-        ≠
-Presentation output
-        ≠
-Copy output
+Wave / ConPTY / xterm.js
+        |
+        | live terminal authority
+        v
+Hosted PowerShell Runtime
+one host process + one persistent Runspace
+        |
+        | authenticated ordinary-command lifecycle/output
+        v
+HostedRuntimeConsumer
+        v
+Command Journal
+  - CommandRecord
+  - execution state
+  - output state
+  - provenance / guarantee metadata
+        v
+Durable persistence
+        v
+Command History / Command Cards / Copy / Clear
 ```
 
-The current backend exposes raw captured output together with truncation,
-completeness, attribution and text-safety metadata. Hosted structured output
-is authoritative for hosted ordinary commands; PTY bytes remain the live
-terminal path and are not duplicated into those records.
+A Wave Block represents a terminal session/runtime container.
 
-## Lifecycle and Output Boundary Contract
+A `CommandRecord` represents a product-owned command/history record.
 
-PowerShell integration events have semantic, not physical-drain, meaning:
+`CommandRecord != Wave Block`.
 
-- `C` means command accepted / execution started.
-- `D` means execution result known (`success`, `exitCode`, and execution
-  `FinishedAt`).
-- `P` is a prompt lifecycle signal.
+## Lifecycle and output truth
 
-`D` and `P` do not prove that ordinary PTY output has physically arrived. The
-three concerns remain independent: execution completion, output attribution,
-and output completion. `CommandRecord.State` describes execution;
-`OutputState` describes capture finalization (`open`, `pending`, `closed`).
-`OutputCompleteness` and `OutputAttribution` are conservative quality metadata.
-A record starts with unknown output quality; only a proven causal output fence
-may upgrade it to `complete` / `exclusive`.
+The architecture permanently separates:
 
-After `D`, the Journal does not assign all later bytes to the finished command.
-Next `C`, epoch change, runtime detach, and session close are liveness fences
-that close unresolved output as `unknown` / `incomplete`, not proof of
-attribution. The PTY, Wave terminal file, and xterm.js path remain unchanged.
+```text
+Execution Completion
+!= Output Attribution
+!= Output Completion
+```
 
-## Not Yet Frozen
+Shell lifecycle signals are semantic events, not proof that PTY output has physically drained.
 
-The following remain conditional until a real product vertical slice exists:
+For ordinary hosted commands:
 
-- final CommandRecord schema and API
-- Output Store contract and overflow policy
-- Card projection
-- copy normalization
-- frontend read model / RPC usage
-- persistence product UX and retention policy
+- lifecycle authority comes from the hosted runtime;
+- structured output authority comes from the authenticated hosted sidechannel;
+- PTY bytes remain the live terminal presentation path.
 
-## Current Phase
+For interactive commands:
 
-Phase 5 — Persistence Contract & Migration.
+- PTY/xterm owns realtime input/output;
+- a lifecycle/status record may exist;
+- exact bounded post-hoc output is not promised unless a future independent mechanism proves it.
 
-This phase freezes the durable persistence contract and migration safety
-boundaries. It does not productize the frontend, change the default runtime,
-or claim exact PTY output attribution.
+## Trusted product output
+
+Show/Copy Output is only authoritative when the record proves the equivalent of:
+
+- execution mode is not interactive;
+- output state is closed;
+- output completeness is complete;
+- output attribution is exclusive;
+- output text safety is plain text;
+- output is not truncated;
+- any product presentation-size limit is satisfied.
+
+Unknown, incomplete, mixed, unsafe, truncated or interactive output must degrade honestly.
+
+## Durable history
+
+Product history is owned by the product durable store.
+
+Wave circular terminal files, xterm rows/scrollback, prompt reconstruction and transient frontend component state are not Command Journal authority.
+
+Persistence uncertainty must downgrade guarantees rather than preserve a false complete/exclusive claim.
+
+## Clear Visual History
+
+Clear Visual History is a product visibility transaction plus a terminal visual clear.
+
+It must preserve:
+
+- shell process;
+- PTY;
+- hosted PowerShell process;
+- persistent Runspace;
+- session state such as cwd, environment and PowerShell state.
+
+Clear Visual History and destructive durable-history deletion are separate concepts.
+
+## Frozen invariants
+
+The current architecture freeze keeps the following responsibilities stable:
+
+- Wave / ConPTY / xterm.js is the sole live terminal authority;
+- CommandRecord remains separate from Wave Block;
+- one authoritative hosted PowerShell process / persistent Runspace;
+- authenticated hosted ordinary-command lifecycle/output authority;
+- conservative interactive semantics;
+- execution / attribution / completion separation;
+- explicit trusted-output provenance gate;
+- product-owned durable history;
+- Clear preserves the live session;
+- no custom terminal emulator.
+
+## Not frozen
+
+The following may evolve without architecture review when frozen invariants remain intact:
+
+- final CommandRecord / RecordView fields;
+- RPC/read-model shape;
+- SQLite schema/chunk layout;
+- loopback transport implementation;
+- frontend polling/refresh implementation;
+- presentation byte limits;
+- history layout and Card visual design;
+- Copy All formatting;
+- pagination / lazy loading / virtualization;
+- retention and destructive-delete UX;
+- hosted-runtime default/fallback policy;
+- packaging/updater implementation;
+- performance budgets;
+- release-channel design.
+
+## Architecture review triggers
+
+Stop normal work and reopen Architecture Review if a required change would:
+
+- replace Wave / ConPTY / xterm.js as live terminal authority;
+- introduce synchronized dual authoritative PowerShell sessions;
+- make PTY heuristics authoritative for ordinary structured output;
+- merge CommandRecord semantics into Wave Block semantics;
+- claim exact interactive output without new causal evidence;
+- make Clear restart the shell/session;
+- bypass output-guarantee metadata for Show/Copy;
+- introduce a second durable history truth source;
+- require broad invasive ShellController/PTY/xterm changes to support Cards.
+
+The current Release Candidate Readiness Gate does **not** itself trigger architecture review.
