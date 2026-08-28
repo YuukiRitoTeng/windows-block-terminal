@@ -97,7 +97,7 @@ jobs:
                   try {
                       Expand-Archive -Path $artifactZipPath -DestinationPath $artifactUnzipPath -Force
                   } catch {
-                      Write-Error "Failed to unzip artifact: $_"
+                      Write-Error "Failed to unzip the artifact: $_"
                       exit 1
                   }
 
