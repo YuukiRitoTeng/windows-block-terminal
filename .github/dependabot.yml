@@ -54,6 +54,7 @@ updates:
                   - "@types/react"
                   - "*react-dom"
                   - "*docusaurus*"
+                  - "monaco-editor"
               update-types:
                   - "minor"
 
