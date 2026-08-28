@@ -1,7 +1,7 @@
 # Release Candidate Readiness Gate
 
-Status date: 2026-08-28<br>
-Baseline: `origin/main` at `d445e828d19a124467cb5d7c63923cc8b2ee93c6`
+Status date: 2026-08-29<br>
+Baseline: `origin/main` at `5193178b84ea01b4adb4fed9fb9aa1b02b4b669a`
 
 This document defines the evidence gate for entering a Windows Block Terminal
 Release Candidate. It is a readiness contract, not a new architecture design.
@@ -49,6 +49,25 @@ This baseline is not a signed or supportable production release. The current
 stage is the Release Candidate Readiness Gate. A formal RC artifact and
 supported RC configuration are not yet declared; all evidence listed above is
 therefore pre-RC / baseline evidence pending RC-target revalidation.
+
+## Current RC Evidence Candidate
+
+Candidate ID: `RC-EVIDENCE-1`
+
+This candidate is a fixed target for RC evidence revalidation, not a formal
+public release.
+
+- Source SHA: `5193178b84ea01b4adb4fed9fb9aa1b02b4b669a`
+- Product version: `0.14.5`
+- Target: Windows x64 NSIS
+- Installer: `Windows Block Terminal-win32-x64-0.14.5.exe`
+- Installer size: `709442040` bytes
+- Installer SHA-256: `E917811BD03F5D0BFFC0305DDB4993F5356CEC85EBB3E35D9D34B303BE3418F`
+- Packaged hosted runtime SHA-256: `24E0D2739658EFD671894F0D8786D8BE12A0B04076FF4E4051C45C162BF00FCD`
+- Supported test configuration: Windows 11 x64, packaged Windows Block Terminal,
+  packaged Hosted PowerShell runtime and PowerShell 7.6.4.
+
+MSI and ZIP are not evidence targets for `RC-EVIDENCE-1`.
 
 ## Status inventory
 
