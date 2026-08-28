@@ -66,8 +66,11 @@ public release.
 - Packaged hosted runtime SHA-256: `24E0D2739658EFD671894F0D8786D8BE12A0B04076FF4E4051C45C162BF00FCD`
 - Supported test configuration: Windows 11 x64, packaged Windows Block Terminal,
   packaged Hosted PowerShell runtime and PowerShell 7.6.4.
+- Build evidence: `docs/RC-EVIDENCE-1-BUILD.md`
 
 MSI and ZIP are not evidence targets for `RC-EVIDENCE-1`.
+The historical 0.14.5 artifact in `WINDOWS-PACKAGING-MVP-EVIDENCE.md` is a
+different pre-RC artifact identity and is not `RC-EVIDENCE-1`.
 
 ## Status inventory
 
