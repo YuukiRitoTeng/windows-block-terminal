@@ -1,7 +1,7 @@
 # Release Candidate Readiness Gate
 
 Status date: 2026-08-29<br>
-Baseline: `origin/main` at `5193178b84ea01b4adb4fed9fb9aa1b02b4b669a`
+Baseline: `origin/main` at `d15a30e5ee637eab8103d99e94d5ed35115fd96a`
 
 This document defines the evidence gate for entering a Windows Block Terminal
 Release Candidate. It is a readiness contract, not a new architecture design.
@@ -52,25 +52,26 @@ therefore pre-RC / baseline evidence pending RC-target revalidation.
 
 ## Current RC Evidence Candidate
 
-Candidate ID: `RC-EVIDENCE-1`
+Candidate ID: `RC-EVIDENCE-2`
 
 This candidate is a fixed target for RC evidence revalidation, not a formal
 public release.
 
-- Source SHA: `5193178b84ea01b4adb4fed9fb9aa1b02b4b669a`
+- Source SHA: `d15a30e5ee637eab8103d99e94d5ed35115fd96a`
 - Product version: `0.14.5`
 - Target: Windows x64 NSIS
 - Installer: `Windows Block Terminal-win32-x64-0.14.5.exe`
-- Installer size: `709442040` bytes
-- Installer SHA-256: `E917811BD03F5D0BFFC0305DDB4993F5356CEC85EBB3E35D9D34B303BE3418F`
-- Packaged hosted runtime SHA-256: `24E0D2739658EFD671894F0D8786D8BE12A0B04076FF4E4051C45C162BF00FCD`
+- Installer size: `675001038` bytes
+- Installer SHA-256: `345E27D4E3F3194E6A80F72952B24252473043825A9BF5C29BA8AE14DEC8FA20`
+- Packaged hosted runtime SHA-256: `4F7FC85DAAEB67BD4BD5ADD53B9A02B34E377597962292DBE1BE72B2B98E941C`
 - Supported test configuration: Windows 11 x64, packaged Windows Block Terminal,
   packaged Hosted PowerShell runtime and PowerShell 7.6.4.
-- Build evidence: `docs/RC-EVIDENCE-1-BUILD.md`
+- Build evidence: `docs/RC-EVIDENCE-2-BUILD.md`
 
-MSI and ZIP are not evidence targets for `RC-EVIDENCE-1`.
-The historical 0.14.5 artifact in `WINDOWS-PACKAGING-MVP-EVIDENCE.md` is a
-different pre-RC artifact identity and is not `RC-EVIDENCE-1`.
+MSI and ZIP are not evidence targets for `RC-EVIDENCE-2`.
+`RC-EVIDENCE-1` remains historical evidence only; its exact declared artifact
+was unavailable for revalidation. The historical 0.14.5 artifact in
+`WINDOWS-PACKAGING-MVP-EVIDENCE.md` is also a different pre-RC artifact identity.
 
 ## Status inventory
 
