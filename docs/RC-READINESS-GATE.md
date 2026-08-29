@@ -1,7 +1,7 @@
 # Release Candidate Readiness Gate
 
 Status date: 2026-08-29<br>
-Baseline: `origin/main` at `02980db4f921c39357f19f91326aad98ee2de7aa`
+Baseline: `origin/main` at `8c3c7d8c495f150d2633f2caa28b5b263dd2fc14`
 
 This document defines the evidence gate for entering a Windows Block Terminal
 Release Candidate. It is a readiness contract, not a new architecture design.
@@ -68,6 +68,12 @@ public release.
   packaged Hosted PowerShell runtime and PowerShell 7.6.4.
 - Build evidence: `docs/RC-EVIDENCE-3-BUILD.md`
 - Targeted revalidation: `docs/RC-EVIDENCE-3-REVALIDATION.md`
+
+RC-EVIDENCE-3 was built from product source SHA
+`02980db4f921c39357f19f91326aad98ee2de7aa`. The subsequent main commit
+`8c3c7d8c495f150d2633f2caa28b5b263dd2fc14` changes only Dependabot repository
+automation configuration and does not change the packaged product/runtime
+identity represented by RC-EVIDENCE-3.
 
 MSI and ZIP are not evidence targets for `RC-EVIDENCE-3`.
 `RC-EVIDENCE-1` and `RC-EVIDENCE-2` remain historical candidates; their original
