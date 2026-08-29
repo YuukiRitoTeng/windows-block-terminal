@@ -6,6 +6,10 @@ updates:
           interval: "cron"
           cronjob: "0 9 1 1,3,5,7,9,11 *"
           timezone: "Asia/Taipei"
+      allow:
+          - dependency-name: "*"
+            update-types:
+                - "version-update:semver-patch"
       groups:
           dev-dependencies-patch:
               dependency-type: "development"
@@ -19,18 +23,6 @@ updates:
                   - "*docusaurus*"
               update-types:
                   - "patch"
-          dev-dependencies-minor:
-              dependency-type: "development"
-              exclude-patterns:
-                  - "*storybook*"
-                  - "*electron*"
-                  - "jotai"
-                  - "react"
-                  - "@types/react"
-                  - "*react-dom"
-                  - "*docusaurus*"
-              update-types:
-                  - "minor"
 
           prod-dependencies-patch:
               dependency-type: "production"
@@ -44,67 +36,24 @@ updates:
                   - "*docusaurus*"
               update-types:
                   - "patch"
-          prod-dependencies-minor:
-              dependency-type: "production"
-              exclude-patterns:
-                  - "*storybook*"
-                  - "*electron*"
-                  - "jotai"
-                  - "react"
-                  - "@types/react"
-                  - "*react-dom"
-                  - "*docusaurus*"
-                  - "monaco-editor"
-              update-types:
-                  - "minor"
 
           storybook-patch:
               patterns:
                   - "*storybook*"
               update-types:
                   - "patch"
-          storybook-minor:
-              patterns:
-                  - "*storybook*"
-              update-types:
-                  - "minor"
-          storybook-major:
-              patterns:
-                  - "*storybook*"
-              update-types:
-                  - "major"
 
           electron-patch:
               patterns:
                   - "*electron*"
               update-types:
                   - "patch"
-          electron-minor:
-              patterns:
-                  - "*electron*"
-              update-types:
-                  - "minor"
-          electron-major:
-              patterns:
-                  - "*electron*"
-              update-types:
-                  - "major"
 
           docusaurus-patch:
               patterns:
                   - "*docusaurus*"
               update-types:
                   - "patch"
-          docusaurus-minor:
-              patterns:
-                  - "*docusaurus*"
-              update-types:
-                  - "minor"
-          docusaurus-major:
-              patterns:
-                  - "*docusaurus*"
-              update-types:
-                  - "major"
 
           react-patch:
               patterns:
@@ -113,45 +62,31 @@ updates:
                   - "*react-dom"
               update-types:
                   - "patch"
-          react-minor:
-              patterns:
-                  - "react"
-                  - "@types/react"
-                  - "*react-dom"
-              update-types:
-                  - "minor"
-          react-major:
-              patterns:
-                  - "react"
-                  - "@types/react"
-                  - "*react-dom"
-              update-types:
-                  - "major"
 
           jotai-patch:
               patterns:
                   - "jotai"
               update-types:
                   - "patch"
-          jotai-minor:
-              patterns:
-                  - "jotai"
-              update-types:
-                  - "minor"
-          jotai-major:
-              patterns:
-                  - "jotai"
-              update-types:
-                  - "major"
+
     - package-ecosystem: "gomod"
       directory: "/"
       schedule:
           interval: "cron"
           cronjob: "0 9 1 1,3,5,7,9,11 *"
           timezone: "Asia/Taipei"
+      allow:
+          - dependency-name: "*"
+            update-types:
+                - "version-update:semver-patch"
+
     - package-ecosystem: "github-actions"
       directory: "/"
       schedule:
           interval: "cron"
           cronjob: "0 9 1 1,3,5,7,9,11 *"
           timezone: "Asia/Taipei"
+      allow:
+          - dependency-name: "*"
+            update-types:
+                - "version-update:semver-patch"
