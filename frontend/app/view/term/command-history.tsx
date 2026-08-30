@@ -300,6 +300,7 @@ export const CommandHistory = ({ blockId, model }: CommandHistoryProps) => {
             requestEpoch.current.bump();
             await clearProductHistory(blockId, services.CommandJournalService, () => model.termRef.current?.clearVisualBuffer());
             setOutputs({});
+            refreshGate.current.invalidate();
             await refresh();
             setMessage("Visual history cleared; PowerShell session preserved.");
         } catch (error) {

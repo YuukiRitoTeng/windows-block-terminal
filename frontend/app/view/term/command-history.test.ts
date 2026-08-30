@@ -50,15 +50,24 @@ describe("command history product seam", () => {
         const gate = new RefreshRequestGate();
         const requestA = gate.acquire();
         expect(requestA).not.toBeNull();
-        expect(gate.acquire()).toBeNull();
+        // Clear invalidates the stale request before starting the post-clear refresh.
         gate.invalidate();
         const requestB = gate.acquire();
         expect(requestB).not.toBeNull();
         expect(requestB).not.toBe(requestA);
+        // A's finally must not release B's ownership.
         gate.release(requestA as number);
         expect(gate.acquire()).toBeNull();
         gate.release(requestB as number);
         expect(gate.acquire()).not.toBeNull();
+    });
+
+    it("invalidates the old refresh before the post-clear refresh", () => {
+        const source = readFileSync(new URL("./command-history.tsx", import.meta.url), "utf8");
+        const clearSuccess = source.indexOf("await clearProductHistory");
+        const invalidate = source.indexOf("refreshGate.current.invalidate();\n            await refresh();", clearSuccess);
+        expect(clearSuccess).toBeGreaterThanOrEqual(0);
+        expect(invalidate).toBeGreaterThan(clearSuccess);
     });
 
     it("clears the rendered terminal through xterm display controls only", () => {
