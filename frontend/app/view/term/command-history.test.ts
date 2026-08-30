@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
-import { canCopyOutput, clearProductHistory, historyInspectorClass, HistoryRequestEpoch, limitVisibleRecords, projectOutput, sanitizeTerminalText } from "./command-history";
+import { canCopyOutput, clearProductHistory, historyInspectorClass, HistoryRequestEpoch, limitVisibleRecords, projectOutput, RefreshRequestGate, sanitizeTerminalText } from "./command-history";
 
 const record = (overrides: Partial<RecordView> = {}): RecordView => ({
     id: "cmd-1", wave_block_id: "block-1", session_epoch: "epoch", start_hook_sequence: 1,
@@ -44,6 +44,21 @@ describe("command history product seam", () => {
         expect(source).toContain("window.setInterval(() => void refresh(), 750)");
         expect(source).toContain("window.setInterval(() => void refreshHealth(), 2000)");
         expect(source).toContain("[blockId, historyOpen, refresh, refreshHealth]");
+    });
+
+    it("keeps a newer refresh lock owned when an older request resolves", () => {
+        const gate = new RefreshRequestGate();
+        const requestA = gate.acquire();
+        expect(requestA).not.toBeNull();
+        expect(gate.acquire()).toBeNull();
+        gate.invalidate();
+        const requestB = gate.acquire();
+        expect(requestB).not.toBeNull();
+        expect(requestB).not.toBe(requestA);
+        gate.release(requestA as number);
+        expect(gate.acquire()).toBeNull();
+        gate.release(requestB as number);
+        expect(gate.acquire()).not.toBeNull();
     });
 
     it("clears the rendered terminal through xterm display controls only", () => {

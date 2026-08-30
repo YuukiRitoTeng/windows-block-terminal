@@ -30,6 +30,26 @@ export class HistoryRequestEpoch {
     }
 }
 
+export class RefreshRequestGate {
+    private nextToken = 0;
+    private activeToken: number | null = null;
+
+    acquire(): number | null {
+        if (this.activeToken !== null) return null;
+        const token = ++this.nextToken;
+        this.activeToken = token;
+        return token;
+    }
+
+    release(token: number): void {
+        if (this.activeToken === token) this.activeToken = null;
+    }
+
+    invalidate(): void {
+        this.activeToken = null;
+    }
+}
+
 export function historyInspectorClass(open: boolean): string {
     return "command-history " + (open ? "is-open" : "is-collapsed");
 }
@@ -179,12 +199,12 @@ export const CommandHistory = ({ blockId, model }: CommandHistoryProps) => {
     const [message, setMessage] = React.useState<string | null>(null);
     const mounted = React.useRef(true);
     const requestEpoch = React.useRef(new HistoryRequestEpoch());
-    const refreshInFlight = React.useRef(false);
+    const refreshGate = React.useRef(new RefreshRequestGate());
     const previousBlockId = React.useRef(blockId);
 
     const refresh = React.useCallback(async () => {
-        if (refreshInFlight.current) return;
-        refreshInFlight.current = true;
+        const requestToken = refreshGate.current.acquire();
+        if (requestToken === null) return;
         const capturedEpoch = requestEpoch.current.capture();
         try {
             const next = await services.CommandJournalService.ListVisibleRecords(blockId);
@@ -192,7 +212,7 @@ export const CommandHistory = ({ blockId, model }: CommandHistoryProps) => {
         } catch (error) {
             if (mounted.current && requestEpoch.current.isCurrent(capturedEpoch)) setMessage(`History unavailable: ${String(error)}`);
         } finally {
-            refreshInFlight.current = false;
+            refreshGate.current.release(requestToken);
         }
     }, [blockId]);
 
@@ -213,11 +233,11 @@ export const CommandHistory = ({ blockId, model }: CommandHistoryProps) => {
         }
         requestEpoch.current.bump();
         mounted.current = true;
-        refreshInFlight.current = false;
+        refreshGate.current.invalidate();
         if (!historyOpen) {
             return () => {
                 mounted.current = false;
-                refreshInFlight.current = false;
+                refreshGate.current.invalidate();
             };
         }
         void refresh();
@@ -226,7 +246,7 @@ export const CommandHistory = ({ blockId, model }: CommandHistoryProps) => {
         const healthInterval = window.setInterval(() => void refreshHealth(), 2000);
         return () => {
             mounted.current = false;
-            refreshInFlight.current = false;
+            refreshGate.current.invalidate();
             window.clearInterval(interval);
             window.clearInterval(healthInterval);
         };
