@@ -5,6 +5,9 @@ import * as services from "@/store/services";
 import { base64ToArray } from "@/util/util";
 import * as React from "react";
 import type { TermViewModel } from "./term-model";
+import { clearProductHistory } from "./clear-product-history";
+
+export { clearProductHistory } from "./clear-product-history";
 
 export const MAX_HISTORY_RECORDS = 100;
 export const MAX_PRESENTATION_BYTES = 64 * 1024;
@@ -25,6 +28,10 @@ export class HistoryRequestEpoch {
     isCurrent(captured: number): boolean {
         return captured === this.value;
     }
+}
+
+export function historyInspectorClass(open: boolean): string {
+    return "command-history " + (open ? "is-open" : "is-collapsed");
 }
 
 // PTY text commonly contains ANSI styling (for example ESC[m).  Those
@@ -97,16 +104,6 @@ export function canCopyOutput(record: RecordView): boolean {
     );
 }
 
-export async function clearProductHistory(
-    blockId: string,
-    service: Pick<services.CommandJournalServiceType, "ClearVisualHistory">,
-    clearTerminal: () => void
-): Promise<void> {
-    // The terminal is cleared only after the product visibility transaction succeeds.
-    await service.ClearVisualHistory(blockId);
-    clearTerminal();
-}
-
 type CommandHistoryProps = {
     blockId: string;
     model: TermViewModel;
@@ -175,6 +172,7 @@ const CommandCard = ({
 };
 
 export const CommandHistory = ({ blockId, model }: CommandHistoryProps) => {
+    const [historyOpen, setHistoryOpen] = React.useState(false);
     const [records, setRecords] = React.useState<RecordView[]>([]);
     const [health, setHealth] = React.useState<HealthView | null>(null);
     const [outputs, setOutputs] = React.useState<Record<string, OutputState>>({});
@@ -275,18 +273,21 @@ export const CommandHistory = ({ blockId, model }: CommandHistoryProps) => {
     }, [blockId, model, refresh]);
 
     return (
-        <section className="command-history" aria-label="Command history">
+        <section className={historyInspectorClass(historyOpen)} aria-label="Command history" data-history-open={historyOpen}>
             <div className="command-history-toolbar">
                 <span className="command-history-title"><i className="command-history-title-icon fa-sharp fa-light fa-terminal" aria-hidden="true" />Command History</span>
                 {health && <span className={`command-history-health command-history-health-${health.status}`}>
                     <i className="fa-sharp fa-light fa-database" aria-hidden="true" />{health.status}{health.output_complete === false ? " · output may be incomplete" : ""}
                 </span>}
-                <button type="button" aria-label="Clear visual history" title="Clear visual history" onMouseDown={(event) => event.preventDefault()} onClick={clear}>
+                <button className="command-history-toggle" type="button" aria-expanded={historyOpen} aria-label={historyOpen ? "Close history inspector" : "Open history inspector"} title={historyOpen ? "Close history inspector" : "Open history inspector"} onMouseDown={(event) => event.preventDefault()} onClick={() => setHistoryOpen((open) => !open)}>
+                    <i className={historyOpen ? "fa-sharp fa-light fa-eye-slash" : "fa-sharp fa-light fa-clock-rotate-left"} aria-hidden="true" /> <span>{historyOpen ? "Close" : "History"}</span>
+                </button>
+                <button className="command-history-clear" type="button" aria-label="Clear visual history" title="Clear visual history" onMouseDown={(event) => event.preventDefault()} onClick={clear}>
                     <i className="fa-sharp fa-light fa-broom" aria-hidden="true" /> <span>Clear</span>
                 </button>
             </div>
-            {message && <div className="command-history-message" role="status">{message}</div>}
-            <div className="command-history-list">
+            {message && <div className="command-history-message" role="status" hidden={!historyOpen}>{message}</div>}
+            <div className="command-history-list" hidden={!historyOpen}>
                 {records.map((record) => (
                     <CommandCard
                         key={record.id}

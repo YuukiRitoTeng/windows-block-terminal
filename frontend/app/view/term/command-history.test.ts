@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
-import { canCopyOutput, clearProductHistory, HistoryRequestEpoch, limitVisibleRecords, projectOutput, sanitizeTerminalText } from "./command-history";
+import { canCopyOutput, clearProductHistory, historyInspectorClass, HistoryRequestEpoch, limitVisibleRecords, projectOutput, sanitizeTerminalText } from "./command-history";
 
 const record = (overrides: Partial<RecordView> = {}): RecordView => ({
     id: "cmd-1", wave_block_id: "block-1", session_epoch: "epoch", start_hook_sequence: 1,
@@ -23,7 +23,17 @@ describe("command history product seam", () => {
         const styles = readFileSync(new URL("./term.scss", import.meta.url), "utf8");
         expect(styles).toContain("min-height: 0");
         expect(styles).toContain("max-height: min(36%, 340px)");
+        expect(styles).toContain("flex: 0 0 34px");
         expect(styles).not.toContain("38vh");
+    });
+
+    it("keeps the history inspector closed until explicitly opened", () => {
+        expect(historyInspectorClass(false)).toBe("command-history is-collapsed");
+        expect(historyInspectorClass(true)).toBe("command-history is-open");
+        const source = readFileSync(new URL("./command-history.tsx", import.meta.url), "utf8");
+        expect(source).toContain("React.useState(false)");
+        expect(source).toContain("aria-expanded={historyOpen}");
+        expect(source).toContain('className="command-history-clear"');
     });
 
     it("clears the rendered terminal through xterm display controls only", () => {
@@ -74,5 +84,11 @@ describe("command history product seam", () => {
         const failed = { ClearVisualHistory: vi.fn().mockRejectedValue(new Error("db")) };
         await expect(clearProductHistory("block-1", failed, clearTerminal)).rejects.toThrow("db");
         expect(clearTerminal).toHaveBeenCalledOnce();
+    });
+
+    it("routes the keyboard clear shortcut through the product clear operation", () => {
+        const source = readFileSync(new URL("./term-model.ts", import.meta.url), "utf8");
+        expect(source).toContain("clearProductHistoryForModel(this)");
+        expect(source).not.toContain("this.termRef.current?.terminal?.clear()");
     });
 });

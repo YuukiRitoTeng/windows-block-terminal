@@ -40,6 +40,7 @@ import { boundNumber, fireAndForget, stringToBase64 } from "@/util/util";
 import * as jotai from "jotai";
 import * as React from "react";
 import { getBlockingCommand } from "./shellblocking";
+import { clearProductHistoryForModel } from "./clear-product-history";
 import { computeTheme, DefaultTermTheme, isLikelyOnSameHost, trimTerminalSelection } from "./termutil";
 import { TermWrap, WebGLSupported } from "./termwrap";
 
@@ -762,7 +763,7 @@ export class TermViewModel implements ViewModel {
         } else if (keyutil.checkKeyPressed(waveEvent, "Cmd:k")) {
             event.preventDefault();
             event.stopPropagation();
-            this.termRef.current?.terminal?.clear();
+            fireAndForget(() => clearProductHistoryForModel(this));
             return false;
         }
         const shellProcStatus = globalStore.get(this.shellProcStatus);
