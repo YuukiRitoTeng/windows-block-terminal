@@ -180,6 +180,7 @@ export const CommandHistory = ({ blockId, model }: CommandHistoryProps) => {
     const mounted = React.useRef(true);
     const requestEpoch = React.useRef(new HistoryRequestEpoch());
     const refreshInFlight = React.useRef(false);
+    const previousBlockId = React.useRef(blockId);
 
     const refresh = React.useCallback(async () => {
         if (refreshInFlight.current) return;
@@ -195,27 +196,41 @@ export const CommandHistory = ({ blockId, model }: CommandHistoryProps) => {
         }
     }, [blockId]);
 
+    const refreshHealth = React.useCallback(async () => {
+        try {
+            const next = await services.CommandJournalService.GetHealth();
+            if (mounted.current) setHealth(next);
+        } catch (error) {
+            if (mounted.current) setMessage(`Persistence health unavailable: ${String(error)}`);
+        }
+    }, []);
+
     React.useEffect(() => {
-        mounted.current = true;
+        if (previousBlockId.current !== blockId) {
+            previousBlockId.current = blockId;
+            setRecords([]);
+            setOutputs({});
+        }
         requestEpoch.current.bump();
-        setRecords([]);
-        setOutputs({});
+        mounted.current = true;
+        refreshInFlight.current = false;
+        if (!historyOpen) {
+            return () => {
+                mounted.current = false;
+                refreshInFlight.current = false;
+            };
+        }
         void refresh();
+        void refreshHealth();
         const interval = window.setInterval(() => void refresh(), 750);
-        const healthInterval = window.setInterval(async () => {
-            try {
-                const next = await services.CommandJournalService.GetHealth();
-                if (mounted.current) setHealth(next);
-            } catch (error) {
-                if (mounted.current) setMessage(`Persistence health unavailable: ${String(error)}`);
-            }
-        }, 2000);
+        const healthInterval = window.setInterval(() => void refreshHealth(), 2000);
         return () => {
             mounted.current = false;
+            refreshInFlight.current = false;
             window.clearInterval(interval);
             window.clearInterval(healthInterval);
         };
-    }, [refresh]);
+    }, [blockId, historyOpen, refresh, refreshHealth]);
 
     const loadOutput = React.useCallback(async (record: RecordView) => {
         const current = outputs[record.id];

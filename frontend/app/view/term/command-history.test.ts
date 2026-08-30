@@ -36,6 +36,16 @@ describe("command history product seam", () => {
         expect(source).toContain('className="command-history-clear"');
     });
 
+    it("only starts history and health polling while the inspector is open", () => {
+        const source = readFileSync(new URL("./command-history.tsx", import.meta.url), "utf8");
+        expect(source).toContain("if (!historyOpen)");
+        expect(source).toContain("void refresh();");
+        expect(source).toContain("void refreshHealth();");
+        expect(source).toContain("window.setInterval(() => void refresh(), 750)");
+        expect(source).toContain("window.setInterval(() => void refreshHealth(), 2000)");
+        expect(source).toContain("[blockId, historyOpen, refresh, refreshHealth]");
+    });
+
     it("clears the rendered terminal through xterm display controls only", () => {
         const termwrap = readFileSync(new URL("./termwrap.ts", import.meta.url), "utf8");
         expect(termwrap).toContain(String.raw`this.terminal.write("\x1b[2J\x1b[3J\x1b[H")`);
