@@ -64,11 +64,11 @@
     }
 
     .command-history {
-        // Size against the current terminal block, never the viewport. The
-        // live xterm flex item therefore remains the primary usable surface.
-        flex: 0 1 clamp(28px, 30%, 340px);
-        min-height: 28px;
-        max-height: min(36%, 340px);
+        // The inspector is closed by default so xterm remains the primary
+        // surface. Opening it gives history a bounded share of this block.
+        flex: 0 0 34px;
+        min-height: 34px;
+        max-height: 34px;
         min-width: 0;
         display: flex;
         flex-direction: column;
@@ -77,6 +77,19 @@
         background: var(--wbt-surface);
         font-size: 12px;
         z-index: 1;
+
+        &.is-open {
+            flex: 0 1 clamp(28px, 30%, 340px);
+            min-height: 28px;
+            max-height: min(36%, 340px);
+        }
+
+        &.is-collapsed {
+            .command-history-list,
+            .command-history-message {
+                display: none;
+            }
+        }
 
         .command-history-toolbar {
             display: flex;
@@ -103,7 +116,7 @@
             }
 
             button {
-                margin-left: auto;
+                margin-left: 0;
                 display: inline-flex;
                 align-items: center;
                 gap: 6px;
@@ -127,6 +140,9 @@
                     outline-offset: 1px;
                 }
             }
+
+            .command-history-toggle { margin-left: auto; }
+            .command-history-clear { margin-left: 0; }
         }
 
         .command-history-health {

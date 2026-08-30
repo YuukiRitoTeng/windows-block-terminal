@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
-import { canCopyOutput, clearProductHistory, HistoryRequestEpoch, limitVisibleRecords, projectOutput, sanitizeTerminalText } from "./command-history";
+import { canCopyOutput, clearProductHistory, historyInspectorClass, HistoryRequestEpoch, limitVisibleRecords, projectOutput, RefreshRequestGate, sanitizeTerminalText } from "./command-history";
 
 const record = (overrides: Partial<RecordView> = {}): RecordView => ({
     id: "cmd-1", wave_block_id: "block-1", session_epoch: "epoch", start_hook_sequence: 1,
@@ -23,7 +23,51 @@ describe("command history product seam", () => {
         const styles = readFileSync(new URL("./term.scss", import.meta.url), "utf8");
         expect(styles).toContain("min-height: 0");
         expect(styles).toContain("max-height: min(36%, 340px)");
+        expect(styles).toContain("flex: 0 0 34px");
         expect(styles).not.toContain("38vh");
+    });
+
+    it("keeps the history inspector closed until explicitly opened", () => {
+        expect(historyInspectorClass(false)).toBe("command-history is-collapsed");
+        expect(historyInspectorClass(true)).toBe("command-history is-open");
+        const source = readFileSync(new URL("./command-history.tsx", import.meta.url), "utf8");
+        expect(source).toContain("React.useState(false)");
+        expect(source).toContain("aria-expanded={historyOpen}");
+        expect(source).toContain('className="command-history-clear"');
+    });
+
+    it("only starts history and health polling while the inspector is open", () => {
+        const source = readFileSync(new URL("./command-history.tsx", import.meta.url), "utf8");
+        expect(source).toContain("if (!historyOpen)");
+        expect(source).toContain("void refresh();");
+        expect(source).toContain("void refreshHealth();");
+        expect(source).toContain("window.setInterval(() => void refresh(), 750)");
+        expect(source).toContain("window.setInterval(() => void refreshHealth(), 2000)");
+        expect(source).toContain("[blockId, historyOpen, refresh, refreshHealth]");
+    });
+
+    it("keeps a newer refresh lock owned when an older request resolves", () => {
+        const gate = new RefreshRequestGate();
+        const requestA = gate.acquire();
+        expect(requestA).not.toBeNull();
+        // Clear invalidates the stale request before starting the post-clear refresh.
+        gate.invalidate();
+        const requestB = gate.acquire();
+        expect(requestB).not.toBeNull();
+        expect(requestB).not.toBe(requestA);
+        // A's finally must not release B's ownership.
+        gate.release(requestA as number);
+        expect(gate.acquire()).toBeNull();
+        gate.release(requestB as number);
+        expect(gate.acquire()).not.toBeNull();
+    });
+
+    it("invalidates the old refresh before the post-clear refresh", () => {
+        const source = readFileSync(new URL("./command-history.tsx", import.meta.url), "utf8");
+        const clearSuccess = source.indexOf("await clearProductHistory");
+        const invalidate = source.indexOf("refreshGate.current.invalidate();\n            await refresh();", clearSuccess);
+        expect(clearSuccess).toBeGreaterThanOrEqual(0);
+        expect(invalidate).toBeGreaterThan(clearSuccess);
     });
 
     it("clears the rendered terminal through xterm display controls only", () => {
@@ -74,5 +118,11 @@ describe("command history product seam", () => {
         const failed = { ClearVisualHistory: vi.fn().mockRejectedValue(new Error("db")) };
         await expect(clearProductHistory("block-1", failed, clearTerminal)).rejects.toThrow("db");
         expect(clearTerminal).toHaveBeenCalledOnce();
+    });
+
+    it("routes the keyboard clear shortcut through the product clear operation", () => {
+        const source = readFileSync(new URL("./term-model.ts", import.meta.url), "utf8");
+        expect(source).toContain("clearProductHistoryForModel(this)");
+        expect(source).not.toContain("this.termRef.current?.terminal?.clear()");
     });
 });
