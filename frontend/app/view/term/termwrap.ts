@@ -36,7 +36,12 @@ import {
     isClaudeCodeCommand,
     type ShellIntegrationStatus,
 } from "./osc-handlers";
-import { drainTerminalIngress, trimTerminalIngressPrefix, type TerminalIngressChunk } from "./terminal-ingress";
+import {
+    drainTerminalIngress,
+    extractVisualAnchorFrames,
+    extractVisualAnchorNonces,
+    type TerminalIngressChunk,
+} from "./terminal-ingress";
 import {
     bufferLinesToText,
     createTempFileFromBlob,
@@ -480,15 +485,21 @@ export class TermWrap {
         }
 
         try {
-            const snapshotBytes = await this.loadInitialTerminalData(ingressGeneration);
+            await this.loadInitialTerminalData(ingressGeneration);
             if (!this.isIngressCurrent(ingressGeneration)) {
                 return;
             }
-            // Initial snapshot bytes are already rendered. Only the suffix of
-            // queued appends that arrived after that snapshot may be replayed.
-            trimTerminalIngressPrefix(this.heldData, snapshotBytes);
             this.loaded = true;
             this.ingressState = "draining";
+            // The file metadata returned by fetchWaveFile establishes the
+            // absolute ptyOffset. Catch up from that offset; never infer
+            // overlap from an append payload's byte length.
+            await this.catchUpTerminalFile(ingressGeneration);
+            await this.drainHeldData(ingressGeneration);
+            // A file append can be delivered to the subject after the
+            // snapshot request completed. One final authoritative read closes
+            // that handoff without treating D/prompt or timing as a fence.
+            await this.catchUpTerminalFile(ingressGeneration);
             await this.drainHeldData(ingressGeneration);
             if (this.isIngressCurrent(ingressGeneration)) {
                 this.ingressState = "live";
@@ -609,7 +620,10 @@ export class TermWrap {
         } else if (msg.fileop == "append") {
             const decodedData = base64ToArray(msg.data64);
             if (this.loaded && this.ingressState === "live") {
-                this.doTerminalWrite(decodedData, null);
+                this.heldData.push({ sequence: ++this.heldDataSequence, data: decodedData });
+                void this.drainHeldData(this.ingressGeneration).catch((e) => {
+                    console.debug("terminal append catch-up failed", this.blockId, e);
+                });
             } else {
                 this.heldData.push({ sequence: ++this.heldDataSequence, data: decodedData });
             }
@@ -654,7 +668,22 @@ export class TermWrap {
         }
         const drainPromise = drainTerminalIngress(
             this.heldData,
-            (data) => this.doTerminalWrite(data, null),
+            () => this.catchUpTerminalFile(generation),
+            async (data, coveredAnchorNonces) => {
+                for (const frame of extractVisualAnchorFrames(data)) {
+                    if (!this.isIngressCurrent(generation)) {
+                        return;
+                    }
+                    const nonces = extractVisualAnchorNonces(frame);
+                    if ([...nonces].some((nonce) => coveredAnchorNonces.has(nonce))) {
+                        continue;
+                    }
+                    await this.doTerminalWrite(frame, null);
+                    for (const nonce of nonces) {
+                        coveredAnchorNonces.add(nonce);
+                    }
+                }
+            },
             () => this.isIngressCurrent(generation)
         );
         this.ingressDrainPromise = drainPromise;
@@ -667,12 +696,12 @@ export class TermWrap {
         }
     }
 
-    async loadInitialTerminalData(generation: number = this.ingressGeneration): Promise<number> {
+    async loadInitialTerminalData(generation: number = this.ingressGeneration): Promise<void> {
         const startTs = Date.now();
         const zoneId = this.getZoneId();
         const { data: cacheData, fileInfo: cacheFile } = await fetchWaveFile(zoneId, TermCacheFileName);
         if (!this.isIngressCurrent(generation)) {
-            return 0;
+            return;
         }
         let ptyOffset = 0;
         if (cacheFile != null) {
@@ -697,15 +726,42 @@ export class TermWrap {
         }
         const { data: mainData, fileInfo: mainFile } = await fetchWaveFile(zoneId, TermFileName, ptyOffset);
         if (!this.isIngressCurrent(generation)) {
-            return 0;
+            return;
         }
         console.log(
             `terminal loaded cachefile:${cacheData?.byteLength ?? 0} main:${mainData?.byteLength ?? 0} bytes, ${Date.now() - startTs}ms`
         );
         if (mainFile != null) {
-            await this.doTerminalWrite(mainData, null);
+            await this.doTerminalWrite(mainData, mainFile.size);
         }
-        return mainFile != null ? (mainData?.byteLength ?? 0) : 0;
+    }
+
+    /** Read and render only bytes after the current authoritative file offset. */
+    private async catchUpTerminalFile(generation: number): Promise<Uint8Array> {
+        if (!this.isIngressCurrent(generation)) {
+            return new Uint8Array();
+        }
+        const { data, fileInfo } = await fetchWaveFile(this.getZoneId(), TermFileName, this.ptyOffset);
+        if (!this.isIngressCurrent(generation) || fileInfo == null) {
+            return new Uint8Array();
+        }
+        if (fileInfo.size < this.ptyOffset) {
+            // A reset/rotation without an offset mapping cannot be safely
+            // attributed to this terminal instance. Leave the stream intact
+            // and fail closed rather than replaying event payload guesses.
+            console.debug("terminal file moved backwards; skipping unsafe catch-up", this.blockId, {
+                ptyOffset: this.ptyOffset,
+                fileSize: fileInfo.size,
+            });
+            return new Uint8Array();
+        }
+        if (data != null && data.byteLength > 0) {
+            await this.doTerminalWrite(data, fileInfo.size);
+            return data;
+        } else {
+            this.ptyOffset = fileInfo.size;
+            return new Uint8Array();
+        }
     }
 
     async resyncController(reason: string) {

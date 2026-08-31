@@ -3,36 +3,77 @@
 
 export type TerminalIngressChunk = {
     sequence: number;
+    /** The event payload is retained for ordering/debugging, but never used
+     * as an overlap boundary. The authoritative file read supplies bytes. */
     data: Uint8Array;
 };
 
-/**
- * Removes bytes already covered by the initial terminal snapshot while
- * preserving the order and sequence of any remaining live append data.
- */
-export function trimTerminalIngressPrefix(queue: TerminalIngressChunk[], byteCount: number): void {
-    let remaining = Math.max(0, byteCount);
-    while (remaining > 0 && queue.length > 0) {
-        const chunk = queue[0];
-        if (remaining >= chunk.data.byteLength) {
-            remaining -= chunk.data.byteLength;
-            queue.shift();
-            continue;
+export type TerminalIngressCatchUpResult = Uint8Array;
+
+const visualAnchorPrefix = new TextEncoder().encode("\x1b]16162;B;");
+
+function indexOfBytes(haystack: Uint8Array, needle: Uint8Array, from = 0): number {
+    outer: for (let index = from; index <= haystack.length - needle.length; index++) {
+        for (let needleIndex = 0; needleIndex < needle.length; needleIndex++) {
+            if (haystack[index + needleIndex] !== needle[needleIndex]) continue outer;
         }
-        queue[0] = { ...chunk, data: chunk.data.slice(remaining) };
-        remaining = 0;
+        return index;
     }
+    return -1;
+}
+
+/** Extract complete visual-anchor OSC frames from a queued append payload. */
+export function extractVisualAnchorFrames(data: Uint8Array): Uint8Array[] {
+    const frames: Uint8Array[] = [];
+    let offset = 0;
+    while (offset < data.length) {
+        const start = indexOfBytes(data, visualAnchorPrefix, offset);
+        if (start < 0) break;
+        let end = start + visualAnchorPrefix.length;
+        let terminated = false;
+        while (end < data.length && data[end] !== 0x07) {
+            if (data[end] === 0x1b && data[end + 1] === 0x5c) {
+                end += 2;
+                terminated = true;
+                break;
+            }
+            end++;
+        }
+        if (!terminated && end < data.length && data[end] === 0x07) {
+            end++;
+            terminated = true;
+        }
+        if (!terminated) break;
+        frames.push(data.slice(start, end));
+        offset = end;
+    }
+    return frames;
+}
+
+/** Return the nonce values carried by complete visual-anchor OSC frames. */
+export function extractVisualAnchorNonces(data: Uint8Array): Set<string> {
+    const nonces = new Set<string>();
+    const decoder = new TextDecoder();
+    for (const frame of extractVisualAnchorFrames(data)) {
+        const match = decoder.decode(frame).match(/"nonce"\s*:\s*"([^"]+)"/);
+        if (match?.[1]) nonces.add(match[1]);
+    }
+    return nonces;
 }
 
 /**
- * Drains queued terminal appends in source order. New appends arriving while
- * a write is pending are handled on the next loop without overlapping writes.
+ * Drains append notifications in source order. The callback must obtain the
+ * authoritative suffix from the terminal file and write that suffix through
+ * the normal terminal path. Event payload bytes are deliberately not used for
+ * overlap arithmetic because WS file events do not carry a common offset.
  */
 export async function drainTerminalIngress(
     queue: TerminalIngressChunk[],
-    write: (data: Uint8Array) => Promise<void>,
+    catchUp: () => Promise<TerminalIngressCatchUpResult>,
+    replayMissingAnchors: (data: Uint8Array, coveredAnchorNonces: Set<string>) => Promise<void>,
     isCurrent: () => boolean
 ): Promise<void> {
+    const coveredAnchorNonces = new Set<string>();
     while (queue.length > 0 && isCurrent()) {
         const batch = queue.splice(0, queue.length);
         for (let index = 0; index < batch.length; index++) {
@@ -40,7 +81,15 @@ export async function drainTerminalIngress(
                 return;
             }
             try {
-                await write(batch[index].data);
+                const written = await catchUp();
+                if (!isCurrent()) {
+                    queue.unshift(...batch.slice(index));
+                    return;
+                }
+                for (const nonce of extractVisualAnchorNonces(written)) {
+                    coveredAnchorNonces.add(nonce);
+                }
+                await replayMissingAnchors(batch[index].data, coveredAnchorNonces);
             } catch (e) {
                 queue.unshift(...batch.slice(index));
                 throw e;
