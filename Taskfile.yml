@@ -127,8 +127,20 @@ tasks:
         cmds:
             - npm run build:prod && npm exec electron-builder -- -c electron-builder.config.cjs -p never {{.CLI_ARGS}}
         deps:
-            - clean
-            - npm:install
+            - package:prepare
+
+    package:prepare:
+        desc: Prepare all package inputs after cleaning previous build artifacts.
+        internal: true
+        cmds:
+            - task: clean
+            - task: npm:install
+            - task: package:inputs
+
+    package:inputs:
+        desc: Build package inputs in parallel after cleanup has completed.
+        internal: true
+        deps:
             - build:backend
             - build:tsunamiscaffold
             - build:hostedpwsh
