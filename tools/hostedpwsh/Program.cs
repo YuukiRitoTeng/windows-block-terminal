@@ -181,6 +181,7 @@ static class Program
     static Sidechannel? sidechannel;
     static TraceLog? trace;
     static int commandNumber;
+    static long hookSequence;
     static bool interactiveChildActive;
     static int structuredInvocationInterrupted;
 
@@ -230,10 +231,13 @@ static class Program
     static void RunScript(string command)
     {
         var id = $"{runspace!.InstanceId:N}-{Interlocked.Increment(ref commandNumber)}";
+        var startSequence = NextHookSequence();
+        var anchorNonce = Guid.NewGuid().ToString("N");
         var directNative = IsDirectNative(command);
         Interlocked.Exchange(ref structuredInvocationInterrupted, 0);
         trace!.Write($"INVOKE_BEGIN command_id={id} mode=structured direct_native={directNative} command={Escape(command)} runspace_id={runspace.InstanceId}");
-        sidechannel!.Send(new { kind = "command_started", hostId = Environment.ProcessId.ToString(CultureInfo.InvariantCulture), runspaceId = runspace.InstanceId.ToString("N"), commandId = id, mode = "structured", command, cwd = CurrentCwd() });
+        sidechannel!.Send(new { kind = "command_started", hostId = Environment.ProcessId.ToString(CultureInfo.InvariantCulture), runspaceId = runspace.InstanceId.ToString("N"), commandId = id, anchorNonce, hookSequence = startSequence, mode = "structured", command, cwd = CurrentCwd() });
+        EmitVisualAnchor(id, anchorNonce, startSequence);
         using var ps = PowerShell.Create();
         currentInvocation = ps;
         ps.Runspace = runspace;
@@ -297,9 +301,10 @@ static class Program
     static void RunInteractive(string executable, string arguments)
     {
         var id = $"{runspace!.InstanceId:N}-{Interlocked.Increment(ref commandNumber)}";
+        var startSequence = NextHookSequence();
         interactiveChildActive = true;
         trace!.Write($"INTERACTIVE_BEGIN command_id={id} executable={Escape(executable)} runspace_id={runspace.InstanceId}");
-        sidechannel!.Send(new { kind = "command_started", hostId = Environment.ProcessId.ToString(CultureInfo.InvariantCulture), runspaceId = runspace.InstanceId.ToString("N"), commandId = id, mode = "interactive", command = executable, cwd = CurrentCwd() });
+        sidechannel!.Send(new { kind = "command_started", hostId = Environment.ProcessId.ToString(CultureInfo.InvariantCulture), runspaceId = runspace.InstanceId.ToString("N"), commandId = id, hookSequence = startSequence, mode = "interactive", command = executable, cwd = CurrentCwd() });
         using var child = new System.Diagnostics.Process
         {
             StartInfo = new System.Diagnostics.ProcessStartInfo
@@ -353,6 +358,26 @@ static class Program
         sidechannel?.Send(new { kind = "output", hostId = Environment.ProcessId.ToString(CultureInfo.InvariantCulture), runspaceId = runspace?.InstanceId.ToString("N"), commandId, mode = "structured", stream, data = text });
     }
 
+    static ulong NextHookSequence() => (ulong)Interlocked.Increment(ref hookSequence);
+
+    static void EmitVisualAnchor(string commandId, string anchorNonce, ulong sequence)
+    {
+        var payload = JsonSerializer.Serialize(new
+        {
+            v = 1,
+            epoch = runspace!.InstanceId.ToString("N"),
+            seq = sequence,
+            id = commandId,
+            nonce = anchorNonce,
+            phase = "start",
+            hostid = Environment.ProcessId.ToString(CultureInfo.InvariantCulture),
+            runspaceid = runspace.InstanceId.ToString("N"),
+        });
+        Console.Write($"\x1b]16162;B;{payload}\a");
+        Console.Out.Flush();
+        trace!.Write($"VISUAL_ANCHOR command_id={commandId} nonce={anchorNonce} hook_sequence={sequence}");
+    }
+
     static string CurrentCwd()
     {
         try { return runspace?.SessionStateProxy.Path.CurrentFileSystemLocation.Path ?? ""; }
@@ -361,7 +386,8 @@ static class Program
 
     static void EmitFinished(string id, bool success, int exitCode, bool interrupted)
     {
-        sidechannel?.Send(new { kind = "command_finished", hostId = Environment.ProcessId.ToString(CultureInfo.InvariantCulture), runspaceId = runspace?.InstanceId.ToString("N"), commandId = id, success, exitCode, interrupted });
+        var hookSequence = NextHookSequence();
+        sidechannel?.Send(new { kind = "command_finished", hostId = Environment.ProcessId.ToString(CultureInfo.InvariantCulture), runspaceId = runspace?.InstanceId.ToString("N"), commandId = id, hookSequence, success, exitCode, interrupted });
     }
 
     static string RenderInvocationError(PowerShell ps, Exception exception)

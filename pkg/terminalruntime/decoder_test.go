@@ -131,6 +131,18 @@ func TestDecoderRequiresFinishedResult(t *testing.T) {
 	}
 }
 
+func TestDecoderEmitsVisualAnchorMetadataWithoutLifecycleSideEffects(t *testing.T) {
+	d := NewDecoder()
+	raw := []byte("\x1b]16162;B;{\"v\":1,\"epoch\":\"runspace-1\",\"seq\":1,\"id\":\"cmd-1\",\"nonce\":\"nonce-1\",\"phase\":\"start\",\"hostid\":\"host-1\",\"runspaceid\":\"runspace-1\"}\a")
+	events := d.Feed(raw)
+	if len(events) != 1 || events[0].Kind != EventVisualAnchor || events[0].AnchorNonce != "nonce-1" || events[0].CommandID != "cmd-1" {
+		t.Fatalf("unexpected visual anchor event: %#v", events)
+	}
+	if got := d.Feed([]byte("\x1b]16162;B;{\"v\":1,\"epoch\":\"runspace-1\",\"seq\":2,\"id\":\"cmd-1\",\"nonce\":\"\",\"phase\":\"start\"}\a")); len(got) != 0 {
+		t.Fatalf("accepted malformed visual anchor: %#v", got)
+	}
+}
+
 func TestDecoderPromptAbortsMissingFinishAndFencesOutput(t *testing.T) {
 	d := NewDecoder()
 	raw := append(orderedFrame("C", "epoch-1", "cmd-1", 1), []byte("inside")...)

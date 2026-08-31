@@ -32,18 +32,20 @@ type hostedSidechannel struct {
 // HostedRuntimeEvent is the transport DTO emitted by WbtHostedPowerShell.
 // It deliberately remains separate from CommandRecord and Journal state.
 type HostedRuntimeEvent struct {
-	Kind        string `json:"kind"`
-	HostID      string `json:"hostId"`
-	RunspaceID  string `json:"runspaceId"`
-	CommandID   string `json:"commandId"`
-	Command     string `json:"command"`
-	Cwd         string `json:"cwd"`
-	Mode        string `json:"mode"`
-	Stream      string `json:"stream"`
-	Data        string `json:"data"`
-	Success     *bool  `json:"success"`
-	ExitCode    *int   `json:"exitCode"`
-	Interrupted bool   `json:"interrupted"`
+	Kind         string `json:"kind"`
+	HostID       string `json:"hostId"`
+	RunspaceID   string `json:"runspaceId"`
+	CommandID    string `json:"commandId"`
+	AnchorNonce  string `json:"anchorNonce"`
+	HookSequence uint64 `json:"hookSequence"`
+	Command      string `json:"command"`
+	Cwd          string `json:"cwd"`
+	Mode         string `json:"mode"`
+	Stream       string `json:"stream"`
+	Data         string `json:"data"`
+	Success      *bool  `json:"success"`
+	ExitCode     *int   `json:"exitCode"`
+	Interrupted  bool   `json:"interrupted"`
 }
 
 // HostedRuntimeObserver consumes authenticated hosted-runtime events without

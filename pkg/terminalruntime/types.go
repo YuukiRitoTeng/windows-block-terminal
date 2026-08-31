@@ -10,6 +10,7 @@ const (
 	EventCommandAborted  EventKind = "command_aborted"
 	EventPromptReady     EventKind = "prompt_ready"
 	EventShellMetadata   EventKind = "shell_metadata"
+	EventVisualAnchor    EventKind = "visual_anchor"
 )
 
 // ExecutionMode identifies whether a lifecycle event belongs to a structured
@@ -52,6 +53,8 @@ type IntegrationEvent struct {
 	RuntimeHostID          string
 	RuntimeRunspaceID      string
 	CaptureContractVersion int
+	AnchorNonce            string
+	AnchorPhase            string
 }
 
 type StreamItemKind string

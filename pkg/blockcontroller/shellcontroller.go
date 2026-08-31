@@ -73,6 +73,7 @@ type ShellController struct {
 	journalPersistence       *persistence.Store
 	journalObserver          *commandjournal.RuntimeObserver
 	hostedRuntimeObserver    *commandjournal.HostedRuntimeConsumer
+	visualAnchorRegistry     *commandjournal.VisualAnchorRegistry
 	journalUnregister        func()
 	terminationMu            sync.Mutex
 	pendingTerminationReason commandjournal.CompletionReason
@@ -161,18 +162,22 @@ func (sc *ShellController) attachCommandJournal() {
 		}
 	}
 	sc.journalMu.Unlock()
-	observer := commandjournal.NewRuntimeObserver(sc.BlockId, journal)
-	hostedObserver := commandjournal.NewHostedRuntimeConsumer(sc.BlockId, journal)
+	anchorRegistry := commandjournal.NewVisualAnchorRegistry(sc.BlockId)
+	journal.SetVisualAnchorRegistry(anchorRegistry)
+	observer := commandjournal.NewRuntimeObserver(sc.BlockId, journal, anchorRegistry)
+	hostedObserver := commandjournal.NewHostedRuntimeConsumer(sc.BlockId, journal, anchorRegistry)
 	unregister := RegisterOutputObserver(sc.BlockId, observer)
 	sc.journalMu.Lock()
 	if sc.journalObserver != nil {
 		sc.journalMu.Unlock()
 		unregister()
 		observer.Close()
+		anchorRegistry.Invalidate()
 		return
 	}
 	sc.journalObserver = observer
 	sc.hostedRuntimeObserver = hostedObserver
+	sc.visualAnchorRegistry = anchorRegistry
 	sc.journalUnregister = unregister
 	sc.journalMu.Unlock()
 }
@@ -181,10 +186,12 @@ func (sc *ShellController) detachCommandJournal(reason commandjournal.Completion
 	sc.journalMu.Lock()
 	observer := sc.journalObserver
 	hostedObserver := sc.hostedRuntimeObserver
+	anchorRegistry := sc.visualAnchorRegistry
 	unregister := sc.journalUnregister
 	journal := sc.commandJournal
 	sc.journalObserver = nil
 	sc.hostedRuntimeObserver = nil
+	sc.visualAnchorRegistry = nil
 	sc.journalUnregister = nil
 	sc.journalMu.Unlock()
 	if unregister != nil {
@@ -195,6 +202,9 @@ func (sc *ShellController) detachCommandJournal(reason commandjournal.Completion
 	}
 	if hostedObserver != nil {
 		hostedObserver.Close()
+	}
+	if anchorRegistry != nil {
+		anchorRegistry.Invalidate()
 	}
 	if journal != nil {
 		journal.AbortActive(sc.BlockId, reason, time.Now())
