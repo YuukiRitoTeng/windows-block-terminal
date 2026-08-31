@@ -617,6 +617,11 @@ export class TermWrap {
     handleNewFileSubjectData(msg: WSFileEventData) {
         if (msg.fileop == "truncate") {
             this.clearVisualBuffer();
+            // The truncate event establishes a new file-origin boundary.
+            // Product Clear does not call this branch, so it never resets the
+            // cursor used for authoritative suffix reads.
+            this.ptyOffset = 0;
+            this.dataBytesProcessed = 0;
         } else if (msg.fileop == "append") {
             const decodedData = base64ToArray(msg.data64);
             if (this.loaded && this.ingressState === "live") {

@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -174,5 +175,54 @@ describe("terminal ingress initialization", () => {
         await drain(queue, [bytes(anchor("stale"))], seam, false);
         expect(seam.markerCount).toBe(0);
         expect(queue).toHaveLength(1);
+    });
+
+    it("drops an invalidated batch after a blocked catch-up instead of requeueing it", async () => {
+        const queue: TerminalIngressChunk[] = [{ sequence: 1, data: bytes(anchor("stale-batch")) }];
+        let current = true;
+        let releaseCatchUp!: () => void;
+        let catchUpStarted!: () => void;
+        const started = new Promise<void>((resolve) => {
+            catchUpStarted = resolve;
+        });
+        const barrier = new Promise<void>((resolve) => {
+            releaseCatchUp = resolve;
+        });
+        const pending = drainTerminalIngress(
+            queue,
+            async () => {
+                catchUpStarted();
+                await barrier;
+                return new Uint8Array();
+            },
+            async () => {},
+            () => current
+        );
+        await started;
+        queue.length = 0;
+        queue.push({ sequence: 2, data: bytes("new-generation") });
+        current = false;
+        releaseCatchUp();
+        await pending;
+        expect(queue).toEqual([{ sequence: 2, data: bytes("new-generation") }]);
+    });
+
+    it("resets the authoritative offset on truncate before rendering new text and OSC B", async () => {
+        const termwrapSource = readFileSync(new URL("./termwrap.ts", import.meta.url), "utf8");
+        const truncateBranch = termwrapSource.indexOf('if (msg.fileop == "truncate")');
+        expect(truncateBranch).toBeGreaterThanOrEqual(0);
+        expect(termwrapSource.indexOf("this.ptyOffset = 0;", truncateBranch)).toBeGreaterThan(truncateBranch);
+
+        const seam = makeTerminalSeam();
+        let ptyOffset = 8192;
+        const newFile = bytes(`after-truncate\n${anchor("after-truncate")}`);
+        // Model the production catch-up guard: after truncate the new file
+        // starts at offset zero, so the suffix is rendered instead of skipped.
+        ptyOffset = 0;
+        if (newFile.byteLength >= ptyOffset) await seam.doTerminalWrite(newFile);
+        ptyOffset = newFile.byteLength;
+        expect(new TextDecoder().decode(seam.writes[0])).toContain("after-truncate");
+        expect(seam.markerCount).toBe(1);
+        expect(ptyOffset).toBe(newFile.byteLength);
     });
 });

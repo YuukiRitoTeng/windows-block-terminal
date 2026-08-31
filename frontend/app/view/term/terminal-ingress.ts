@@ -83,7 +83,9 @@ export async function drainTerminalIngress(
             try {
                 const written = await catchUp();
                 if (!isCurrent()) {
-                    queue.unshift(...batch.slice(index));
+                    // Clear/dispose invalidated this batch. Do not put its
+                    // notifications back into a queue that now belongs to a
+                    // newer ingress generation.
                     return;
                 }
                 for (const nonce of extractVisualAnchorNonces(written)) {
@@ -91,6 +93,9 @@ export async function drainTerminalIngress(
                 }
                 await replayMissingAnchors(batch[index].data, coveredAnchorNonces);
             } catch (e) {
+                if (!isCurrent()) {
+                    return;
+                }
                 queue.unshift(...batch.slice(index));
                 throw e;
             }
