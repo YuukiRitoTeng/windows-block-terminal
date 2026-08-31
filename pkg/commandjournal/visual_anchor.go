@@ -5,11 +5,20 @@ package commandjournal
 
 import (
 	"sync"
+	"time"
 
 	"github.com/wavetermdev/waveterm/pkg/shellexec"
 	"github.com/wavetermdev/waveterm/pkg/terminalruntime"
 	"github.com/wavetermdev/waveterm/pkg/waveobj"
 	"github.com/wavetermdev/waveterm/pkg/wps"
+)
+
+const (
+	visualAnchorPendingCapacity   = 256
+	visualAnchorBindingCapacity   = 1024
+	visualAnchorTombstoneCapacity = 512
+	visualAnchorPendingTTL        = 10 * time.Minute
+	visualAnchorTombstoneTTL      = 30 * time.Minute
 )
 
 // VisualAnchor is an untrusted presentation hint observed on the PTY stream.
@@ -56,19 +65,36 @@ type VisualAnchorBinding struct {
 type VisualAnchorRegistry struct {
 	mu            sync.Mutex
 	blockID       string
-	anchors       map[string]VisualAnchor
-	confirmations map[string]VisualAnchorConfirmation
-	bindings      map[string]VisualAnchorBinding
-	rejected      map[string]struct{}
+	sessionEpoch  string
+	maxSequence   uint64
+	anchors       map[string]visualAnchorEntry
+	confirmations map[string]visualConfirmationEntry
+	bindings      map[string]visualBindingEntry
+	rejected      map[string]time.Time
+}
+
+type visualAnchorEntry struct {
+	anchor VisualAnchor
+	at     time.Time
+}
+
+type visualConfirmationEntry struct {
+	confirmation VisualAnchorConfirmation
+	at           time.Time
+}
+
+type visualBindingEntry struct {
+	binding VisualAnchorBinding
+	at      time.Time
 }
 
 func NewVisualAnchorRegistry(blockID string) *VisualAnchorRegistry {
 	return &VisualAnchorRegistry{
 		blockID:       blockID,
-		anchors:       make(map[string]VisualAnchor),
-		confirmations: make(map[string]VisualAnchorConfirmation),
-		bindings:      make(map[string]VisualAnchorBinding),
-		rejected:      make(map[string]struct{}),
+		anchors:       make(map[string]visualAnchorEntry),
+		confirmations: make(map[string]visualConfirmationEntry),
+		bindings:      make(map[string]visualBindingEntry),
+		rejected:      make(map[string]time.Time),
 	}
 }
 
@@ -90,6 +116,11 @@ func (r *VisualAnchorRegistry) ObserveAnchor(event terminalruntime.IntegrationEv
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	now := time.Now()
+	r.pruneLocked(now)
+	if !r.acceptEpochAndSequenceLocked(anchor.SessionEpoch, anchor.HookSequence, anchor.AnchorNonce) {
+		return
+	}
 	if _, ok := r.rejected[anchor.AnchorNonce]; ok {
 		return
 	}
@@ -99,17 +130,20 @@ func (r *VisualAnchorRegistry) ObserveAnchor(event terminalruntime.IntegrationEv
 	if _, ok := r.anchors[anchor.AnchorNonce]; ok {
 		return
 	}
-	if confirmation, ok := r.confirmations[anchor.AnchorNonce]; ok {
+	if confirmationEntry, ok := r.confirmations[anchor.AnchorNonce]; ok {
+		confirmation := confirmationEntry.confirmation
 		if !visualAnchorContextsMatch(anchor, confirmation) {
 			delete(r.confirmations, anchor.AnchorNonce)
-			r.rejected[anchor.AnchorNonce] = struct{}{}
+			r.rejected[anchor.AnchorNonce] = now
 			return
 		}
 		delete(r.confirmations, anchor.AnchorNonce)
 		r.bindLocked(anchor, confirmation)
 		return
 	}
-	r.anchors[anchor.AnchorNonce] = anchor
+	r.anchors[anchor.AnchorNonce] = visualAnchorEntry{anchor: anchor, at: now}
+	r.evictPendingLocked(now)
+	r.evictTombstonesLocked(now)
 }
 
 // ObserveConfirmation records an authenticated hosted command start. It is
@@ -120,16 +154,22 @@ func (r *VisualAnchorRegistry) ObserveConfirmation(confirmation VisualAnchorConf
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	now := time.Now()
+	r.pruneLocked(now)
+	if !r.acceptEpochAndSequenceLocked(confirmation.SessionEpoch, confirmation.HookSequence, confirmation.AnchorNonce) {
+		return
+	}
 	if _, ok := r.rejected[confirmation.AnchorNonce]; ok {
 		return
 	}
 	if _, ok := r.bindings[confirmation.AnchorNonce]; ok {
 		return
 	}
-	if anchor, ok := r.anchors[confirmation.AnchorNonce]; ok {
+	if anchorEntry, ok := r.anchors[confirmation.AnchorNonce]; ok {
+		anchor := anchorEntry.anchor
 		if !visualAnchorContextsMatch(anchor, confirmation) {
 			delete(r.anchors, confirmation.AnchorNonce)
-			r.rejected[confirmation.AnchorNonce] = struct{}{}
+			r.rejected[confirmation.AnchorNonce] = now
 			return
 		}
 		delete(r.anchors, confirmation.AnchorNonce)
@@ -139,7 +179,9 @@ func (r *VisualAnchorRegistry) ObserveConfirmation(confirmation VisualAnchorConf
 	if _, ok := r.confirmations[confirmation.AnchorNonce]; ok {
 		return
 	}
-	r.confirmations[confirmation.AnchorNonce] = confirmation
+	r.confirmations[confirmation.AnchorNonce] = visualConfirmationEntry{confirmation: confirmation, at: now}
+	r.evictPendingLocked(now)
+	r.evictTombstonesLocked(now)
 }
 
 func visualAnchorContextsMatch(anchor VisualAnchor, confirmation VisualAnchorConfirmation) bool {
@@ -162,7 +204,9 @@ func (r *VisualAnchorRegistry) bindLocked(anchor VisualAnchor, confirmation Visu
 		RunspaceID:   confirmation.RunspaceID,
 		Mode:         confirmation.Mode,
 	}
-	r.bindings[binding.AnchorNonce] = binding
+	r.bindings[binding.AnchorNonce] = visualBindingEntry{binding: binding, at: time.Now()}
+	r.evictBindingsLocked(time.Now())
+	r.evictTombstonesLocked(time.Now())
 	wps.Broker.Publish(wps.WaveEvent{
 		Event:   wps.Event_CommandJournalAnchor,
 		Scopes:  []string{waveobj.MakeORef(waveobj.OType_Block, r.blockID).String()},
@@ -187,8 +231,12 @@ func (r *VisualAnchorRegistry) Lookup(anchorNonce string) (VisualAnchorBinding, 
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.pruneLocked(time.Now())
 	binding, ok := r.bindings[anchorNonce]
-	return binding, ok
+	if !ok {
+		return VisualAnchorBinding{}, false
+	}
+	return binding.binding, true
 }
 
 // Invalidate drops all pending and confirmed bindings for a clear/session
@@ -199,18 +247,138 @@ func (r *VisualAnchorRegistry) Invalidate() {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	now := time.Now()
 	for nonce := range r.anchors {
-		r.rejected[nonce] = struct{}{}
+		r.rejected[nonce] = now
 	}
 	for nonce := range r.confirmations {
-		r.rejected[nonce] = struct{}{}
+		r.rejected[nonce] = now
 	}
 	for nonce := range r.bindings {
-		r.rejected[nonce] = struct{}{}
+		r.rejected[nonce] = now
 	}
-	r.anchors = make(map[string]VisualAnchor)
-	r.confirmations = make(map[string]VisualAnchorConfirmation)
-	r.bindings = make(map[string]VisualAnchorBinding)
+	r.anchors = make(map[string]visualAnchorEntry)
+	r.confirmations = make(map[string]visualConfirmationEntry)
+	r.bindings = make(map[string]visualBindingEntry)
+	r.evictTombstonesLocked(now)
+}
+
+func (r *VisualAnchorRegistry) acceptEpochAndSequenceLocked(epoch string, sequence uint64, nonce string) bool {
+	if epoch == "" || sequence == 0 {
+		return false
+	}
+	if r.sessionEpoch == "" {
+		r.sessionEpoch = epoch
+	} else if r.sessionEpoch != epoch {
+		return false
+	}
+	if sequence < r.maxSequence {
+		return false
+	}
+	if sequence == r.maxSequence && nonce != "" {
+		_, anchorPending := r.anchors[nonce]
+		_, confirmationPending := r.confirmations[nonce]
+		if !anchorPending && !confirmationPending {
+			return false
+		}
+	}
+	if sequence > r.maxSequence {
+		r.maxSequence = sequence
+	}
+	return true
+}
+
+func (r *VisualAnchorRegistry) pruneLocked(now time.Time) {
+	for nonce, entry := range r.anchors {
+		if now.Sub(entry.at) > visualAnchorPendingTTL {
+			delete(r.anchors, nonce)
+			r.rejected[nonce] = now
+		}
+	}
+	for nonce, entry := range r.confirmations {
+		if now.Sub(entry.at) > visualAnchorPendingTTL {
+			delete(r.confirmations, nonce)
+			r.rejected[nonce] = now
+		}
+	}
+	for nonce, at := range r.rejected {
+		if now.Sub(at) > visualAnchorTombstoneTTL {
+			delete(r.rejected, nonce)
+		}
+	}
+	r.evictPendingLocked(now)
+	r.evictBindingsLocked(now)
+	r.evictTombstonesLocked(now)
+}
+
+func (r *VisualAnchorRegistry) evictPendingLocked(now time.Time) {
+	for len(r.anchors) > visualAnchorPendingCapacity {
+		r.evictOldestAnchorLocked(now)
+	}
+	for len(r.confirmations) > visualAnchorPendingCapacity {
+		r.evictOldestConfirmationLocked(now)
+	}
+}
+
+func (r *VisualAnchorRegistry) evictOldestAnchorLocked(now time.Time) {
+	var oldestNonce string
+	var oldest time.Time
+	for nonce, entry := range r.anchors {
+		if oldestNonce == "" || entry.at.Before(oldest) {
+			oldestNonce, oldest = nonce, entry.at
+		}
+	}
+	if oldestNonce != "" {
+		delete(r.anchors, oldestNonce)
+		r.rejected[oldestNonce] = now
+	}
+}
+
+func (r *VisualAnchorRegistry) evictOldestConfirmationLocked(now time.Time) {
+	var oldestNonce string
+	var oldest time.Time
+	for nonce, entry := range r.confirmations {
+		if oldestNonce == "" || entry.at.Before(oldest) {
+			oldestNonce, oldest = nonce, entry.at
+		}
+	}
+	if oldestNonce != "" {
+		delete(r.confirmations, oldestNonce)
+		r.rejected[oldestNonce] = now
+	}
+}
+
+func (r *VisualAnchorRegistry) evictBindingsLocked(now time.Time) {
+	for len(r.bindings) > visualAnchorBindingCapacity {
+		var oldestNonce string
+		var oldest time.Time
+		for nonce, entry := range r.bindings {
+			if oldestNonce == "" || entry.at.Before(oldest) {
+				oldestNonce, oldest = nonce, entry.at
+			}
+		}
+		if oldestNonce == "" {
+			return
+		}
+		delete(r.bindings, oldestNonce)
+		r.rejected[oldestNonce] = now
+	}
+}
+
+func (r *VisualAnchorRegistry) evictTombstonesLocked(now time.Time) {
+	for len(r.rejected) > visualAnchorTombstoneCapacity {
+		var oldestNonce string
+		var oldest time.Time
+		for nonce, at := range r.rejected {
+			if oldestNonce == "" || at.Before(oldest) {
+				oldestNonce, oldest = nonce, at
+			}
+		}
+		if oldestNonce == "" {
+			return
+		}
+		delete(r.rejected, oldestNonce)
+	}
 }
 
 // ObserveHostedStart adapts an authenticated hosted event without exposing

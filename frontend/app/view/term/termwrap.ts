@@ -509,10 +509,10 @@ export class TermWrap {
     registerVisualAnchor(data: Record<string, unknown>) {
         const nonce = typeof data?.nonce === "string" ? data.nonce : "";
         const epoch = typeof data?.epoch === "string" ? data.epoch : "";
-        const commandId = typeof data?.id === "string" ? data.id : "";
+        const commandId = typeof data?.id === "string" && data.id !== "" ? data.id : undefined;
         const phase = typeof data?.phase === "string" ? data.phase : "";
         const sequence = typeof data?.seq === "number" ? data.seq : 0;
-        if (!nonce || !epoch || !commandId || !phase || sequence <= 0 || phase !== "start") return;
+        if (!nonce || !epoch || !phase || sequence <= 0 || phase !== "start") return;
         const marker = this.terminal.registerMarker(0);
         if (marker == null) return;
         const accepted = this.visualAnchorRegistry.observeAnchor({

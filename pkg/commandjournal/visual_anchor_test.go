@@ -1,7 +1,9 @@
 package commandjournal
 
 import (
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/wavetermdev/waveterm/pkg/shellexec"
 	"github.com/wavetermdev/waveterm/pkg/terminalruntime"
@@ -130,8 +132,8 @@ func TestVisualAnchorRegistryInvalidatesBindings(t *testing.T) {
 	if _, ok := registry.Lookup("nonce-1"); ok {
 		t.Fatal("old nonce must not be replayable after a new visual generation")
 	}
-	registry.ObserveAnchor(testAnchorEvent("nonce-new", 1))
-	registry.ObserveConfirmation(testConfirmation("nonce-new", 1))
+	registry.ObserveAnchor(testAnchorEvent("nonce-new", 2))
+	registry.ObserveConfirmation(testConfirmation("nonce-new", 2))
 	if _, ok := registry.Lookup("nonce-new"); !ok {
 		t.Fatal("new nonce should bind after a new visual generation")
 	}
@@ -170,5 +172,83 @@ func TestHostedStartConfirmationProvidesAuthoritativeCommandID(t *testing.T) {
 	binding, ok := registry.Lookup("nonce-authoritative")
 	if !ok || binding.CommandID != "record-from-sidechannel" {
 		t.Fatalf("authoritative command id was not bound: %#v, ok=%v", binding, ok)
+	}
+}
+
+func TestVisualAnchorRegistryBoundsPendingAndTombstones(t *testing.T) {
+	registry := NewVisualAnchorRegistry("block-1")
+	for i := 1; i <= visualAnchorPendingCapacity+32; i++ {
+		nonce := fmt.Sprintf("pending-%d", i)
+		registry.ObserveAnchor(testAnchorEvent(nonce, uint64(i)))
+	}
+	if len(registry.anchors) > visualAnchorPendingCapacity || len(registry.rejected) > visualAnchorTombstoneCapacity {
+		t.Fatalf("registry exceeded pending/tombstone bounds: anchors=%d rejected=%d", len(registry.anchors), len(registry.rejected))
+	}
+
+	stale := testAnchorEvent("stale", uint64(visualAnchorPendingCapacity+100))
+	registry.ObserveAnchor(stale)
+	registry.mu.Lock()
+	entry := registry.anchors[stale.AnchorNonce]
+	entry.at = time.Now().Add(-visualAnchorPendingTTL - time.Second)
+	registry.anchors[stale.AnchorNonce] = entry
+	registry.mu.Unlock()
+	registry.ObserveAnchor(testAnchorEvent("fresh", stale.HookSequence+1))
+	if _, ok := registry.anchors[stale.AnchorNonce]; ok {
+		t.Fatal("expired pending anchor was retained")
+	}
+
+	confirmations := NewVisualAnchorRegistry("block-1")
+	for i := 1; i <= visualAnchorPendingCapacity+8; i++ {
+		confirmation := testConfirmation(fmt.Sprintf("confirmation-%d", i), uint64(i))
+		confirmations.ObserveConfirmation(confirmation)
+	}
+	if len(confirmations.confirmations) > visualAnchorPendingCapacity {
+		t.Fatalf("confirmation pending bound exceeded: %d", len(confirmations.confirmations))
+	}
+	staleConfirmation := testConfirmation("stale-confirmation", uint64(visualAnchorPendingCapacity+20))
+	confirmations.ObserveConfirmation(staleConfirmation)
+	confirmations.mu.Lock()
+	confirmationEntry := confirmations.confirmations[staleConfirmation.AnchorNonce]
+	confirmationEntry.at = time.Now().Add(-visualAnchorPendingTTL - time.Second)
+	confirmations.confirmations[staleConfirmation.AnchorNonce] = confirmationEntry
+	confirmations.mu.Unlock()
+	confirmations.ObserveConfirmation(testConfirmation("fresh-confirmation", staleConfirmation.HookSequence+1))
+	if _, ok := confirmations.confirmations[staleConfirmation.AnchorNonce]; ok {
+		t.Fatal("expired pending confirmation was retained")
+	}
+
+	for i := 0; i < visualAnchorTombstoneCapacity+64; i++ {
+		registry.rejected[fmt.Sprintf("tombstone-%d", i)] = time.Now()
+	}
+	registry.pruneLocked(time.Now())
+	if len(registry.rejected) > visualAnchorTombstoneCapacity {
+		t.Fatalf("tombstones exceeded bound: %d", len(registry.rejected))
+	}
+	overflow := NewVisualAnchorRegistry("block-1")
+	for i := 1; i <= visualAnchorPendingCapacity+visualAnchorTombstoneCapacity+64; i++ {
+		overflow.ObserveAnchor(testAnchorEvent(fmt.Sprintf("overflow-%d", i), uint64(i)))
+	}
+	overflow.mu.Lock()
+	overflowAnchors, overflowTombstones := len(overflow.anchors), len(overflow.rejected)
+	overflow.mu.Unlock()
+	if overflowAnchors > visualAnchorPendingCapacity || overflowTombstones > visualAnchorTombstoneCapacity {
+		t.Fatalf("eviction exceeded bounds: anchors=%d rejected=%d", overflowAnchors, overflowTombstones)
+	}
+	overflow.ObserveConfirmation(testConfirmation("overflow-1", 1))
+	if _, ok := overflow.Lookup("overflow-1"); ok {
+		t.Fatal("evicted stale nonce was allowed to bind")
+	}
+
+	bindings := NewVisualAnchorRegistry("block-1")
+	for i := 1; i <= visualAnchorBindingCapacity+1; i++ {
+		nonce := fmt.Sprintf("binding-%d", i)
+		bindings.ObserveAnchor(testAnchorEvent(nonce, uint64(i)))
+		bindings.ObserveConfirmation(testConfirmation(nonce, uint64(i)))
+	}
+	bindings.mu.Lock()
+	bindingCount := len(bindings.bindings)
+	bindings.mu.Unlock()
+	if bindingCount > visualAnchorBindingCapacity {
+		t.Fatalf("bindings exceeded bound: %d", bindingCount)
 	}
 }
