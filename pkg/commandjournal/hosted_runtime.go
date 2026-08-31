@@ -30,14 +30,19 @@ type HostedRuntimeConsumer struct {
 	activeMode   terminalruntime.ExecutionMode
 	activeSource terminalruntime.OutputSource
 	hookSequence uint64
+	anchor       *VisualAnchorRegistry
 	closed       bool
 }
 
-func NewHostedRuntimeConsumer(blockID string, journal *Journal) *HostedRuntimeConsumer {
+func NewHostedRuntimeConsumer(blockID string, journal *Journal, anchor ...*VisualAnchorRegistry) *HostedRuntimeConsumer {
 	if journal == nil {
 		journal = New()
 	}
-	return &HostedRuntimeConsumer{blockID: blockID, journal: journal}
+	var anchorRegistry *VisualAnchorRegistry
+	if len(anchor) > 0 {
+		anchorRegistry = anchor[0]
+	}
+	return &HostedRuntimeConsumer{blockID: blockID, journal: journal, anchor: anchorRegistry}
 }
 
 // ObserveHostedRuntimeEvent implements shellexec.HostedRuntimeObserver.
@@ -75,7 +80,10 @@ func (c *HostedRuntimeConsumer) ObserveHostedRuntimeEvent(event shellexec.Hosted
 		if !ok {
 			return
 		}
-		sequence := c.nextHookSequence()
+		sequence, ok := c.acceptHookSequence(event.HookSequence)
+		if !ok {
+			return
+		}
 		accepted := c.journal.Apply(c.blockID, terminalruntime.StreamItem{
 			Kind: terminalruntime.StreamIntegrationEvent,
 			Event: terminalruntime.IntegrationEvent{
@@ -97,6 +105,9 @@ func (c *HostedRuntimeConsumer) ObserveHostedRuntimeEvent(event shellexec.Hosted
 			c.activeID = event.CommandID
 			c.activeMode = mode
 			c.activeSource = source
+			if c.anchor != nil {
+				c.anchor.ObserveHostedStart(event, c.blockID, c.runspaceID, sequence)
+			}
 		}
 	case hostedEventOutput:
 		if !c.validIdentity(event) || c.activeID == "" || event.CommandID != c.activeID || c.activeMode != terminalruntime.ExecutionModeStructured {
@@ -111,7 +122,10 @@ func (c *HostedRuntimeConsumer) ObserveHostedRuntimeEvent(event shellexec.Hosted
 		if !c.validIdentity(event) || c.activeID == "" || event.CommandID != c.activeID || event.Success == nil || event.ExitCode == nil {
 			return
 		}
-		sequence := c.nextHookSequence()
+		sequence, ok := c.acceptHookSequence(event.HookSequence)
+		if !ok {
+			return
+		}
 		accepted := c.journal.Apply(c.blockID, terminalruntime.StreamItem{
 			Kind: terminalruntime.StreamIntegrationEvent,
 			Event: terminalruntime.IntegrationEvent{
@@ -157,6 +171,17 @@ func (c *HostedRuntimeConsumer) validIdentity(event shellexec.HostedRuntimeEvent
 func (c *HostedRuntimeConsumer) nextHookSequence() uint64 {
 	c.hookSequence++
 	return c.hookSequence
+}
+
+func (c *HostedRuntimeConsumer) acceptHookSequence(sequence uint64) (uint64, bool) {
+	if sequence == 0 {
+		return c.nextHookSequence(), true
+	}
+	if sequence <= c.hookSequence {
+		return 0, false
+	}
+	c.hookSequence = sequence
+	return sequence, true
 }
 
 func hostedMode(mode string) (terminalruntime.ExecutionMode, terminalruntime.OutputSource, bool) {

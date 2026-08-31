@@ -31,6 +31,18 @@ type Osc16162Command =
     | { command: "A"; data: Record<string, never> }
     | { command: "C"; data: { cmd64?: string } }
     | {
+          command: "B";
+          data: {
+              nonce?: string;
+              epoch?: string;
+              seq?: number;
+              id?: string;
+              phase?: string;
+              hostid?: string;
+              runspaceid?: string;
+          };
+      }
+    | {
           command: "M";
           data: {
               shell?: string;
@@ -324,6 +336,9 @@ export function handleOsc16162Command(data: string, blockId: string, loaded: boo
         }
         case "C":
             handleShellIntegrationCommandStart(termWrap, blockId, cmd, rtInfo);
+            break;
+        case "B":
+            termWrap.registerVisualAnchor(cmd.data);
             break;
         case "M":
             if (cmd.data.shell) {

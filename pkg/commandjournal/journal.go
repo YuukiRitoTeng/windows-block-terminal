@@ -142,6 +142,7 @@ type Journal struct {
 	transitions    map[string]generationTransition
 	nextTransition uint64
 	reconcileHook  func()
+	visualAnchors  *VisualAnchorRegistry
 }
 
 func New() *Journal {
@@ -171,6 +172,17 @@ func (j *Journal) SetVisibilityGeneration(blockID string, generation uint64) {
 	}
 	j.mu.Lock()
 	j.generation[blockID] = generation
+	j.mu.Unlock()
+}
+
+// SetVisualAnchorRegistry attaches the presentation-only anchor lifetime to
+// this journal's clear/session boundaries.
+func (j *Journal) SetVisualAnchorRegistry(registry *VisualAnchorRegistry) {
+	if j == nil {
+		return
+	}
+	j.mu.Lock()
+	j.visualAnchors = registry
 	j.mu.Unlock()
 }
 
@@ -486,7 +498,11 @@ func (j *Journal) ClearVisualHistory(blockID string) (uint64, error) {
 		if active := j.active[blockID]; active != nil {
 			active.VisibilityGeneration = generation
 		}
+		anchors := j.visualAnchors
 		j.mu.Unlock()
+		if anchors != nil {
+			anchors.Invalidate()
+		}
 		return generation, nil
 	}
 	j.mu.Lock()
@@ -522,7 +538,11 @@ func (j *Journal) ClearVisualHistory(blockID string) (uint64, error) {
 		delete(j.transitions, blockID)
 	}
 	result := j.generation[blockID]
+	anchors := j.visualAnchors
 	j.mu.Unlock()
+	if anchors != nil {
+		anchors.Invalidate()
+	}
 	if transition.activeID != "" {
 		if err := durable.RetagRecordGeneration(transition.activeID, result); err != nil {
 			return 0, err
@@ -590,7 +610,11 @@ func (j *Journal) DeleteHistory(blockID string) error {
 		active.VisibilityGeneration = j.generation[blockID]
 	}
 	resultGeneration := j.generation[blockID]
+	anchors := j.visualAnchors
 	j.mu.Unlock()
+	if anchors != nil {
+		anchors.Invalidate()
+	}
 	if durable != nil && activeID != "" {
 		if err := durable.RetagRecordGeneration(activeID, resultGeneration); err != nil {
 			return err

@@ -32,6 +32,10 @@ type wirePayload struct {
 	Success      *bool  `json:"success"`
 	Shell        string `json:"shell"`
 	ShellVersion string `json:"shellversion"`
+	AnchorNonce  string `json:"nonce"`
+	AnchorPhase  string `json:"phase"`
+	HostID       string `json:"hostid"`
+	RunspaceID   string `json:"runspaceid"`
 }
 
 func (d *Decoder) Feed(raw []byte) []IntegrationEvent {
@@ -135,13 +139,16 @@ func (d *Decoder) decodeFrame(frame string) ([]IntegrationEvent, bool) {
 	if p.Version != 1 {
 		return nil, false
 	}
-	if (kind == "C" || kind == "D" || kind == "P") && (p.Epoch == "" || p.Sequence == 0) {
+	if (kind == "C" || kind == "D" || kind == "P" || kind == "B") && (p.Epoch == "" || p.Sequence == 0) {
+		return nil, false
+	}
+	if kind == "B" && (p.AnchorNonce == "" || p.AnchorPhase == "") {
 		return nil, false
 	}
 	if kind == "D" && (p.Success == nil || p.ExitCode == nil) {
 		return nil, false
 	}
-	if kind != "M" && kind != "P" && kind != "C" && kind != "D" {
+	if kind != "M" && kind != "P" && kind != "C" && kind != "D" && kind != "B" {
 		return nil, false
 	}
 	if kind == "D" && d.sessionEpoch != "" && p.Epoch != d.sessionEpoch {
@@ -170,7 +177,7 @@ func (d *Decoder) decodeFrame(frame string) ([]IntegrationEvent, bool) {
 	// command from the old shell session, while a D is never allowed to switch
 	// session identity.
 	if p.Epoch != "" && d.sessionEpoch != "" && p.Epoch != d.sessionEpoch {
-		if kind != "M" && kind != "P" && kind != "C" {
+		if kind != "M" && kind != "P" && kind != "C" && kind != "B" {
 			return nil, false
 		}
 		if d.activeCommandID != "" {
@@ -194,7 +201,7 @@ func (d *Decoder) decodeFrame(frame string) ([]IntegrationEvent, bool) {
 		}
 		sequence = p.Sequence
 	}
-	e := IntegrationEvent{ProtocolVersion: p.Version, SessionEpoch: epoch, HookSequence: p.Sequence, CommandID: p.ID, Command: command, Cwd: cwd, ExitCode: p.ExitCode, Success: p.Success, Shell: p.Shell, ShellVersion: p.ShellVersion}
+	e := IntegrationEvent{ProtocolVersion: p.Version, SessionEpoch: epoch, HookSequence: p.Sequence, CommandID: p.ID, Command: command, Cwd: cwd, ExitCode: p.ExitCode, Success: p.Success, Shell: p.Shell, ShellVersion: p.ShellVersion, AnchorNonce: p.AnchorNonce, AnchorPhase: p.AnchorPhase, RuntimeHostID: p.HostID, RuntimeRunspaceID: p.RunspaceID}
 	switch kind {
 	case "C":
 		if d.activeCommandID != "" {
@@ -225,6 +232,8 @@ func (d *Decoder) decodeFrame(frame string) ([]IntegrationEvent, bool) {
 		e.Kind = EventPromptReady
 	case "M":
 		e.Kind = EventShellMetadata
+	case "B":
+		e.Kind = EventVisualAnchor
 	}
 	d.sessionEpoch = epoch
 	d.lastHookSequence = sequence

@@ -3,7 +3,7 @@
 
 import type { BlockNodeModel } from "@/app/block/blocktypes";
 import { setBadge } from "@/app/store/badge";
-import { getFileSubject } from "@/app/store/wps";
+import { getFileSubject, waveEventSubscribeSingle } from "@/app/store/wps";
 import { RpcApi } from "@/app/store/wshclientapi";
 import { TabRpcClient } from "@/app/store/wshrpcutil";
 import {
@@ -44,6 +44,7 @@ import {
     quoteForPosixShell,
     trimTerminalSelection,
 } from "./termutil";
+import { VisualAnchorRegistry } from "./visual-anchor";
 
 const dlog = debug("wave:termwrap");
 
@@ -96,6 +97,7 @@ export class TermWrap {
         // terminal modes/session state.
         this.terminal.write("\x1b[2J\x1b[3J\x1b[H");
         this.heldData = [];
+        this.visualAnchorRegistry.invalidate();
     }
     handleResize_debounced: () => void;
     hasResized: boolean;
@@ -109,6 +111,8 @@ export class TermWrap {
     pasteActive: boolean = false;
     lastUpdated: number;
     promptMarkers: TermTypes.IMarker[] = [];
+    visualAnchorRegistry = new VisualAnchorRegistry();
+    visualAnchorEventUnsub: (() => void) | null = null;
     shellIntegrationStatusAtom: jotai.PrimitiveAtom<ShellIntegrationStatus | null>;
     lastCommandAtom: jotai.PrimitiveAtom<string | null>;
     claudeCodeActiveAtom: jotai.PrimitiveAtom<boolean>;
@@ -421,6 +425,23 @@ export class TermWrap {
 
         this.mainFileSubject = getFileSubject(this.getZoneId(), TermFileName);
         this.mainFileSubject.subscribe(this.handleNewFileSubjectData.bind(this));
+        this.visualAnchorEventUnsub = waveEventSubscribeSingle({
+            eventType: "commandjournal:anchor",
+            scope: WOS.makeORef("block", this.blockId),
+            handler: (event) => this.confirmVisualAnchor(event.data as Record<string, unknown>),
+        });
+        try {
+            const anchorHistory = await RpcApi.EventReadHistoryCommand(TabRpcClient, {
+                event: "commandjournal:anchor",
+                scope: WOS.makeORef("block", this.blockId),
+                maxitems: 64,
+            });
+            for (const event of anchorHistory ?? []) {
+                this.confirmVisualAnchor(event?.data as Record<string, unknown>);
+            }
+        } catch (e) {
+            console.debug("[termwrap] visual anchor history unavailable", this.blockId, e);
+        }
 
         try {
             const rtInfo = await RpcApi.GetRTInfoCommand(TabRpcClient, {
@@ -452,6 +473,9 @@ export class TermWrap {
     }
 
     dispose() {
+        this.visualAnchorEventUnsub?.();
+        this.visualAnchorEventUnsub = null;
+        this.visualAnchorRegistry.invalidate();
         this.promptMarkers.forEach((marker) => {
             try {
                 marker.dispose();
@@ -480,6 +504,64 @@ export class TermWrap {
 
         this.sendDataHandler?.(data);
         this.multiInputCallback?.(data);
+    }
+
+    registerVisualAnchor(data: Record<string, unknown>) {
+        const nonce = typeof data?.nonce === "string" ? data.nonce : "";
+        const epoch = typeof data?.epoch === "string" ? data.epoch : "";
+        const commandId = typeof data?.id === "string" && data.id !== "" ? data.id : undefined;
+        const phase = typeof data?.phase === "string" ? data.phase : "";
+        const sequence = typeof data?.seq === "number" ? data.seq : 0;
+        if (!nonce || !epoch || !phase || sequence <= 0 || phase !== "start") return;
+        const marker = this.terminal.registerMarker(0);
+        if (marker == null) return;
+        const accepted = this.visualAnchorRegistry.observeAnchor({
+            blockId: this.blockId,
+            sessionEpoch: epoch,
+            hookSequence: sequence,
+            commandId,
+            anchorNonce: nonce,
+            hostId: typeof data.hostid === "string" ? data.hostid : undefined,
+            runspaceId: typeof data.runspaceid === "string" ? data.runspaceid : undefined,
+            handle: { dispose: () => marker.dispose() },
+        });
+        if (!accepted) {
+            marker.dispose();
+            return;
+        }
+        marker.onDispose(() => this.visualAnchorRegistry.remove(nonce));
+    }
+
+    private confirmVisualAnchor(data: Record<string, unknown>) {
+        const anchorNonce = typeof data?.anchorNonce === "string" ? data.anchorNonce : "";
+        const blockId = typeof data?.blockId === "string" ? data.blockId : "";
+        const sessionEpoch = typeof data?.sessionEpoch === "string" ? data.sessionEpoch : "";
+        const commandId = typeof data?.commandId === "string" ? data.commandId : "";
+        const hostId = typeof data?.hostId === "string" ? data.hostId : "";
+        const runspaceId = typeof data?.runspaceId === "string" ? data.runspaceId : "";
+        const mode = typeof data?.mode === "string" ? data.mode : "";
+        const hookSequence = typeof data?.hookSequence === "number" ? data.hookSequence : 0;
+        if (
+            !anchorNonce ||
+            !blockId ||
+            !sessionEpoch ||
+            !commandId ||
+            !hostId ||
+            !runspaceId ||
+            !mode ||
+            hookSequence <= 0
+        )
+            return;
+        this.visualAnchorRegistry.confirm({
+            blockId,
+            sessionEpoch,
+            hookSequence,
+            commandId,
+            anchorNonce,
+            hostId,
+            runspaceId,
+            mode,
+        });
     }
 
     addFocusListener(focusFn: () => void) {

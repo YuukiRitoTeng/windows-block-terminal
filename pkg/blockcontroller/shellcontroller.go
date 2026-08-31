@@ -73,6 +73,7 @@ type ShellController struct {
 	journalPersistence       *persistence.Store
 	journalObserver          *commandjournal.RuntimeObserver
 	hostedRuntimeObserver    *commandjournal.HostedRuntimeConsumer
+	visualAnchorRegistry     *commandjournal.VisualAnchorRegistry
 	journalUnregister        func()
 	terminationMu            sync.Mutex
 	pendingTerminationReason commandjournal.CompletionReason
@@ -161,30 +162,52 @@ func (sc *ShellController) attachCommandJournal() {
 		}
 	}
 	sc.journalMu.Unlock()
-	observer := commandjournal.NewRuntimeObserver(sc.BlockId, journal)
-	hostedObserver := commandjournal.NewHostedRuntimeConsumer(sc.BlockId, journal)
+	anchorRegistry := commandjournal.NewVisualAnchorRegistry(sc.BlockId)
+	observer := commandjournal.NewRuntimeObserver(sc.BlockId, journal, anchorRegistry)
+	hostedObserver := commandjournal.NewHostedRuntimeConsumer(sc.BlockId, journal, anchorRegistry)
 	unregister := RegisterOutputObserver(sc.BlockId, observer)
-	sc.journalMu.Lock()
-	if sc.journalObserver != nil {
-		sc.journalMu.Unlock()
+	if !sc.commitCommandJournalAttachment(journal, anchorRegistry, observer, hostedObserver, unregister) {
 		unregister()
 		observer.Close()
+		anchorRegistry.Invalidate()
 		return
+	}
+}
+
+// commitCommandJournalAttachment publishes an attachment only after this
+// controller wins the journal attachment race. The Journal registry must be
+// installed in the same critical section as the winning controller state so a
+// losing attachment can never leave its registry behind.
+func (sc *ShellController) commitCommandJournalAttachment(
+	journal *commandjournal.Journal,
+	anchorRegistry *commandjournal.VisualAnchorRegistry,
+	observer *commandjournal.RuntimeObserver,
+	hostedObserver *commandjournal.HostedRuntimeConsumer,
+	unregister func(),
+) bool {
+	sc.journalMu.Lock()
+	defer sc.journalMu.Unlock()
+	if sc.journalObserver != nil {
+		return false
 	}
 	sc.journalObserver = observer
 	sc.hostedRuntimeObserver = hostedObserver
+	sc.visualAnchorRegistry = anchorRegistry
 	sc.journalUnregister = unregister
-	sc.journalMu.Unlock()
+	journal.SetVisualAnchorRegistry(anchorRegistry)
+	return true
 }
 
 func (sc *ShellController) detachCommandJournal(reason commandjournal.CompletionReason) {
 	sc.journalMu.Lock()
 	observer := sc.journalObserver
 	hostedObserver := sc.hostedRuntimeObserver
+	anchorRegistry := sc.visualAnchorRegistry
 	unregister := sc.journalUnregister
 	journal := sc.commandJournal
 	sc.journalObserver = nil
 	sc.hostedRuntimeObserver = nil
+	sc.visualAnchorRegistry = nil
 	sc.journalUnregister = nil
 	sc.journalMu.Unlock()
 	if unregister != nil {
@@ -195,6 +218,9 @@ func (sc *ShellController) detachCommandJournal(reason commandjournal.Completion
 	}
 	if hostedObserver != nil {
 		hostedObserver.Close()
+	}
+	if anchorRegistry != nil {
+		anchorRegistry.Invalidate()
 	}
 	if journal != nil {
 		journal.AbortActive(sc.BlockId, reason, time.Now())

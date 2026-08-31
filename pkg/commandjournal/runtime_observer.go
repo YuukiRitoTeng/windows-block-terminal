@@ -11,18 +11,29 @@ import (
 type RuntimeObserver struct {
 	adapter *terminalruntime.RuntimeAdapter
 	journal *Journal
+	anchor  *VisualAnchorRegistry
 }
 
-func NewRuntimeObserver(blockID string, journal *Journal) *RuntimeObserver {
+func NewRuntimeObserver(blockID string, journal *Journal, anchor ...*VisualAnchorRegistry) *RuntimeObserver {
 	if journal == nil {
 		journal = New()
 	}
-	observer := &RuntimeObserver{journal: journal}
+	var anchorRegistry *VisualAnchorRegistry
+	if len(anchor) > 0 {
+		anchorRegistry = anchor[0]
+	}
+	observer := &RuntimeObserver{journal: journal, anchor: anchorRegistry}
 	observer.adapter = terminalruntime.NewRuntimeAdapterWithStream(blockID, nil, nil, func(chunk terminalruntime.OutputChunk, items []terminalruntime.StreamItem) {
 		if !chunk.Complete {
 			observer.journal.MarkOutputIncomplete(blockID, chunk.DroppedBytes)
 		}
 		for _, item := range items {
+			if item.Kind == terminalruntime.StreamIntegrationEvent && item.Event.Kind == terminalruntime.EventVisualAnchor {
+				if observer.anchor != nil {
+					observer.anchor.ObserveAnchor(item.Event)
+				}
+				continue
+			}
 			if item.Kind == terminalruntime.StreamOutputSegment && (item.Source == "" || item.Source == terminalruntime.OutputSourceUnknown) {
 				item.Source = terminalruntime.OutputSourcePTY
 			}
