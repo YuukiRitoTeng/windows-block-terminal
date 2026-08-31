@@ -37,6 +37,12 @@ import {
     type ShellIntegrationStatus,
 } from "./osc-handlers";
 import {
+    drainTerminalIngress,
+    extractVisualAnchorFrames,
+    extractVisualAnchorNonces,
+    type TerminalIngressChunk,
+} from "./terminal-ingress";
+import {
     bufferLinesToText,
     createTempFileFromBlob,
     extractAllClipboardData,
@@ -87,7 +93,11 @@ export class TermWrap {
     serializeAddon: SerializeAddon;
     mainFileSubject: SubjectWithRef<WSFileEventData>;
     loaded: boolean;
-    heldData: Uint8Array[];
+    heldData: TerminalIngressChunk[];
+    private heldDataSequence: number;
+    private ingressGeneration: number;
+    private ingressState: "loading" | "draining" | "live" | "disposed";
+    private ingressDrainPromise: Promise<void> | null;
 
     /** Clear only rendered terminal state; the underlying shell session is untouched. */
     clearVisualBuffer() {
@@ -96,7 +106,12 @@ export class TermWrap {
         // the home position without sending anything to the shell or resetting
         // terminal modes/session state.
         this.terminal.write("\x1b[2J\x1b[3J\x1b[H");
+        this.ingressGeneration++;
         this.heldData = [];
+        if (this.ingressState !== "disposed" && !this.loaded) {
+            this.loaded = true;
+            this.ingressState = "live";
+        }
         this.visualAnchorRegistry.invalidate();
     }
     handleResize_debounced: () => void;
@@ -144,6 +159,10 @@ export class TermWrap {
         waveOptions: TermWrapOptions
     ) {
         this.loaded = false;
+        this.ingressState = "loading";
+        this.ingressGeneration = 0;
+        this.heldDataSequence = 0;
+        this.ingressDrainPromise = null;
         this.tabId = tabId;
         this.blockId = blockId;
         this.sendDataHandler = waveOptions.sendDataHandler;
@@ -394,6 +413,7 @@ export class TermWrap {
     }
 
     async initTerminal() {
+        const ingressGeneration = this.ingressGeneration;
         const copyOnSelectAtom = getSettingsKeyAtom("term:copyonselect");
         const trimTrailingWhitespaceAtom = getSettingsKeyAtom("term:trimtrailingwhitespace");
         this.toDispose.push(this.terminal.onData(this.handleTermData.bind(this)));
@@ -465,14 +485,40 @@ export class TermWrap {
         }
 
         try {
-            await this.loadInitialTerminalData();
-        } finally {
+            await this.loadInitialTerminalData(ingressGeneration);
+            if (!this.isIngressCurrent(ingressGeneration)) {
+                return;
+            }
             this.loaded = true;
+            this.ingressState = "draining";
+            // The file metadata returned by fetchWaveFile establishes the
+            // absolute ptyOffset. Catch up from that offset; never infer
+            // overlap from an append payload's byte length.
+            await this.catchUpTerminalFile(ingressGeneration);
+            await this.drainHeldData(ingressGeneration);
+            // A file append can be delivered to the subject after the
+            // snapshot request completed. One final authoritative read closes
+            // that handoff without treating D/prompt or timing as a fence.
+            await this.catchUpTerminalFile(ingressGeneration);
+            await this.drainHeldData(ingressGeneration);
+            if (this.isIngressCurrent(ingressGeneration)) {
+                this.ingressState = "live";
+            }
+        } finally {
+            if (this.isIngressCurrent(ingressGeneration)) {
+                this.loaded = true;
+                if (this.ingressState === "loading") {
+                    this.ingressState = "live";
+                }
+            }
         }
         this.runProcessIdleTimeout();
     }
 
     dispose() {
+        this.ingressGeneration++;
+        this.ingressState = "disposed";
+        this.heldData = [];
         this.visualAnchorEventUnsub?.();
         this.visualAnchorEventUnsub = null;
         this.visualAnchorRegistry.invalidate();
@@ -571,12 +617,20 @@ export class TermWrap {
     handleNewFileSubjectData(msg: WSFileEventData) {
         if (msg.fileop == "truncate") {
             this.clearVisualBuffer();
+            // The truncate event establishes a new file-origin boundary.
+            // Product Clear does not call this branch, so it never resets the
+            // cursor used for authoritative suffix reads.
+            this.ptyOffset = 0;
+            this.dataBytesProcessed = 0;
         } else if (msg.fileop == "append") {
             const decodedData = base64ToArray(msg.data64);
-            if (this.loaded) {
-                this.doTerminalWrite(decodedData, null);
+            if (this.loaded && this.ingressState === "live") {
+                this.heldData.push({ sequence: ++this.heldDataSequence, data: decodedData });
+                void this.drainHeldData(this.ingressGeneration).catch((e) => {
+                    console.debug("terminal append catch-up failed", this.blockId, e);
+                });
             } else {
-                this.heldData.push(decodedData);
+                this.heldData.push({ sequence: ++this.heldDataSequence, data: decodedData });
             }
         } else {
             console.log("bad fileop for terminal", msg);
@@ -609,10 +663,51 @@ export class TermWrap {
         return prtn;
     }
 
-    async loadInitialTerminalData(): Promise<void> {
+    private isIngressCurrent(generation: number): boolean {
+        return this.ingressGeneration === generation && this.ingressState !== "disposed";
+    }
+
+    private async drainHeldData(generation: number): Promise<void> {
+        if (this.ingressDrainPromise != null) {
+            return this.ingressDrainPromise;
+        }
+        const drainPromise = drainTerminalIngress(
+            this.heldData,
+            () => this.catchUpTerminalFile(generation),
+            async (data, coveredAnchorNonces) => {
+                for (const frame of extractVisualAnchorFrames(data)) {
+                    if (!this.isIngressCurrent(generation)) {
+                        return;
+                    }
+                    const nonces = extractVisualAnchorNonces(frame);
+                    if ([...nonces].some((nonce) => coveredAnchorNonces.has(nonce))) {
+                        continue;
+                    }
+                    await this.doTerminalWrite(frame, null);
+                    for (const nonce of nonces) {
+                        coveredAnchorNonces.add(nonce);
+                    }
+                }
+            },
+            () => this.isIngressCurrent(generation)
+        );
+        this.ingressDrainPromise = drainPromise;
+        try {
+            await drainPromise;
+        } finally {
+            if (this.ingressDrainPromise === drainPromise) {
+                this.ingressDrainPromise = null;
+            }
+        }
+    }
+
+    async loadInitialTerminalData(generation: number = this.ingressGeneration): Promise<void> {
         const startTs = Date.now();
         const zoneId = this.getZoneId();
         const { data: cacheData, fileInfo: cacheFile } = await fetchWaveFile(zoneId, TermCacheFileName);
+        if (!this.isIngressCurrent(generation)) {
+            return;
+        }
         let ptyOffset = 0;
         if (cacheFile != null) {
             ptyOffset = cacheFile.meta["ptyoffset"] ?? 0;
@@ -628,18 +723,49 @@ export class TermWrap {
                     this.terminal.resize(fileTermSize.cols, fileTermSize.rows);
                     didResize = true;
                 }
-                this.doTerminalWrite(cacheData, ptyOffset);
+                await this.doTerminalWrite(cacheData, ptyOffset);
                 if (didResize) {
                     this.terminal.resize(curTermSize.cols, curTermSize.rows);
                 }
             }
         }
         const { data: mainData, fileInfo: mainFile } = await fetchWaveFile(zoneId, TermFileName, ptyOffset);
+        if (!this.isIngressCurrent(generation)) {
+            return;
+        }
         console.log(
             `terminal loaded cachefile:${cacheData?.byteLength ?? 0} main:${mainData?.byteLength ?? 0} bytes, ${Date.now() - startTs}ms`
         );
         if (mainFile != null) {
-            await this.doTerminalWrite(mainData, null);
+            await this.doTerminalWrite(mainData, mainFile.size);
+        }
+    }
+
+    /** Read and render only bytes after the current authoritative file offset. */
+    private async catchUpTerminalFile(generation: number): Promise<Uint8Array> {
+        if (!this.isIngressCurrent(generation)) {
+            return new Uint8Array();
+        }
+        const { data, fileInfo } = await fetchWaveFile(this.getZoneId(), TermFileName, this.ptyOffset);
+        if (!this.isIngressCurrent(generation) || fileInfo == null) {
+            return new Uint8Array();
+        }
+        if (fileInfo.size < this.ptyOffset) {
+            // A reset/rotation without an offset mapping cannot be safely
+            // attributed to this terminal instance. Leave the stream intact
+            // and fail closed rather than replaying event payload guesses.
+            console.debug("terminal file moved backwards; skipping unsafe catch-up", this.blockId, {
+                ptyOffset: this.ptyOffset,
+                fileSize: fileInfo.size,
+            });
+            return new Uint8Array();
+        }
+        if (data != null && data.byteLength > 0) {
+            await this.doTerminalWrite(data, fileInfo.size);
+            return data;
+        } else {
+            this.ptyOffset = fileInfo.size;
+            return new Uint8Array();
         }
     }
 
