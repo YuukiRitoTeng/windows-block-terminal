@@ -11,7 +11,7 @@ The responsibility and truth boundaries in
 
 ## Status model
 
-Every acceptance item uses exactly one of these statuses:
+Every acceptance item uses exactly one of these evidence statuses:
 
 - `PASS`
 - `FAIL`
@@ -20,13 +20,14 @@ Every acceptance item uses exactly one of these statuses:
 - `EVIDENCE EXISTS — REVALIDATION NEEDED`
 
 An item is not a `PASS` without repository or recorded manual evidence for the
-current release target. No formal RC artifact or supported RC configuration has
-yet been declared. The existing Product Evidence, Packaging and Release
-Hardening records are pre-RC / baseline evidence: they establish capabilities,
-but cannot be treated as RC `PASS` until revalidated against the declared RC
-artifact and supported configuration. `NOT YET TESTED` is not silently accepted
-as a release decision. An item may become `EXPLICITLY UNSUPPORTED` only through
-a documented scope decision before the RC gate closes.
+current release target. No formal public RC release has been declared. The
+supported validation configuration is declared below, while the existing
+Product Evidence, Packaging and Release Hardening records remain pre-RC /
+baseline evidence: they establish capabilities, but cannot be treated as RC
+`PASS` until revalidated against the declared RC artifact and supported
+configuration. `NOT YET TESTED` is not silently accepted as a release decision.
+An item may become `EXPLICITLY UNSUPPORTED` only through a documented scope
+decision before the RC gate closes.
 
 ## 1. Current baseline
 
@@ -47,9 +48,10 @@ repository and merged evidence establish:
   manual GUI acceptance.
 
 This baseline is not a signed or supportable production release. The current
-stage is the Release Candidate Readiness Gate. A formal RC artifact and
-supported RC configuration are not yet declared; all evidence listed above is
-therefore pre-RC / baseline evidence pending RC-target revalidation.
+stage is the Release Candidate Readiness Gate. A formal public RC artifact is
+not declared; the supported validation configuration is defined below, and all
+evidence listed above remains pre-RC / baseline evidence pending RC-target
+revalidation.
 
 ## Current RC Evidence Candidate
 
@@ -81,6 +83,83 @@ MSI and ZIP are not evidence targets for `RC-EVIDENCE-3`.
 build identities and results are preserved in their evidence documents. The
 historical 0.14.5 artifact in `WINDOWS-PACKAGING-MVP-EVIDENCE.md` is also a
 different pre-RC artifact identity.
+
+## Supported configuration and finite RC scope
+
+This section is the support declaration for the current RC gate. It is not a
+public release announcement and does not turn historical evidence into RC
+`PASS`. `Support status` describes the declared scope; `Evidence status` uses
+the evidence vocabulary above and remains the release-gate authority.
+
+### Status vocabulary
+
+Support status is one of:
+
+- `SUPPORTED`
+- `SUPPORTED_WITH_CONDITIONS`
+- `NOT_SUPPORTED`
+- `NOT_YET_VALIDATED`
+
+Evidence status is one of `PASS`, `FAIL`, `EXPLICITLY UNSUPPORTED`, `NOT YET
+TESTED` or `EVIDENCE EXISTS — REVALIDATION NEEDED`. Unsupported means outside
+this RC scope; it does not mean the underlying shell or workload is broken.
+Not yet validated means no support claim is made. A support declaration never
+overrides a failed or missing evidence item.
+
+### RC target configuration
+
+The finite RC target is:
+
+- Windows 11 x64;
+- packaged Windows Block Terminal x64 NSIS artifact;
+- packaged Hosted PowerShell runtime;
+- PowerShell 7.6.4 for the hosted runtime evidence target.
+
+Windows 10, Windows on ARM64, macOS and Linux are not declared targets for this
+RC. A user may launch other shells or programs as child workloads, but that is
+not a support claim for those shells as the primary Windows Block Terminal
+runtime.
+
+### Support and evidence matrix
+
+| Scenario                                                    | Support status              | Evidence status                         | Required validation                                      | RC blocking?          | Notes / exclusion                                                                    |
+| ----------------------------------------------------------- | --------------------------- | --------------------------------------- | -------------------------------------------------------- | --------------------- | ------------------------------------------------------------------------------------ |
+| Windows 11 x64 packaged app                                 | `SUPPORTED`                 | `PASS`                                  | Packaged artifact plus manual startup smoke              | YES                   | Declared RC platform and architecture                                                |
+| Windows 10 x64                                              | `NOT_SUPPORTED`             | `EXPLICITLY UNSUPPORTED`                | None for this RC                                         | NO                    | Outside the declared RC target; not a claim that it cannot run                       |
+| Windows ARM64                                               | `NOT_SUPPORTED`             | `EXPLICITLY UNSUPPORTED`                | None for this RC                                         | NO                    | No ARM64 artifact or evidence                                                        |
+| macOS / Linux                                               | `NOT_SUPPORTED`             | `EXPLICITLY UNSUPPORTED`                | None for this RC                                         | NO                    | Windows-only RC target                                                               |
+| Packaged Hosted PowerShell 7.6.4                            | `SUPPORTED`                 | `PASS`                                  | Automated lifecycle checks plus packaged manual evidence | YES                   | One hosted process and one persistent Runspace                                       |
+| External `pwsh` fallback when hosted runtime is unavailable | `NOT_YET_VALIDATED`         | `EVIDENCE EXISTS — REVALIDATION NEEDED` | Packaged/manual fallback validation                      | YES unless scoped out | Code path exists, but no current RC support claim                                    |
+| Windows PowerShell 5.1 as primary shell                     | `NOT_SUPPORTED`             | `EXPLICITLY UNSUPPORTED`                | None for this RC                                         | NO                    | Not the declared PowerShell 7 baseline                                               |
+| `cmd` as primary shell                                      | `NOT_SUPPORTED`             | `EXPLICITLY UNSUPPORTED`                | None for this RC                                         | NO                    | Direct native commands inside hosted PowerShell are a separate case                  |
+| WSL as primary shell                                        | `NOT_SUPPORTED`             | `EXPLICITLY UNSUPPORTED`                | None for this RC                                         | NO                    | Outside the Windows hosted-PowerShell RC contract                                    |
+| One hosted process plus one persistent Runspace             | `SUPPORTED`                 | `PASS`                                  | Static and runtime evidence                              | YES                   | Frozen session-state invariant                                                       |
+| Wave / ConPTY / xterm live terminal authority               | `SUPPORTED`                 | `PASS`                                  | Static and packaged/manual evidence                      | YES                   | No alternate terminal authority                                                      |
+| Ordinary structured PowerShell command path                 | `SUPPORTED`                 | `PASS`                                  | Automated and packaged manual success/failure evidence   | YES                   | Authenticated structured sidechannel is authoritative                                |
+| Interactive PTY workload path                               | `SUPPORTED_WITH_CONDITIONS` | `PASS`                                  | Packaged manual interactive evidence                     | YES                   | PTY/xterm owns realtime I/O; exact post-hoc output is not promised                   |
+| `CommandRecord` distinct from Wave Block                    | `SUPPORTED`                 | `PASS`                                  | Static contract review                                   | YES                   | Product and runtime domains remain separate                                          |
+| Exact interactive post-hoc output attribution               | `NOT_SUPPORTED`             | `EXPLICITLY UNSUPPORTED`                | None for this RC                                         | NO                    | Must not be inferred from scrollback, timing or prompt text                          |
+| Python REPL                                                 | `SUPPORTED_WITH_CONDITIONS` | `PASS`                                  | Packaged Windows manual test                             | YES                   | Realtime I/O and return to the same outer session; conservative output semantics     |
+| Nested PowerShell                                           | `SUPPORTED_WITH_CONDITIONS` | `PASS`                                  | Packaged Windows manual test                             | YES                   | Nested process is an interactive workload, not a second authoritative hosted session |
+| Native foreground Ctrl+C                                    | `SUPPORTED_WITH_CONDITIONS` | `PASS`                                  | Packaged Windows manual test                             | YES                   | Interruption must retain consistent non-success semantics                            |
+| `vim` / alternate screen                                    | `NOT_YET_VALIDATED`         | `EVIDENCE EXISTS — REVALIDATION NEEDED` | Packaged manual PTY test                                 | YES unless scoped out | No current packaged RC run                                                           |
+| `fzf`                                                       | `NOT_YET_VALIDATED`         | `NOT YET TESTED`                        | Packaged manual PTY test                                 | YES unless scoped out | No current RC evidence; tool may be absent                                           |
+| `ssh`                                                       | `NOT_YET_VALIDATED`         | `NOT YET TESTED`                        | Packaged manual PTY test                                 | YES unless scoped out | Remote workload remains on PTY path                                                  |
+| Resize / reflow during a workload                           | `NOT_YET_VALIDATED`         | `NOT YET TESTED`                        | Packaged manual resize test                              | YES unless scoped out | No current RC stress evidence                                                        |
+| Hosted process / Runspace failure                           | `NOT_YET_VALIDATED`         | `EVIDENCE EXISTS — REVALIDATION NEEDED` | Fault-injection or packaged recovery test                | YES unless scoped out | Must fail conservatively without a silent second session                             |
+| Sidechannel disconnect                                      | `NOT_YET_VALIDATED`         | `NOT YET TESTED`                        | Deterministic disconnect test                            | YES unless scoped out | Trusted structured output must not be fabricated                                     |
+| Frontend reconnect                                          | `NOT_YET_VALIDATED`         | `NOT YET TESTED`                        | Packaged reconnect test                                  | YES unless scoped out | Must preserve durable history and live-terminal authority                            |
+| Packaged app restart                                        | `SUPPORTED`                 | `PASS`                                  | Packaged restart and persistence evidence                | YES                   | Finished durable records restore without duplication                                 |
+| Clear Visual History                                        | `SUPPORTED`                 | `PASS`                                  | Packaged Clear/session-preservation evidence             | YES                   | Clear does not restart shell, PTY or Runspace                                        |
+| Upgrade → durable history recovery                          | `NOT_YET_VALIDATED`         | `EVIDENCE EXISTS — REVALIDATION NEEDED` | Packaged A → B upgrade revalidation                      | YES unless scoped out | Historical evidence is not current RC proof                                          |
+
+The detailed interactive, recovery, release and performance tables below retain
+their existing evidence statuses and remain the inventory source. This finite
+declaration does not silently convert `NOT YET TESTED` or `EVIDENCE EXISTS —
+REVALIDATION NEEDED` into support. Manual validation is reserved for packaged
+Windows GUI/PTY behavior; automated tests, race checks, vet, build and package
+checks cover deterministic code and artifact properties. Unsupported scope may
+be revisited in a later release, but is not an RC defect by itself.
 
 ## Status inventory
 
