@@ -151,10 +151,12 @@ Before the next release-candidate source freeze, the product presentation must c
 - Command History / Cards are optional inspection/projection UI rather than a permanent dominant panel;
 - Clear remains accessible without requiring the inspector to be open;
 - trusted Copy All semantics are preserved;
-- a future direct in-terminal command-region action must not rely on heuristic xterm-row → `CommandRecord` matching;
+- direct in-terminal command-region actions must consume the completed CVA binding and must not rely on heuristic xterm-row → `CommandRecord` matching;
 - lightweight visual command distinction should not become a large redesign project.
 
-The remaining hard technical question is how to causally bind an actionable command region on the continuous terminal to the authoritative `CommandRecord` without reintroducing PTY/prompt heuristics.
+CVA has completed the causal binding of actionable command regions to the
+authoritative `CommandRecord`. Remaining work is product/UI presentation closure
+that consumes this binding, not a new binding architecture.
 
 ### Compatibility / recovery evidence
 
@@ -256,4 +258,4 @@ The continuous-terminal-first target and de-emphasis of permanent Card-first pre
 
 ### Insufficient evidence
 
-Full compatibility/recovery matrix, release-level upstream rehearsal, large-history final behavior, signed distribution/update/rollback/support closure, complete privacy/data-governance closure, final hosted-runtime default policy, packaged validation of the final continuous-terminal UX, and reliable direct in-terminal command-region → authoritative `CommandRecord` binding.
+Full compatibility/recovery matrix, release-level upstream rehearsal, large-history final behavior, signed distribution/update/rollback/support closure, complete privacy/data-governance closure, final hosted-runtime default policy, and packaged validation of the final continuous-terminal UX.

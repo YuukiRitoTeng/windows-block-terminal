@@ -89,7 +89,7 @@ Therefore:
 - durable history may remain useful without being the primary workspace;
 - trusted Copy All must continue to use authoritative structured output rather than xterm row guessing;
 - lightweight command markers/decorations may be added to the continuous terminal, but a visual marker alone does not prove output ownership;
-- a direct in-terminal command-region action must have a reliable causal binding to the authoritative `CommandRecord` before it may claim exact block-aware copy;
+- CVA provides a reliable causal binding for direct in-terminal command-region actions to the authoritative `CommandRecord`; actions must use that binding before claiming exact block-aware copy;
 - Clear remains a product visibility operation plus terminal visual clear, not merely `xterm.clear()`.
 
 ## Reading guidance

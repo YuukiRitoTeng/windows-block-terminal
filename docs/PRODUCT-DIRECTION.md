@@ -187,9 +187,9 @@ The intended implementation sequence is:
 2. Keep Command History / Cards available as an optional inspector.
 3. Keep authoritative Copy All semantics backed by the structured data path.
 4. Keep Clear Visual History available even when the inspector is closed.
-5. Establish a reliable causal mapping between a command-aware region on the
-   continuous terminal and the authoritative `CommandRecord` before exposing
-   direct in-terminal block copy.
+5. Use the reliable CVA causal mapping already established between a
+   command-aware region on the continuous terminal and the authoritative
+   `CommandRecord` before exposing direct in-terminal block copy.
 6. Add only lightweight visual distinction needed for usability.
 
 Do not implement command-region mapping using command-text matching, timestamp

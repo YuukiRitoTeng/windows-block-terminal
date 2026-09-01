@@ -94,7 +94,9 @@ Make the default product experience match `PRODUCT-DIRECTION.md`:
 - visual distinction stays lightweight and functional;
 - no direct in-terminal block action is exposed through heuristic row/text/prompt matching.
 
-A future direct command-region action must be causally bound to the authoritative `CommandRecord` before it can claim trusted block-aware copy.
+CVA now provides the causal binding for direct command-region actions to the
+authoritative `CommandRecord`. Future in-terminal UI actions must consume and
+preserve that binding; heuristic row/text/prompt mapping remains prohibited.
 
 ### 2. Supported configuration and runtime policy
 
