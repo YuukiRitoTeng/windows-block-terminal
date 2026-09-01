@@ -1,22 +1,23 @@
 # Project Status — Release Candidate Rebaseline
 
-Status date: 2026-08-28  
-Reconciliation baseline: `0abf1bda753dbfe9a55f2e878fa88029529fa504`  
-Strategic verdict: **REFRAME NEXT STAGE**
+Status date: 2026-08-30  
+Strategic verdict: **ARCHITECTURE KEEP / PRODUCT PRESENTATION REBASELINED**
 
 ## Authority scope
 
 This document is the current authority for **project state, roadmap position and next-stage priority**.
 
-It does not replace `CONDITIONAL-ARCHITECTURE-FREEZE.md`, which remains the architecture authority for responsibility boundaries and truth semantics.
+For current product goal and presentation direction, read `PRODUCT-DIRECTION.md`.
 
-If an older roadmap, Phase document, README section or status paragraph says the project is still in Phase 0–5, Product Evidence Gate preparation, upstream rehearsal, packaging preparation or first visual productization, that status is historical and this document wins.
+For architecture responsibilities and truth semantics, `CONDITIONAL-ARCHITECTURE-FREEZE.md` remains authoritative.
+
+If an older roadmap, Phase document, README section, screenshot or status paragraph conflicts with these current authorities, the current authority documents win.
 
 ## Where the project actually is
 
-Windows Block Terminal is now an **installable Windows MVP foundation / preview**.
+Windows Block Terminal is an **installable Windows MVP foundation / preview**.
 
-Merged evidence and implementation cover:
+Merged implementation and evidence cover:
 
 - Product Evidence Gate Stage 1–7;
 - Conditional Architecture Freeze;
@@ -30,12 +31,49 @@ Merged evidence and implementation cover:
 - isolated reproducible hosted-runtime publish;
 - Installer A → B in-place upgrade rehearsal with durable-history preservation;
 - first Windows Block Terminal visual productization pass and manual GUI acceptance.
+- Milestone 0 CVA final-leg closure, including packaged frontend anchor/binding evidence;
+- Milestone 1 supported-configuration contract and finite RC matrix.
 
 The project is **not** yet a production-ready release.
 
+Milestones 0 and 1 are complete. The remaining Release Candidate Readiness work
+is item-level revalidation and release closure, not a reopening of CVA or the
+supported-configuration contract.
+
+## Product-direction rebaseline
+
+The original visual productization pass proved that structured records, trusted output, durable history, Copy and Clear worked in a real GUI. It used a permanently visible Command History / Command Card panel as a prominent default presentation.
+
+That historical work remains valid evidence, but its default presentation is no longer the target UX.
+
+The current product direction is:
+
+> **Continuous PowerShell terminal first; reliable command-block functionality layered on top.**
+
+The default product experience should preserve the normal continuous xterm surface while providing:
+
+- reliable logical command boundaries;
+- `Copy All = command + only that command's corresponding output`;
+- normal terminal copy/paste;
+- Clear Visual History without session reset;
+- lightweight command distinction where useful;
+- Command History / Cards as an optional inspector rather than the permanent primary workspace.
+
+This change is a **presentation/product-priority correction**, not an architecture reversal.
+
+## Legacy / superseded presentation
+
+The following presentation direction is now marked **Legacy / Superseded**:
+
+> permanently visible Card-first Command History as the final default terminal UX.
+
+Do not delete the corresponding historical commits, screenshots, Phase records, Product Evidence or GUI acceptance notes. They remain part of the project's evidence trail.
+
+When those older documents describe the Card-first layout as the expected future product shape, that statement is historical and is superseded by `PRODUCT-DIRECTION.md`.
+
 ## Roadmap alignment
 
-The architecture route remains valid. The state baseline was stale.
+The architecture route remains valid. The product presentation has been rebaselined.
 
 Historical phase names should now be read as completed evidence checkpoints rather than the active development state:
 
@@ -44,7 +82,7 @@ Historical phase names should now be read as completed evidence checkpoints rath
 - Conditional Architecture Freeze — KEEP;
 - Phase 6 candidate upstream rehearsal — PASS WITH CONDITIONS;
 - Phase 7 hardening / Windows packaging foundation — materially completed;
-- Phase 8 first visual productization — completed as a first pass, not final Beta identity closure;
+- Phase 8 first visual productization — completed as evidence, but its Card-first default presentation is superseded;
 - Phase 9 production release — not completed.
 
 No current evidence requires reopening Architecture Review.
@@ -64,7 +102,7 @@ The following remain supported by current code and evidence:
 - durable product history does not depend on xterm scrollback or Wave terminal files;
 - Clear Visual History preserves shell / PTY / Runspace / session state.
 
-Architecture Review is **not triggered**.
+Architecture Review is **not triggered** by the continuous-terminal presentation reframe.
 
 ## Proven / completed
 
@@ -83,6 +121,8 @@ The following have direct repository or manual evidence sufficient for the curre
 - first independent Windows Block Terminal window/Card visual identity;
 - candidate-based upstream rehearsal with clean merge, expected seam locality and no new Wave→product dependency.
 
+The first Card-oriented visual pass is counted here as **historical implementation/evidence**, not as the final presentation specification.
+
 ## Conditionally stable / implementation detail
 
 These are current implementation choices, not permanent protocol or product contracts:
@@ -94,13 +134,29 @@ These are current implementation choices, not permanent protocol or product cont
 - RPC/read-model details;
 - 100-record presentation limit;
 - pagination / virtualization strategy;
-- current visual treatment;
+- Command History / Card layout and visibility;
+- exact continuous-terminal command marker/decoration treatment;
 - installer/updater implementation details;
 - final hosted-runtime default/fallback policy.
 
-They may evolve while preserving the Conditional Architecture Freeze.
+They may evolve while preserving the Conditional Architecture Freeze and the product direction in `PRODUCT-DIRECTION.md`.
 
 ## Still open
+
+### Product-direction closure
+
+Before the next release-candidate source freeze, the product presentation must converge on the current target:
+
+- continuous xterm remains the default primary surface;
+- Command History / Cards are optional inspection/projection UI rather than a permanent dominant panel;
+- Clear remains accessible without requiring the inspector to be open;
+- trusted Copy All semantics are preserved;
+- direct in-terminal command-region actions must consume the completed CVA binding and must not rely on heuristic xterm-row → `CommandRecord` matching;
+- lightweight visual command distinction should not become a large redesign project.
+
+CVA has completed the causal binding of actionable command regions to the
+authoritative `CommandRecord`. Remaining work is product/UI presentation closure
+that consumes this binding, not a new binding architecture.
 
 ### Compatibility / recovery evidence
 
@@ -126,11 +182,13 @@ Still insufficiently proven as a release-level matrix:
 - HiDPI and multi-display validation;
 - Beta feedback loop;
 - systematic cleanup of remaining Wave-derived product surfaces while preserving legal attribution;
-- final product identity specification beyond the first visual pass.
+- packaged validation of the final continuous-terminal presentation.
 
 ### Scale decision
 
 Large-history behavior still needs an explicit product decision and performance budget around the current 100-record visible-history strategy, pagination and virtualization.
+
+Durable history remains useful, but it is not the primary visual workspace under the current product direction.
 
 ## Fork / upstream status
 
@@ -146,9 +204,17 @@ When a suitable upstream merge SHA exists, rerun the same rehearsal policy again
 
 # Release Candidate Readiness Gate
 
-This is a release-closure gate, not another feature phase and not an architecture redesign.
+This remains a release-closure gate, not a new architecture phase.
 
-Its purpose is to turn the current installable MVP foundation into a boundary-defined, repeatably verifiable and supportable release candidate.
+Before freezing the next release-candidate artifact, batch together artifact-affecting changes that still alter the final product experience or release behavior, including:
+
+- continuous-terminal UX closure;
+- product branding cleanup;
+- updater/update-channel behavior;
+- packaging/runtime dependency changes;
+- bundled assets and installer behavior.
+
+Then freeze source and packaging configuration once, build a fresh Windows x64 candidate, sign the final artifact and perform packaged revalidation against that exact signed identity.
 
 ## Exit criteria
 
@@ -156,16 +222,17 @@ The gate is complete only when all of the following are true:
 
 1. Supported configuration is explicit: Windows 11 + PowerShell 7, hosted-runtime default/fallback policy, one-host/one-Runspace behavior and sidechannel-failure behavior.
 2. Install, upgrade, restart, uninstall and durable-data preservation remain stable.
-3. A reproducible **signed** Windows artifact exists with documented update/channel/rollback/support policy.
-4. The target interactive/recovery matrix is either PASS or explicitly excluded; there are no silent compatibility assumptions.
-5. Ordinary lifecycle, persistence, Clear, output-safety and frontend regressions remain green.
-6. Performance budgets and the 100-record / pagination / virtualization decision are explicit.
-7. Privacy, retention, ACL, diagnostics, Apache/NOTICE/third-party and brand boundaries are reviewed and documented.
-8. When the relevant upstream candidate becomes a final merged baseline, rerun the upstream rehearsal against the final merge SHA; until then keep the current conditional verdict.
+3. The default presentation matches the continuous-terminal product direction and preserves trusted block-aware actions.
+4. A reproducible **signed** Windows artifact exists with documented update/channel/rollback/support policy.
+5. The target interactive/recovery matrix is either PASS or explicitly excluded; there are no silent compatibility assumptions.
+6. Ordinary lifecycle, persistence, Clear, output-safety and frontend regressions remain green.
+7. Performance budgets and the 100-record / pagination / virtualization decision are explicit.
+8. Privacy, retention, ACL, diagnostics, Apache/NOTICE/third-party and brand boundaries are reviewed and documented.
+9. When the relevant upstream candidate becomes a final merged baseline, rerun the upstream rehearsal against the final merge SHA; until then keep the current conditional verdict.
 
 ## Explicitly not next
 
-Do not use the RC gate as justification to:
+Do not use the RC gate or product-direction rebaseline as justification to:
 
 - build a custom terminal emulator;
 - replace the Wave / ConPTY / xterm live path;
@@ -174,6 +241,7 @@ Do not use the RC gate as justification to:
 - make PTY heuristics authoritative for ordinary structured output;
 - perform broad Wave-core deletion or rewrite;
 - redesign schema/transport without evidence;
+- turn every command into a new HTML replacement renderer;
 - add advanced Liquid Glass shaders, large animation work or visual polish ahead of release blockers;
 - add AI, cloud, sync, search or unrelated shell features;
 - repeat the Product Evidence Gate without new evidence requiring it.
@@ -182,12 +250,12 @@ Do not use the RC gate as justification to:
 
 ### Verified
 
-Current main implementation, merged Product Evidence / Freeze / hardening / packaging / upgrade / visual evidence, and candidate upstream rehearsal records.
+Current architecture implementation, merged Product Evidence / Freeze / hardening / packaging / upgrade / first visual evidence, and candidate upstream rehearsal records.
 
-### Strong inference
+### Product-direction decision
 
-The project is an installable Windows Block Terminal MVP foundation / preview and the correct next stage is Release Candidate Readiness rather than another architecture or feature phase.
+The continuous-terminal-first target and de-emphasis of permanent Card-first presentation are current product decisions recorded in `PRODUCT-DIRECTION.md`.
 
 ### Insufficient evidence
 
-Full compatibility/recovery matrix, release-level upstream rehearsal, large-history final behavior, signed distribution/update/rollback/support closure, complete privacy/data-governance closure and final hosted-runtime default policy.
+Full compatibility/recovery matrix, release-level upstream rehearsal, large-history final behavior, signed distribution/update/rollback/support closure, complete privacy/data-governance closure, final hosted-runtime default policy, and packaged validation of the final continuous-terminal UX.

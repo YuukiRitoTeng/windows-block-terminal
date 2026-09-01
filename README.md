@@ -2,20 +2,66 @@
 
 Windows Block Terminal is a Windows-first block terminal for Windows 11 and PowerShell 7.
 
-It keeps a real terminal as the live interaction surface while turning completed ordinary commands into durable, structured command records and readable Command Cards.
+Its product goal is simple:
+
+> **Keep the normal continuous terminal experience, but add reliable command-block semantics and actions.**
+
+The live terminal remains visually primary. Windows Block Terminal should feel close to a normal PowerShell / Wave terminal rather than a card-per-command replacement UI.
 
 > **Project status:** installable Windows MVP foundation / preview. The current main-line stage is the **Release Candidate Readiness Gate**. This repository is not yet a production-ready signed release.
+
+## Product direction
+
+The target UX is:
+
+```text
+PS C:\> command A
+output A
+
+PS C:\> command B
+output B
+
+PS C:\> command C
+output C
+```
+
+The terminal remains one continuous xterm surface, while the product tracks logical command boundaries and trusted structured output behind it.
+
+The core product requirements are:
+
+- reliable logical command boundaries for ordinary commands;
+- block-aware copy where **Copy All = command + only that command's corresponding output**;
+- normal terminal copy/paste remains available;
+- Clear Visual History clears product-visible and rendered history without restarting the PowerShell session;
+- interactive programs remain real PTY/xterm workloads;
+- visual distinction is lightweight and secondary to correctness.
+
+See `docs/PRODUCT-DIRECTION.md` for the current product/presentation authority.
 
 ## What works today
 
 - Real Wave / ConPTY / xterm.js terminal path remains active and authoritative.
 - Ordinary hosted PowerShell commands produce structured `CommandRecord` lifecycle and output data.
 - Command History is durable across application restart.
-- Command Cards expose status, exit code, duration, cwd and bounded output metadata.
-- Copy Command, Copy Output, Copy All and Show/Hide Output are available when the output guarantee permits them.
+- Trusted output is gated by completeness, attribution, text-safety and truncation metadata.
+- Copy Command is independently available; Copy Output and Copy All are available only when the authoritative output guarantee permits trusted use.
 - Clear Visual History removes visible history without restarting the PowerShell session, PTY or Runspace.
 - Windows x64 packaging, install, uninstall and in-place installer upgrade have been exercised with durable-history preservation.
-- The first Windows Block Terminal visual identity pass is merged, including Windows 11 Mica-based window material and productized Command History/Card presentation.
+- A first Windows Block Terminal visual productization pass was completed and manually accepted.
+
+## Legacy / superseded presentation note
+
+The first visual productization pass made a permanently visible Command History / Command Card panel a prominent part of the default terminal layout.
+
+That work is **not discarded**. It remains useful historical evidence that the structured backend, trusted copy path, durable history and Clear behavior worked in a real GUI.
+
+However, the following presentation direction is now **Legacy / Superseded**:
+
+> **Always-visible Card-first Command History as the default terminal experience.**
+
+Command Cards remain useful as an optional history/inspection projection, but the intended default product experience is now **continuous terminal first**.
+
+Older screenshots, commits and evidence documents that show the Card-first default should be read as historical presentation evidence, not as the final UX specification.
 
 ## Compatibility model
 
@@ -37,10 +83,10 @@ Command Journal
         v
 Durable persistence
         v
-Command History / Command Cards / Copy / Clear
+trusted Copy / Clear / optional History Inspector
 ```
 
-Ordinary structured commands use the hosted runtime as lifecycle/output authority. Interactive workloads such as `vim`, `ssh`, `fzf`, REPLs and full-screen TUIs remain owned by the live PTY/xterm path. Interactive output is intentionally conservative and is not presented as exact post-hoc Card output without independent proof.
+Ordinary structured commands use the hosted runtime as lifecycle/output authority. Interactive workloads such as `vim`, `ssh`, `fzf`, REPLs and full-screen TUIs remain owned by the live PTY/xterm path. Interactive output is intentionally conservative and is not presented as exact post-hoc structured output without independent proof.
 
 ## Core architecture invariants
 
@@ -66,9 +112,9 @@ Completed checkpoints include:
 - performance / data / security hardening;
 - Windows Packaging MVP and reproducible hosted-runtime publish;
 - installer A → B upgrade rehearsal with durable-history preservation;
-- first Visual Productization pass.
+- first Visual Productization pass — preserved as historical evidence, with its Card-first default now superseded as product direction.
 
-The current stage is the **Release Candidate Readiness Gate**. Its purpose is not to add another architecture layer or a new feature set. It closes the remaining release, compatibility, support, data-governance and product-identity gaps required for a supportable release candidate.
+The current stage is the **Release Candidate Readiness Gate**. Before the next release-candidate source freeze, artifact-affecting work should converge on the continuous-terminal product direction, release identity, update behavior and other remaining release blockers so that packaged revalidation is not repeated unnecessarily.
 
 See `docs/PROJECT-STATUS.md` and `docs/ROADMAP.md` for the current state and exit criteria.
 
@@ -76,7 +122,7 @@ See `docs/PROJECT-STATUS.md` and `docs/ROADMAP.md` for the current state and exi
 
 The Windows x64 packaging path is proven, but release distribution is not complete.
 
-Current release gaps include production code signing, update/channel/rollback/support policy, broader compatibility/recovery evidence, privacy/retention/ACL/diagnostic policy, and final legal/third-party/brand closure.
+Current release gaps include production code signing, update/channel/rollback/support policy, broader compatibility/recovery evidence, privacy/retention/ACL/diagnostic policy, final legal/third-party/brand closure, and packaged validation of the final continuous-terminal presentation.
 
 ## Upstream and licensing
 
@@ -92,6 +138,7 @@ Historical Wave attribution, Apache-2.0 notices and third-party acknowledgements
 
 ## Key documents
 
+- `docs/PRODUCT-DIRECTION.md` — current product goal and presentation direction
 - `docs/PROJECT-STATUS.md` — current project state and next-stage authority
 - `docs/CONDITIONAL-ARCHITECTURE-FREEZE.md` — frozen architecture responsibilities and truth semantics
 - `docs/ARCHITECTURE-AUTHORITY.md` — document authority and supersession rules
@@ -99,4 +146,4 @@ Historical Wave attribution, Apache-2.0 notices and third-party acknowledgements
 - `docs/WINDOWS-PACKAGING-MVP-EVIDENCE.md` — Windows packaging and upgrade evidence
 - `docs/ROADMAP.md` — current roadmap and Release Candidate Readiness Gate
 
-Older Phase 0–5 design documents remain historical evidence and must not override later production evidence or current authority documents.
+Older Phase 0–5, Product Evidence and first Visual Productization documents remain historical evidence. They must not override the current product-direction, project-state or architecture authorities.
