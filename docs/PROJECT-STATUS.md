@@ -31,8 +31,14 @@ Merged implementation and evidence cover:
 - isolated reproducible hosted-runtime publish;
 - Installer A → B in-place upgrade rehearsal with durable-history preservation;
 - first Windows Block Terminal visual productization pass and manual GUI acceptance.
+- Milestone 0 CVA final-leg closure, including packaged frontend anchor/binding evidence;
+- Milestone 1 supported-configuration contract and finite RC matrix.
 
 The project is **not** yet a production-ready release.
+
+Milestones 0 and 1 are complete. The remaining Release Candidate Readiness work
+is item-level revalidation and release closure, not a reopening of CVA or the
+supported-configuration contract.
 
 ## Product-direction rebaseline
 

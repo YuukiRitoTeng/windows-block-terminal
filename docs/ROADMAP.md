@@ -42,6 +42,8 @@ The following checkpoints are materially complete and should not be repeated wit
 7. Reproducible hosted PowerShell publish from isolated .NET SDK.
 8. Windows installer A → B in-place upgrade rehearsal with durable-history preservation.
 9. First Windows Block Terminal Visual Productization pass with manual GUI acceptance — preserved as evidence; its permanent Card-first default is superseded by the current product direction.
+10. Milestone 0 CVA final-leg closure with packaged frontend anchor/binding evidence.
+11. Milestone 1 supported-configuration contract and finite RC matrix.
 
 These checkpoints established the current MVP foundation. They do not by themselves constitute a signed, supported production release.
 
@@ -96,7 +98,9 @@ A future direct command-region action must be causally bound to the authoritativ
 
 ### 2. Supported configuration and runtime policy
 
-Define and verify the supported product configuration, including:
+The Milestone 1 support declaration and finite matrix are complete. Remaining
+work is to revalidate the declared items on the final RC artifact and close any
+explicitly blocking gaps, including:
 
 - Windows 11 and PowerShell 7 support baseline;
 - hosted-runtime default and fallback behavior;

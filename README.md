@@ -44,7 +44,7 @@ See `docs/PRODUCT-DIRECTION.md` for the current product/presentation authority.
 - Ordinary hosted PowerShell commands produce structured `CommandRecord` lifecycle and output data.
 - Command History is durable across application restart.
 - Trusted output is gated by completeness, attribution, text-safety and truncation metadata.
-- Copy Command, Copy Output and Copy All are available when the output guarantee permits them.
+- Copy Command is independently available; Copy Output and Copy All are available only when the authoritative output guarantee permits trusted use.
 - Clear Visual History removes visible history without restarting the PowerShell session, PTY or Runspace.
 - Windows x64 packaging, install, uninstall and in-place installer upgrade have been exercised with durable-history preservation.
 - A first Windows Block Terminal visual productization pass was completed and manually accepted.
