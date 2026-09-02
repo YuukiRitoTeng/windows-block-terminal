@@ -160,12 +160,16 @@ that consumes this binding, not a new binding architecture.
 
 ### Compatibility / recovery evidence
 
-Still insufficiently proven as a release-level matrix:
+The finite M2A interactive matrix is complete on the packaged Windows target:
+Python REPL, nested PowerShell, external `pwsh` fallback, native Ctrl+C, Vim
+and alternate-screen, fzf, localhost SSH, and resize/reflow all have passing
+manual evidence. Interactive PTY workloads retain conservative semantics and
+do not gain an exact retrospective output-attribution promise.
 
-- vim / fzf / ssh / nested PowerShell / broader REPL-TUI behavior;
-- alternate-screen and resize/reflow stress;
-- shell crash, reconnect, integration loss and backpressure;
-- all startup modes and hosted-runtime fallback behavior;
+M2B recovery evidence remains pending:
+
+- shell/runspace failure, reconnect and integration loss;
+- crash/recovery, durable-history recovery and backpressure;
 - background output attribution and exact interactive-copy semantics.
 
 ### Release gaps

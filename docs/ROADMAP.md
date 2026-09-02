@@ -112,22 +112,16 @@ explicitly blocking gaps, including:
 
 ### 3. Interactive and recovery matrix
 
-Create a finite release-target matrix and either PASS or explicitly exclude each target.
+The finite M2A interactive matrix is complete on the packaged Windows target:
+Python REPL, nested PowerShell, external `pwsh` fallback, native Ctrl+C, Vim
+and alternate screen, fzf, localhost SSH, and resize/reflow. Interactive PTY
+workloads retain conservative semantics; exact post-hoc output attribution is
+not promised.
 
-The matrix should cover the release-relevant subset of:
-
-- `vim`;
-- `fzf`;
-- `ssh`;
-- nested PowerShell;
-- representative REPL/TUI workloads;
-- alternate screen;
-- resize/reflow;
-- shell crash;
-- reconnect / integration loss;
-- backpressure / long-running output.
-
-Do not promise exact post-hoc interactive output unless independently proven.
+M2B remains for shell/runspace failure, sidechannel/frontend reconnect,
+crash/recovery, durable-history recovery and backpressure. Each item must be
+validated or explicitly excluded without weakening the existing authority
+boundaries.
 
 ### 4. Release and support chain
 
