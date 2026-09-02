@@ -54,6 +54,13 @@ type HostedRuntimeObserver interface {
 	ObserveHostedRuntimeEvent(HostedRuntimeEvent)
 }
 
+// HostedRuntimeDisconnectObserver is notified when an authenticated
+// sidechannel connection terminates. It is optional so existing observers
+// remain source-compatible.
+type HostedRuntimeDisconnectObserver interface {
+	ObserveHostedRuntimeDisconnect()
+}
+
 func newHostedSidechannel(blockID string, observer HostedRuntimeObserver) (*hostedSidechannel, error) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -94,6 +101,14 @@ func (s *hostedSidechannel) serve() {
 		return
 	}
 	defer conn.Close()
+	authenticated := false
+	defer func() {
+		if authenticated {
+			if observer, ok := s.observer.(HostedRuntimeDisconnectObserver); ok {
+				observer.ObserveHostedRuntimeDisconnect()
+			}
+		}
+	}()
 	_ = conn.SetReadDeadline(time.Now().Add(30 * time.Second))
 	decoder := json.NewDecoder(bufio.NewReader(conn))
 	var first HostedRuntimeEvent
@@ -110,6 +125,7 @@ func (s *hostedSidechannel) serve() {
 		log.Printf("[hosted-runtime] block=%s sidechannel authentication failed", s.blockID)
 		return
 	}
+	authenticated = true
 	_ = conn.SetReadDeadline(time.Time{})
 	first = HostedRuntimeEvent{Kind: hello.Kind, HostID: hello.HostID}
 	logHostedEvent(s.blockID, first)

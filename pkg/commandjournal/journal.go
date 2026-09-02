@@ -42,15 +42,16 @@ const (
 type CompletionReason string
 
 const (
-	CompletionNormal             CompletionReason = "normal"
-	CompletionMissingFinish      CompletionReason = "missing_finish"
-	CompletionSuperseded         CompletionReason = "superseded"
-	CompletionSessionEnded       CompletionReason = "session_ended"
-	CompletionControllerStop     CompletionReason = "controller_stop"
-	CompletionPTYError           CompletionReason = "pty_error"
-	CompletionEpochChanged       CompletionReason = "epoch_changed"
-	CompletionAppRestartRecovery CompletionReason = "app_restart_recovery"
-	CompletionInterrupted        CompletionReason = "interrupted"
+	CompletionNormal                  CompletionReason = "normal"
+	CompletionMissingFinish           CompletionReason = "missing_finish"
+	CompletionSuperseded              CompletionReason = "superseded"
+	CompletionSessionEnded            CompletionReason = "session_ended"
+	CompletionControllerStop          CompletionReason = "controller_stop"
+	CompletionPTYError                CompletionReason = "pty_error"
+	CompletionEpochChanged            CompletionReason = "epoch_changed"
+	CompletionAppRestartRecovery      CompletionReason = "app_restart_recovery"
+	CompletionInterrupted             CompletionReason = "interrupted"
+	CompletionSidechannelDisconnected CompletionReason = "sidechannel_disconnected"
 )
 
 type CommandRecord struct {
@@ -641,7 +642,7 @@ func (j *Journal) VisibleSnapshot(blockID string) []CommandRecord {
 
 func validAbortReason(reason CompletionReason) bool {
 	switch reason {
-	case CompletionMissingFinish, CompletionSuperseded, CompletionSessionEnded, CompletionControllerStop, CompletionPTYError, CompletionEpochChanged:
+	case CompletionMissingFinish, CompletionSuperseded, CompletionSessionEnded, CompletionControllerStop, CompletionPTYError, CompletionEpochChanged, CompletionSidechannelDisconnected:
 		return true
 	default:
 		return false

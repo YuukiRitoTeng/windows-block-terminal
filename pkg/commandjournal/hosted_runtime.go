@@ -152,6 +152,41 @@ func (c *HostedRuntimeConsumer) ObserveHostedRuntimeEvent(event shellexec.Hosted
 	}
 }
 
+// ObserveHostedRuntimeDisconnect implements shellexec.HostedRuntimeDisconnectObserver.
+// It closes structured authority without treating the PTY session as ended.
+func (c *HostedRuntimeConsumer) ObserveHostedRuntimeDisconnect() {
+	if c == nil || c.journal == nil || c.blockID == "" {
+		return
+	}
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return
+	}
+	c.closed = true
+	commandID := c.activeID
+	mode := c.activeMode
+	runspaceID := c.runspaceID
+	c.activeID = ""
+	c.activeMode = terminalruntime.ExecutionModeUnknown
+	c.activeSource = terminalruntime.OutputSourceUnknown
+	c.ready = false
+	c.mu.Unlock()
+
+	if commandID == "" || mode != terminalruntime.ExecutionModeStructured {
+		return
+	}
+	c.journal.Apply(c.blockID, terminalruntime.StreamItem{
+		Kind: terminalruntime.StreamIntegrationEvent,
+		Event: terminalruntime.IntegrationEvent{
+			Kind:             terminalruntime.EventCommandAborted,
+			SessionEpoch:     runspaceID,
+			CommandID:        commandID,
+			CompletionReason: string(CompletionSidechannelDisconnected),
+		},
+	}, time.Now())
+}
+
 // Close prevents late events from a terminated hosted process from mutating a
 // journal that may already belong to a replacement shell session.
 func (c *HostedRuntimeConsumer) Close() {

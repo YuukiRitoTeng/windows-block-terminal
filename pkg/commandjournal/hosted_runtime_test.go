@@ -160,6 +160,31 @@ func TestHostedRuntimeConsumerRejectsStaleIdentity(t *testing.T) {
 	}
 }
 
+func TestHostedRuntimeConsumerAbortsStructuredCommandOnSidechannelDisconnect(t *testing.T) {
+	j := New()
+	c := NewHostedRuntimeConsumer("block-hosted", j)
+	hostedReady(c)
+	c.ObserveHostedRuntimeEvent(hostedStart("cmd-1", "structured"))
+	c.ObserveHostedRuntimeEvent(hostedOutput("cmd-1", "partial"))
+	c.ObserveHostedRuntimeDisconnect()
+	c.ObserveHostedRuntimeEvent(hostedOutput("cmd-1", "late"))
+	finished := true
+	exitCode := 0
+	c.ObserveHostedRuntimeEvent(shellexec.HostedRuntimeEvent{Kind: "command_finished", HostID: "host-1", RunspaceID: "runspace-1", CommandID: "cmd-1", Success: &finished, ExitCode: &exitCode})
+	records := j.Snapshot("block-hosted")
+	if len(records) != 1 {
+		t.Fatalf("unexpected records: %#v", records)
+	}
+	record := records[0]
+	if record.State != StateAborted || record.CompletionReason != CompletionSidechannelDisconnected || string(record.Output) != "partial" || record.Success != nil || record.ExitCode != nil || record.OutputCompleteness == OutputCompletenessComplete || record.OutputAttribution != OutputAttributionUnknown {
+		t.Fatalf("unexpected disconnect semantics: %#v", record)
+	}
+	c.ObserveHostedRuntimeDisconnect()
+	if len(j.Snapshot("block-hosted")) != 1 {
+		t.Fatal("disconnect was not idempotent")
+	}
+}
+
 func TestHostedRuntimeInteractiveIsNotExactStructuredOutput(t *testing.T) {
 	j := New()
 	c := NewHostedRuntimeConsumer("block-hosted", j)
