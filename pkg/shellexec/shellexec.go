@@ -709,14 +709,14 @@ func StartLocalShellProc(logCtx context.Context, termSize waveobj.TermSize, cmdS
 	cmdPty, err := pty.StartWithSize(ecmd, &pty.Winsize{Rows: uint16(termSize.Rows), Cols: uint16(termSize.Cols)})
 	if err != nil {
 		if hostedSidechannelConn != nil {
-			_ = hostedSidechannelConn.listener.Close()
+			hostedSidechannelConn.close()
 		}
 		return nil, err
 	}
 	cmdWrap := MakeCmdWrap(ecmd, cmdPty, isShell)
 	proc := &ShellProc{Cmd: cmdWrap, ConnName: connName, CloseOnce: &sync.Once{}, DoneCh: make(chan any)}
 	if hostedSidechannelConn != nil {
-		proc.Cleanup = func() { _ = hostedSidechannelConn.listener.Close() }
+		proc.Cleanup = hostedSidechannelConn.close
 	}
 	return proc, nil
 }

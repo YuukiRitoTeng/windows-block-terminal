@@ -16,17 +16,19 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/wavetermdev/waveterm/pkg/blocklogger"
 )
 
 type hostedSidechannel struct {
-	listener  net.Listener
-	token     string
-	blockID   string
-	tracePath string
-	observer  HostedRuntimeObserver
+	listener      net.Listener
+	token         string
+	blockID       string
+	tracePath     string
+	observer      HostedRuntimeObserver
+	expectedClose atomic.Bool
 }
 
 // HostedRuntimeEvent is the transport DTO emitted by WbtHostedPowerShell.
@@ -54,6 +56,13 @@ type HostedRuntimeObserver interface {
 	ObserveHostedRuntimeEvent(HostedRuntimeEvent)
 }
 
+// HostedRuntimeDisconnectObserver is notified when an authenticated
+// sidechannel connection terminates. It is optional so existing observers
+// remain source-compatible.
+type HostedRuntimeDisconnectObserver interface {
+	ObserveHostedRuntimeDisconnect()
+}
+
 func newHostedSidechannel(blockID string, observer HostedRuntimeObserver) (*hostedSidechannel, error) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -75,6 +84,17 @@ func newHostedSidechannel(blockID string, observer HostedRuntimeObserver) (*host
 
 func (s *hostedSidechannel) address() string { return s.listener.Addr().String() }
 
+// close marks an intentional controller teardown before closing the listener.
+// An already accepted connection may then produce EOF without being reported
+// as an unexpected hosted-runtime failure.
+func (s *hostedSidechannel) close() {
+	if s == nil {
+		return
+	}
+	s.expectedClose.Store(true)
+	_ = s.listener.Close()
+}
+
 func (s *hostedSidechannel) env() map[string]string {
 	return map[string]string{
 		"WBT_HOSTED_SIDECAR_ADDR":  s.address(),
@@ -94,6 +114,14 @@ func (s *hostedSidechannel) serve() {
 		return
 	}
 	defer conn.Close()
+	authenticated := false
+	defer func() {
+		if authenticated && !s.expectedClose.Load() {
+			if observer, ok := s.observer.(HostedRuntimeDisconnectObserver); ok {
+				observer.ObserveHostedRuntimeDisconnect()
+			}
+		}
+	}()
 	_ = conn.SetReadDeadline(time.Now().Add(30 * time.Second))
 	decoder := json.NewDecoder(bufio.NewReader(conn))
 	var first HostedRuntimeEvent
@@ -110,6 +138,7 @@ func (s *hostedSidechannel) serve() {
 		log.Printf("[hosted-runtime] block=%s sidechannel authentication failed", s.blockID)
 		return
 	}
+	authenticated = true
 	_ = conn.SetReadDeadline(time.Time{})
 	first = HostedRuntimeEvent{Kind: hello.Kind, HostID: hello.HostID}
 	logHostedEvent(s.blockID, first)

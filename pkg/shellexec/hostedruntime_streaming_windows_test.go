@@ -13,11 +13,18 @@ import (
 )
 
 type hostedStreamingSink struct {
-	events chan HostedRuntimeEvent
+	events      chan HostedRuntimeEvent
+	disconnects chan struct{}
 }
 
 func (s *hostedStreamingSink) ObserveHostedRuntimeEvent(event HostedRuntimeEvent) {
 	s.events <- event
+}
+
+func (s *hostedStreamingSink) ObserveHostedRuntimeDisconnect() {
+	if s.disconnects != nil {
+		s.disconnects <- struct{}{}
+	}
 }
 
 func hostedPowerShellTestExecutable(t *testing.T) string {
@@ -183,5 +190,44 @@ ready:
 	}
 	if firstCount != 1 || secondCount != 1 {
 		t.Fatalf("direct native output was not delivered exactly once: first=%d second=%d", firstCount, secondCount)
+	}
+}
+
+func TestHostedPowerShellTerminationNotifiesDisconnect(t *testing.T) {
+	executable := hostedPowerShellTestExecutable(t)
+	sink := &hostedStreamingSink{events: make(chan HostedRuntimeEvent, 32), disconnects: make(chan struct{}, 1)}
+	sidechannel, err := newHostedSidechannel("termination-test", sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sidechannel.listener.Close()
+	go sidechannel.serve()
+
+	cmd := exec.Command(executable)
+	cmd.Env = append(os.Environ(), "WBT_HOSTED_SIDECAR_ADDR="+sidechannel.address(), "WBT_HOSTED_SIDECAR_TOKEN="+sidechannel.token)
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	}()
+	for {
+		select {
+		case event := <-sink.events:
+			if event.Kind == "runtime_ready" {
+				if err := cmd.Process.Kill(); err != nil {
+					t.Fatal(err)
+				}
+				select {
+				case <-sink.disconnects:
+					return
+				case <-time.After(10 * time.Second):
+					t.Fatal("hosted child termination did not close sidechannel")
+				}
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("hosted runtime did not become ready")
+		}
 	}
 }

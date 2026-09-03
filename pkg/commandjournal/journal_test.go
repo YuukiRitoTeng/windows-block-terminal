@@ -2,6 +2,7 @@ package commandjournal
 
 import (
 	"bytes"
+	"errors"
 	"testing"
 	"time"
 
@@ -12,6 +13,12 @@ type blockingDurable struct {
 	entered    chan struct{}
 	release    chan struct{}
 	generation uint64
+}
+
+type overflowDurable struct{ blockingDurable }
+
+func (overflowDurable) AppendOutput(string, []byte) error {
+	return errors.New("output queue overflow")
 }
 
 func TestPlainTextOutputRejectsC1Controls(t *testing.T) {
@@ -182,6 +189,39 @@ func TestJournalMarksRecorderGapAsIncomplete(t *testing.T) {
 	record := j.Snapshot(blockID)[0]
 	if record.OutputCompleteness != OutputCompletenessIncomplete || record.OutputAttribution != OutputAttributionUnknown {
 		t.Fatalf("recorder gap was not preserved: %#v", record)
+	}
+}
+
+func TestJournalOutputOverflowKeepsLaterCommandsUsable(t *testing.T) {
+	j := New()
+	d := &overflowDurable{}
+	j.SetDurableStore(d)
+	blockID := "overflow-recovery"
+	if !j.Apply(blockID, journalEvent(terminalruntime.EventCommandStarted, "old", 1), time.Now()) {
+		t.Fatal("start not recorded")
+	}
+	if !j.Apply(blockID, terminalruntime.StreamItem{Kind: terminalruntime.StreamOutputSegment, Output: []byte("lost-durable-output")}, time.Now()) {
+		t.Fatal("output event not accepted")
+	}
+	if !j.Apply(blockID, journalEvent(terminalruntime.EventCommandFinished, "old", 2), time.Now()) {
+		t.Fatal("finish not recorded")
+	}
+	old := j.Snapshot(blockID)
+	if len(old) != 1 || old[0].OutputCompleteness != OutputCompletenessIncomplete || old[0].OutputAttribution != OutputAttributionUnknown {
+		t.Fatalf("overflow was not preserved conservatively: %#v", old)
+	}
+	if !j.Apply(blockID, journalEvent(terminalruntime.EventCommandStarted, "new", 3), time.Now()) {
+		t.Fatal("later command was blocked after overflow")
+	}
+	if !j.Apply(blockID, terminalruntime.StreamItem{Kind: terminalruntime.StreamOutputSegment, Output: []byte("new-output")}, time.Now()) {
+		t.Fatal("later output was not accepted")
+	}
+	active, ok := j.Active(blockID)
+	if !ok || active.ID != "new" || string(active.Output) != "new-output" {
+		t.Fatalf("later command did not remain usable: %#v %v", active, ok)
+	}
+	if j.Apply(blockID, journalEvent(terminalruntime.EventCommandFinished, "old", 4), time.Now()) {
+		t.Fatal("old command was allowed to become complete again")
 	}
 }
 
