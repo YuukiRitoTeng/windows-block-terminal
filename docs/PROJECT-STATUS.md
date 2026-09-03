@@ -166,11 +166,20 @@ and alternate-screen, fzf, localhost SSH, and resize/reflow all have passing
 manual evidence. Interactive PTY workloads retain conservative semantics and
 do not gain an exact retrospective output-attribution promise.
 
-M2B recovery evidence remains pending:
+M2B recovery evidence is **COMPLETE — PASS** for the finite Slice 1 and Slice 2
+scope. Deterministic production-seam evidence covers hosted process/runspace
+failure, authenticated sidechannel disconnect and bounded backpressure. The
+disposable VMware packaged gate covers frontend reconnect, crash/recovery and
+durable-history recovery, including conservative representation of interrupted
+work and successful post-recovery append.
 
-- shell/runspace failure, reconnect and integration loss;
-- crash/recovery, durable-history recovery and backpressure;
-- background output attribution and exact interactive-copy semantics.
+The conservative boundaries remain: interactive PTY workloads do not gain an
+exact retrospective output-attribution promise; crash recovery does not promise
+transparent continuation; xterm scrollback is not durable-history authority; and
+no second hosted PowerShell process or Runspace is introduced.
+
+Background output attribution and exact interactive-copy semantics remain
+separate release/product questions.
 
 ### Release gaps
 
@@ -262,4 +271,4 @@ The continuous-terminal-first target and de-emphasis of permanent Card-first pre
 
 ### Insufficient evidence
 
-Full compatibility/recovery matrix, release-level upstream rehearsal, large-history final behavior, signed distribution/update/rollback/support closure, complete privacy/data-governance closure, final hosted-runtime default policy, and packaged validation of the final continuous-terminal UX.
+Remaining release-level compatibility beyond the finite M2A/M2B scope, release-level upstream rehearsal, large-history final behavior, signed distribution/update/rollback/support closure, complete privacy/data-governance closure, final hosted-runtime default policy, and packaged validation of the final continuous-terminal UX.

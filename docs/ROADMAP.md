@@ -118,10 +118,12 @@ and alternate screen, fzf, localhost SSH, and resize/reflow. Interactive PTY
 workloads retain conservative semantics; exact post-hoc output attribution is
 not promised.
 
-M2B remains for shell/runspace failure, sidechannel/frontend reconnect,
-crash/recovery, durable-history recovery and backpressure. Each item must be
-validated or explicitly excluded without weakening the existing authority
-boundaries.
+M2B recovery validation is **COMPLETE — PASS** for shell/runspace failure,
+authenticated sidechannel disconnect, frontend reconnect, crash/recovery,
+durable-history recovery and bounded backpressure. The evidence preserves the
+existing authority boundaries and represents interrupted work conservatively;
+it does not promise transparent continuation or exact retrospective attribution
+for interactive PTY workloads.
 
 ### 4. Release and support chain
 
