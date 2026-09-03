@@ -104,3 +104,31 @@ func TestHostedSidechannelDoesNotNotifyUnauthenticatedDisconnect(t *testing.T) {
 	case <-time.After(100 * time.Millisecond):
 	}
 }
+
+func TestHostedSidechannelSuppressesExpectedAuthenticatedDisconnect(t *testing.T) {
+	sink := &securityEventSink{events: make(chan HostedRuntimeEvent, 1), disconnects: make(chan struct{}, 1)}
+	sidechannel, err := newHostedSidechannel("expected-close-test", sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go sidechannel.serve()
+	conn, err := net.Dial("tcp", sidechannel.address())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.NewEncoder(conn).Encode(map[string]string{"kind": "hello", "token": sidechannel.token, "hostId": "host-1"}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-sink.events:
+	case <-time.After(time.Second):
+		t.Fatal("authenticated hello was not delivered")
+	}
+	sidechannel.close()
+	_ = conn.Close()
+	select {
+	case <-sink.disconnects:
+		t.Fatal("expected teardown was reported as sidechannel disconnect")
+	case <-time.After(100 * time.Millisecond):
+	}
+}

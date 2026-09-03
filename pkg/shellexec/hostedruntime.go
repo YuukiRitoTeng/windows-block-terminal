@@ -16,17 +16,19 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/wavetermdev/waveterm/pkg/blocklogger"
 )
 
 type hostedSidechannel struct {
-	listener  net.Listener
-	token     string
-	blockID   string
-	tracePath string
-	observer  HostedRuntimeObserver
+	listener      net.Listener
+	token         string
+	blockID       string
+	tracePath     string
+	observer      HostedRuntimeObserver
+	expectedClose atomic.Bool
 }
 
 // HostedRuntimeEvent is the transport DTO emitted by WbtHostedPowerShell.
@@ -82,6 +84,17 @@ func newHostedSidechannel(blockID string, observer HostedRuntimeObserver) (*host
 
 func (s *hostedSidechannel) address() string { return s.listener.Addr().String() }
 
+// close marks an intentional controller teardown before closing the listener.
+// An already accepted connection may then produce EOF without being reported
+// as an unexpected hosted-runtime failure.
+func (s *hostedSidechannel) close() {
+	if s == nil {
+		return
+	}
+	s.expectedClose.Store(true)
+	_ = s.listener.Close()
+}
+
 func (s *hostedSidechannel) env() map[string]string {
 	return map[string]string{
 		"WBT_HOSTED_SIDECAR_ADDR":  s.address(),
@@ -103,7 +116,7 @@ func (s *hostedSidechannel) serve() {
 	defer conn.Close()
 	authenticated := false
 	defer func() {
-		if authenticated {
+		if authenticated && !s.expectedClose.Load() {
 			if observer, ok := s.observer.(HostedRuntimeDisconnectObserver); ok {
 				observer.ObserveHostedRuntimeDisconnect()
 			}

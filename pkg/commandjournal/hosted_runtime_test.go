@@ -185,6 +185,39 @@ func TestHostedRuntimeConsumerAbortsStructuredCommandOnSidechannelDisconnect(t *
 	}
 }
 
+func TestHostedRuntimeConsumerDisconnectPreservesInteractivePTYAuthority(t *testing.T) {
+	j := New()
+	c := NewHostedRuntimeConsumer("block-hosted", j)
+	hostedReady(c)
+	c.ObserveHostedRuntimeEvent(hostedStart("interactive", "interactive"))
+	c.ObserveHostedRuntimeDisconnect()
+	if !j.Apply("block-hosted", terminalruntime.StreamItem{Kind: terminalruntime.StreamOutputSegment, Source: terminalruntime.OutputSourcePTY, Output: []byte("pty-output")}, time.Now()) {
+		t.Fatal("PTY output was blocked after hosted sidechannel disconnect")
+	}
+	j.mu.RLock()
+	active := j.active["block-hosted"]
+	j.mu.RUnlock()
+	if active == nil || active.ID != "interactive" {
+		t.Fatalf("interactive command was incorrectly aborted: %#v", active)
+	}
+}
+
+func TestHostedRuntimeConsumerClosePreservesControllerStopReason(t *testing.T) {
+	j := New()
+	c := NewHostedRuntimeConsumer("block-hosted", j)
+	hostedReady(c)
+	c.ObserveHostedRuntimeEvent(hostedStart("cmd-1", "structured"))
+	c.Close()
+	c.ObserveHostedRuntimeDisconnect()
+	if !j.AbortActive("block-hosted", CompletionControllerStop, time.Now()) {
+		t.Fatal("controller teardown did not abort active command")
+	}
+	records := j.Snapshot("block-hosted")
+	if len(records) != 1 || records[0].CompletionReason != CompletionControllerStop {
+		t.Fatalf("controlled teardown reason was changed: %#v", records)
+	}
+}
+
 func TestHostedRuntimeInteractiveIsNotExactStructuredOutput(t *testing.T) {
 	j := New()
 	c := NewHostedRuntimeConsumer("block-hosted", j)
