@@ -30,7 +30,9 @@ const UpgradeMinorWelcomePage = ({ onStarClick, onAlreadyStarred, onMaybeLater }
                 <div className="flex justify-center">
                     <Logo />
                 </div>
-                <div className="text-center text-[25px] font-normal text-foreground">Welcome to Wave v0.14!</div>
+                <div className="text-center text-[25px] font-normal text-foreground">
+                    Welcome to Windows Block Terminal v0.14!
+                </div>
             </header>
             <OverlayScrollbarsComponent
                 className="flex-1 overflow-y-auto min-h-0"
