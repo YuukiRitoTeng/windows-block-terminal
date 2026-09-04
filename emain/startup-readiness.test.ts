@@ -13,6 +13,15 @@ describe("startup readiness", () => {
         gate.settle(false);
         gate.settle(true);
         await expect(gate.promise).resolves.toBe(false);
+        expect(gate.isReady()).toBe(false);
+    });
+
+    it("keeps pre-readiness exit on the centralized failure path", async () => {
+        const gate = createStartupReadinessGate();
+        expect(gate.isReady()).toBe(false);
+        gate.settle(false);
+        await expect(gate.promise).resolves.toBe(false);
+        expect(gate.isReady()).toBe(false);
     });
 
     it("settles readiness for a malformed WAVESRV-ESTART signal", async () => {
@@ -26,5 +35,6 @@ describe("startup readiness", () => {
         const gate = createStartupReadinessGate();
         gate.settle(true);
         await expect(gate.promise).resolves.toBe(true);
+        expect(gate.isReady()).toBe(true);
     });
 });

@@ -1,6 +1,7 @@
 export type StartupReadinessGate = {
     promise: Promise<boolean>;
     settle: (ready: boolean) => void;
+    isReady: () => boolean;
 };
 
 export type WaveSrvStartParams = {
@@ -25,6 +26,7 @@ export function parseWaveSrvStartLine(line: string): WaveSrvStartParams | null {
 
 export function createStartupReadinessGate(): StartupReadinessGate {
     let settled = false;
+    let readyState = false;
     let resolvePromise: (ready: boolean) => void = () => {};
     const promise = new Promise<boolean>((resolve) => {
         resolvePromise = resolve;
@@ -36,7 +38,9 @@ export function createStartupReadinessGate(): StartupReadinessGate {
                 return;
             }
             settled = true;
+            readyState = ready;
             resolvePromise(ready);
         },
+        isReady: () => settled && readyState,
     };
 }
