@@ -5,7 +5,15 @@ import { ClientService, ObjectService, WindowService, WorkspaceService } from "@
 import { waveEventSubscribeSingle } from "@/app/store/wps";
 import { RpcApi } from "@/app/store/wshclientapi";
 import { fireAndForget } from "@/util/util";
-import { BaseWindow, BaseWindowConstructorOptions, dialog, globalShortcut, ipcMain, screen, webContents } from "electron";
+import {
+    BaseWindow,
+    BaseWindowConstructorOptions,
+    dialog,
+    globalShortcut,
+    ipcMain,
+    screen,
+    webContents,
+} from "electron";
 import { globalEvents } from "emain/emain-events";
 import path from "path";
 import { debounce } from "throttle-debounce";
@@ -192,7 +200,10 @@ export class WaveBrowserWindow extends BaseWindow {
                 symbolColor: "white",
                 color: "#00000000",
             };
-            winOpts.icon = path.join(getElectronAppBasePath(), "public/logos/wave-logo-dark.png");
+            winOpts.icon = path.join(
+                getElectronAppBasePath(),
+                process.platform === "win32" ? "public/logos/appicon-windows.png" : "public/logos/wave-logo-dark.png"
+            );
             winOpts.autoHideMenuBar = !settings?.["window:showmenubar"];
             if (isTransparent) {
                 winOpts.transparent = true;
