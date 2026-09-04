@@ -221,7 +221,7 @@ Do not use a strong model for routine implementation, tests, lint, packaging dia
 
 ## Manual Windows gates
 
-Use isolated packaged Windows 11 x64 validation for behavior automation cannot credibly prove, including:
+Use isolated packaged Windows 11 x64 validation for behavior that automation cannot credibly prove, including:
 
 - final continuous-terminal presentation;
 - final hosted-runtime readiness/fallback behavior;
@@ -247,7 +247,7 @@ Release Candidate Readiness is complete only when:
 9. Privacy, retention, ACL, diagnostics, legal and brand boundaries are reviewed.
 10. The architecture freeze remains preserved.
 11. A release-level upstream rehearsal is rerun when a suitable final upstream merge/release baseline becomes available; until then the candidate verdict remains conditional and non-blocking.
-12. Required release evidence is tied to the exact final signed candidate and supported configuration.
+12. Every required acceptance item is `PASS` on the exact final candidate/configuration, or `EXPLICITLY UNSUPPORTED` through a documented scope decision before the gate closes; no item remains `NOT YET TESTED` or `EVIDENCE EXISTS — REVALIDATION NEEDED`.
 
 ## Upstream condition
 
