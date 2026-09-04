@@ -8,7 +8,7 @@ import path from "node:path";
 import * as readline from "readline";
 import { WebServerEndpointVarName, WSServerEndpointVarName } from "../frontend/util/endpoints";
 import { AuthKey, WaveAuthKeyEnv } from "./authkey";
-import { setForceQuit, setUserConfirmedQuit } from "./emain-activity";
+import { setForceQuit } from "./emain-activity";
 import {
     getElectronAppResourcesPath,
     getElectronAppUnpackedBasePath,
@@ -26,7 +26,7 @@ import {
     WaveAppPathVarName,
     WaveAppResourcesPathVarName,
 } from "./emain-util";
-import { createStartupReadinessGate } from "./startup-readiness";
+import { createStartupReadinessGate, parseWaveSrvStartLine } from "./startup-readiness";
 import { updater } from "./updater";
 
 let isWaveSrvDead = false;
@@ -121,17 +121,16 @@ export function runWaveSrv(handleWSEvent: (evtMsg: WSEventType) => void): Promis
     });
     rlStderr.on("line", (line) => {
         if (line.includes("WAVESRV-ESTART")) {
-            const startParams = /ws:([a-z0-9.:]+) web:([a-z0-9.:]+) version:([a-z0-9.-]+) buildtime:(\d+)/gm.exec(line);
+            const startParams = parseWaveSrvStartLine(line);
             if (startParams == null) {
                 console.log("error parsing WAVESRV-ESTART line", line);
-                setUserConfirmedQuit(true);
-                electron.app.quit();
+                waveSrvReadyGate.settle(false);
                 return;
             }
-            process.env[WSServerEndpointVarName] = startParams[1];
-            process.env[WebServerEndpointVarName] = startParams[2];
-            WaveVersion = startParams[3];
-            WaveBuildTime = parseInt(startParams[4]);
+            process.env[WSServerEndpointVarName] = startParams.wsEndpoint;
+            process.env[WebServerEndpointVarName] = startParams.webEndpoint;
+            WaveVersion = startParams.version;
+            WaveBuildTime = startParams.buildTime;
             waveSrvReadyGate.settle(true);
             return;
         }
