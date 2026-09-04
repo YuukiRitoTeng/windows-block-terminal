@@ -89,7 +89,10 @@ export function runWaveSrv(handleWSEvent: (evtMsg: WSEventType) => void): Promis
         env: envCopy,
     });
     proc.on("exit", (e) => {
-        waveSrvReadyGate.settle(false);
+        if (!waveSrvReadyGate.isReady()) {
+            waveSrvReadyGate.settle(false);
+            return;
+        }
         if (updater?.status == "installing") {
             return;
         }
