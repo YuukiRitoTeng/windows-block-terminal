@@ -26,6 +26,7 @@ import {
     WaveAppPathVarName,
     WaveAppResourcesPathVarName,
 } from "./emain-util";
+import { createStartupReadinessGate } from "./startup-readiness";
 import { updater } from "./updater";
 
 let isWaveSrvDead = false;
@@ -37,13 +38,10 @@ export function getWaveVersion(): { version: string; buildTime: number } {
     return { version: WaveVersion, buildTime: WaveBuildTime };
 }
 
-let waveSrvReadyResolve = (value: boolean) => {};
-const waveSrvReady: Promise<boolean> = new Promise((resolve, _) => {
-    waveSrvReadyResolve = resolve;
-});
+const waveSrvReadyGate = createStartupReadinessGate();
 
 export function getWaveSrvReady(): Promise<boolean> {
-    return waveSrvReady;
+    return waveSrvReadyGate.promise;
 }
 
 export function getWaveSrvProc(): child_process.ChildProcessWithoutNullStreams | null {
@@ -73,7 +71,12 @@ export function runWaveSrv(handleWSEvent: (evtMsg: WSEventType) => void): Promis
     envCopy[WaveDataHomeVarName] = getWaveDataDir();
     envCopy[WaveConfigHomeVarName] = getWaveConfigDir();
     if (process.platform === "win32" && !process.env.WBT_HOSTED_PWSH) {
-        const hostedPowerShell = path.join(getElectronAppResourcesPath(), "hostedpwsh", "win-x64", "WbtHostedPowerShell.exe");
+        const hostedPowerShell = path.join(
+            getElectronAppResourcesPath(),
+            "hostedpwsh",
+            "win-x64",
+            "WbtHostedPowerShell.exe"
+        );
         if (existsSync(hostedPowerShell)) {
             envCopy.WBT_HOSTED_PWSH = "1";
             envCopy.WBT_HOSTED_PWSH_EXE = hostedPowerShell;
@@ -86,6 +89,7 @@ export function runWaveSrv(handleWSEvent: (evtMsg: WSEventType) => void): Promis
         env: envCopy,
     });
     proc.on("exit", (e) => {
+        waveSrvReadyGate.settle(false);
         if (updater?.status == "installing") {
             return;
         }
@@ -101,6 +105,7 @@ export function runWaveSrv(handleWSEvent: (evtMsg: WSEventType) => void): Promis
     });
     proc.on("error", (e) => {
         console.log("error running wavesrv", e);
+        waveSrvReadyGate.settle(false);
         pReject(e);
     });
     const rlStdout = readline.createInterface({
@@ -116,9 +121,7 @@ export function runWaveSrv(handleWSEvent: (evtMsg: WSEventType) => void): Promis
     });
     rlStderr.on("line", (line) => {
         if (line.includes("WAVESRV-ESTART")) {
-            const startParams = /ws:([a-z0-9.:]+) web:([a-z0-9.:]+) version:([a-z0-9.-]+) buildtime:(\d+)/gm.exec(
-                line
-            );
+            const startParams = /ws:([a-z0-9.:]+) web:([a-z0-9.:]+) version:([a-z0-9.-]+) buildtime:(\d+)/gm.exec(line);
             if (startParams == null) {
                 console.log("error parsing WAVESRV-ESTART line", line);
                 setUserConfirmedQuit(true);
@@ -129,7 +132,7 @@ export function runWaveSrv(handleWSEvent: (evtMsg: WSEventType) => void): Promis
             process.env[WebServerEndpointVarName] = startParams[2];
             WaveVersion = startParams[3];
             WaveBuildTime = parseInt(startParams[4]);
-            waveSrvReadyResolve(true);
+            waveSrvReadyGate.settle(true);
             return;
         }
         if (line.startsWith("WAVESRV-EVENT:")) {

@@ -397,6 +397,15 @@ async function appMain() {
     }
     const ready = await getWaveSrvReady();
     console.log("wavesrv ready signal received", ready, Date.now() - startTs, "ms");
+    if (!ready) {
+        setUserConfirmedQuit(true);
+        electron.dialog.showErrorBox(
+            "Windows Block Terminal startup failed",
+            "Windows Block Terminal could not start its local server. Please try again."
+        );
+        electronApp.quit();
+        return;
+    }
     await electronApp.whenReady();
     configureAuthKeyRequestInjection(electron.session.defaultSession);
     initIpcHandlers();
