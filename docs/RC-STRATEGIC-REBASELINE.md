@@ -223,7 +223,7 @@ freeze source + packaging configuration
 → rerun upstream rehearsal if a suitable final upstream baseline exists
 ```
 
-**Close with:** no unresolved RC-blocking FAIL / NOT-YET / revalidation item for the declared scope, and every required PASS tied to the exact final candidate/configuration.
+**Close with:** every required acceptance item is `PASS` on the exact final candidate/configuration, or `EXPLICITLY UNSUPPORTED` through a documented scope decision before the gate closes; no item remains `NOT YET TESTED` or `EVIDENCE EXISTS — REVALIDATION NEEDED`.
 
 **Ordinary Agent:** yes for deterministic work and evidence collection.
 
