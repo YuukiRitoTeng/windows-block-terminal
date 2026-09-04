@@ -128,6 +128,19 @@ RC. A user may launch other shells or programs as child workloads, but that is
 not a support claim for those shells as the primary Windows Block Terminal
 runtime.
 
+### Hosted runtime startup contract
+
+On supported packaged Windows builds, an unset `WBT_HOSTED_PWSH` selects the
+bundled hosted runtime when `WbtHostedPowerShell.exe` is present. Setting
+`WBT_HOSTED_PWSH=0` opts out to the existing external `pwsh` discovery path;
+this does not create a second authoritative session. Explicit hosted mode uses
+`WBT_HOSTED_PWSH_EXE` and fails finitely with a startup error when the required
+executable is unavailable or cannot start. A bundled-runtime startup failure
+settles readiness once and fails closed; it does not wait indefinitely or
+silently retry into another authoritative shell. If the bundled runtime is
+absent without an explicit hosted override, the supported external `pwsh`
+fallback remains available when present; otherwise startup fails finitely.
+
 ### Support and evidence matrix
 
 | Scenario                                                    | Support status              | Evidence status                         | Required validation                                      | RC blocking?          | Notes / exclusion                                                                        |
