@@ -250,7 +250,7 @@ The gate is complete only when all of the following are true:
 7. Performance budgets and the 100-record / pagination / virtualization decision are explicit.
 8. Privacy, retention, ACL, diagnostics, Apache/NOTICE/third-party and brand boundaries are reviewed and documented.
 9. When the relevant upstream candidate becomes a final merged baseline, rerun the upstream rehearsal against the final merge SHA; until then keep the current conditional verdict.
-10. Required release evidence is tied to the exact final signed candidate and supported configuration.
+10. Every required acceptance item is `PASS` on the exact final candidate/configuration, or `EXPLICITLY UNSUPPORTED` through a documented scope decision before the gate closes; no item remains `NOT YET TESTED` or `EVIDENCE EXISTS — REVALIDATION NEEDED`.
 
 ## Explicitly not next
 
