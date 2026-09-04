@@ -40,14 +40,14 @@ body:
     - type: input
       attributes:
           label: Windows Block Terminal Version
-          description: The version of Wave you are running
+          description: The version of Windows Block Terminal you are running
           placeholder: v0.8.8
       validations:
           required: true
     - type: dropdown
       attributes:
           label: Platform
-          description: The OS platform of the computer where you are running Wave
+          description: The OS platform of the computer where you are running Windows Block Terminal
           options:
               - macOS
               - Linux
@@ -57,14 +57,14 @@ body:
     - type: input
       attributes:
           label: OS Version/Distribution
-          description: The version of the operating system of the computer where you are running Wave
+          description: The version of the operating system of the computer where you are running Windows Block Terminal
           placeholder: Ubuntu 24.04
       validations:
           required: false
     - type: dropdown
       attributes:
           label: Architecture
-          description: The architecture of the computer where you are running Wave
+          description: The architecture of the computer where you are running Windows Block Terminal
           options:
               - arm64
               - x64

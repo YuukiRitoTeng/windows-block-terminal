@@ -200,10 +200,7 @@ export class WaveBrowserWindow extends BaseWindow {
                 symbolColor: "white",
                 color: "#00000000",
             };
-            winOpts.icon = path.join(
-                getElectronAppBasePath(),
-                process.platform === "win32" ? "public/logos/appicon-windows.png" : "public/logos/wave-logo-dark.png"
-            );
+            winOpts.icon = path.join(getElectronAppBasePath(), "public/logos/wave-logo-dark.png");
             winOpts.autoHideMenuBar = !settings?.["window:showmenubar"];
             if (isTransparent) {
                 winOpts.transparent = true;
@@ -211,6 +208,7 @@ export class WaveBrowserWindow extends BaseWindow {
                 winOpts.backgroundColor = "#222222";
             }
         } else if (opts.unamePlatform === "win32") {
+            winOpts.icon = path.join(getElectronAppBasePath(), "public/logos/appicon-windows.png");
             winOpts.titleBarStyle = "hidden";
             winOpts.titleBarOverlay = {
                 color: "#222222",
