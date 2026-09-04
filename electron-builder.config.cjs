@@ -104,6 +104,7 @@ const config = {
         afterInstall: "build/deb-postinstall.tpl",
     },
     win: {
+        icon: "public/logos/appicon-windows.ico",
         target: ["nsis", "msi", "zip"],
         forceCodeSigning: false,
         signAndEditExecutable: false,
