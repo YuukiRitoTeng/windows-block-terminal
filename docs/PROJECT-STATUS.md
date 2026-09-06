@@ -65,10 +65,12 @@ The default product experience should preserve the normal continuous xterm surfa
 
 The product direction no longer includes Command History as a normal user-facing
 inspector, Command Cards as a user-facing feature, Web functionality or AI/Wave
-AI/BYOK onboarding. Those removals are product decisions awaiting bounded
-implementation/dependency audits; the existing Command Journal and related
-reliability infrastructure remain in place until those audits prove they can be
-removed safely.
+AI/BYOK onboarding. A bounded implementation/dependency audit applies only to
+code that belongs to those removed product surfaces. Command Journal,
+`CommandRecord`, the authenticated structured sidechannel, CVA,
+trusted-output/provenance infrastructure, Clear semantics and other retained
+architecture contracts are outside that audit; changing or removing them
+requires a separate explicit Architecture Review under the current freeze.
 
 This change is a **presentation/product-priority correction**, not an architecture reversal.
 

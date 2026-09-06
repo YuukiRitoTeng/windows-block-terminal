@@ -115,9 +115,12 @@ multi-terminal container (tabs, splits, workspaces and parallel sessions).
 
 The target no longer includes a traditional Command History inspector,
 user-facing Command Cards, Web functionality or AI/Wave AI/BYOK onboarding.
-Those are product decisions awaiting bounded dependency/removal audits; the
-Command Journal, `CommandRecord`, CVA and trusted-output infrastructure remain
-until an audit proves they can be removed safely.
+Those are product decisions awaiting a bounded dependency/removal audit limited
+to code belonging to those product surfaces. Command Journal, `CommandRecord`,
+the authenticated structured sidechannel, CVA, trusted-output/provenance
+infrastructure, Clear semantics and other retained architecture contracts are
+outside that audit; changing or removing them requires a separate explicit
+Architecture Review under the current freeze.
 
 Before RC, product-facing work should focus only on concrete release blockers:
 
