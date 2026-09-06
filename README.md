@@ -6,7 +6,9 @@ Its product goal is simple:
 
 > **Keep the normal continuous terminal experience, but add reliable command-block semantics and actions.**
 
-The live terminal remains visually primary. Windows Block Terminal should feel close to a normal PowerShell / Wave terminal rather than a card-per-command replacement UI.
+The live terminal remains visually primary. Windows Block Terminal should feel
+like a normal continuous PowerShell terminal rather than a card-per-command
+replacement UI.
 
 > **Project status:** installable Windows MVP foundation / preview. The current main-line stage is the **Release Candidate Readiness Gate**. This repository is not yet a production-ready signed release.
 
@@ -30,11 +32,13 @@ The terminal remains one continuous xterm surface, while the product tracks logi
 The core product requirements are:
 
 - reliable logical command boundaries for ordinary commands;
-- block-aware copy where **Copy All = command + only that command's corresponding output**;
+- one planned local **Copy All = command + only that command's corresponding
+  authoritative output** action;
 - normal terminal copy/paste remains available;
 - Clear Visual History clears product-visible and rendered history without restarting the PowerShell session;
 - interactive programs remain real PTY/xterm workloads;
-- visual distinction is lightweight and secondary to correctness.
+- visual distinction is lightweight and secondary to correctness;
+- tabs, split panes, workspaces and parallel terminal sessions remain available.
 
 See `docs/PRODUCT-DIRECTION.md` for the current product/presentation authority.
 
@@ -42,9 +46,12 @@ See `docs/PRODUCT-DIRECTION.md` for the current product/presentation authority.
 
 - Real Wave / ConPTY / xterm.js terminal path remains active and authoritative.
 - Ordinary hosted PowerShell commands produce structured `CommandRecord` lifecycle and output data.
-- Command History is durable across application restart.
+- The Command Journal remains durable across application restart as reliability
+  infrastructure; it is not the target primary workspace.
 - Trusted output is gated by completeness, attribution, text-safety and truncation metadata.
-- Copy Command is independently available; Copy Output and Copy All are available only when the authoritative output guarantee permits trusted use.
+- The current implementation exposes Copy Command, Copy Output and Copy All
+  subject to their guarantees; the target product direction converges on one
+  local Copy All action per command region.
 - Clear Visual History removes visible history without restarting the PowerShell session, PTY or Runspace.
 - Windows x64 packaging, install, uninstall and in-place installer upgrade have been exercised with durable-history preservation.
 - A first Windows Block Terminal visual productization pass was completed and manually accepted.
@@ -59,7 +66,9 @@ However, the following presentation direction is now **Legacy / Superseded**:
 
 > **Always-visible Card-first Command History as the default terminal experience.**
 
-Command Cards remain useful as an optional history/inspection projection, but the intended default product experience is now **continuous terminal first**.
+The current code may still retain the projection for compatibility and evidence,
+but the intended product experience is now **continuous terminal first** with a
+future causal command-navigation rail rather than a traditional History panel.
 
 Older screenshots, commits and evidence documents that show the Card-first default should be read as historical presentation evidence, not as the final UX specification.
 
@@ -83,7 +92,7 @@ Command Journal
         v
 Durable persistence
         v
-trusted Copy / Clear / optional History Inspector
+trusted Copy / global Clear / product projections
 ```
 
 Ordinary structured commands use the hosted runtime as lifecycle/output authority. Interactive workloads such as `vim`, `ssh`, `fzf`, REPLs and full-screen TUIs remain owned by the live PTY/xterm path. Interactive output is intentionally conservative and is not presented as exact post-hoc structured output without independent proof.

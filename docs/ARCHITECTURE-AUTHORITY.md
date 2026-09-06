@@ -16,9 +16,17 @@ The current product direction is:
 
 > **continuous terminal first + reliable block-aware functionality**
 
-The live xterm surface should remain the primary working surface. Reliable command boundaries, trusted command/output copy and Clear are core product capabilities. Permanently visible Card-first Command History is not the final default UX.
+The live xterm surface should remain the primary working surface in each pane.
+Reliable command boundaries, trusted command/output copy and Clear are core
+product capabilities. Permanently visible Card-first Command History is not the
+final default UX.
 
-Command History / Cards remain valid optional inspection/projection UI unless a later product decision explicitly removes them.
+The current product direction targets a terminal-only workspace with a future
+causal command-navigation rail. A traditional Command History inspector,
+user-facing Command Cards, Web functionality and AI/Wave AI/BYOK onboarding are
+product-decision removals; existing implementation dependencies remain until a
+bounded audit proves they can be deleted safely. Wave tabs, split panes,
+workspaces and parallel terminal sessions remain retained capabilities.
 
 ### Architecture responsibilities and truth semantics
 

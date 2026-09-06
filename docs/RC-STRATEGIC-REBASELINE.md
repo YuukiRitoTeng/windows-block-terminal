@@ -2,7 +2,7 @@
 
 Status: **CURRENT STRATEGIC SEQUENCING AUTHORITY**  
 Effective date: 2026-09-04  
-Baseline main SHA: `a91430f8bd0422bf55a26a68b9dc7dd63a497903`
+Baseline main SHA: `e0fbb81eccd30e6c46f57e9e00a597ae224c1720`
 
 This document records the current strategic route from the completed M0/M1/M2 evidence work to a credible Windows release candidate.
 
@@ -42,8 +42,8 @@ The project has already established:
 - Command Journal and durable history;
 - trusted output provenance/completeness/text-safety gates;
 - session-preserving Clear Visual History;
-- continuous xterm as the primary workspace;
-- optional Command History / Card inspector;
+- continuous xterm as the primary workspace in each pane;
+- multi-terminal tabs, split panes, workspaces and parallel terminal sessions;
 - CVA causal command-region to authoritative `CommandRecord` binding;
 - finite supported-configuration contract;
 - M2A packaged interactive compatibility closure;
@@ -109,15 +109,22 @@ The current product goal remains correct:
 
 > **Original terminal feel + reliable command-block functionality.**
 
-The final default experience should keep continuous xterm visually and operationally primary.
+The final default experience should keep a continuous PowerShell-first xterm
+visually and operationally primary in every pane while retaining the Wave
+multi-terminal container (tabs, splits, workspaces and parallel sessions).
 
-Command History / Cards remain optional inspection/projection UI, not the permanent dominant workspace.
+The target no longer includes a traditional Command History inspector,
+user-facing Command Cards, Web functionality or AI/Wave AI/BYOK onboarding.
+Those are product decisions awaiting bounded dependency/removal audits; the
+Command Journal, `CommandRecord`, CVA and trusted-output infrastructure remain
+until an audit proves they can be removed safely.
 
 Before RC, product-facing work should focus only on concrete release blockers:
 
 - final continuous-terminal default behavior;
-- reliable Copy / Copy All / Clear access;
+- reliable Copy All / Clear access;
 - direct block-aware actions consuming authenticated CVA bindings;
+- lightweight command identity and a thin causal command-navigation rail;
 - coherent settings / diagnostics / error-recovery UX;
 - necessary product identity cleanup;
 - HiDPI / multi-display validation where it affects RC usability.
@@ -166,7 +173,9 @@ The current controlling route is the following five-stage RC closure sequence.
 
 ### Stage 1 — Pre-freeze product / UX / identity closure
 
-**Objective:** finish all source, UI, runtime-policy, branding, asset, packaging, and installer changes that can alter final artifact bytes or behavior.
+**Objective:** finish all source, UI, runtime-policy, branding, asset, packaging,
+and installer changes that can alter final artifact bytes or behavior, including
+the bounded removal/dependency audit for History, Web and AI surfaces.
 
 **Why now:** packaged validation should not be repeated after every small artifact-affecting change.
 
@@ -251,6 +260,7 @@ This includes, as applicable:
 
 - continuous-terminal UX changes;
 - direct CVA-backed in-terminal actions;
+- bounded History/Web/AI product-surface removal or dependency changes;
 - branding / visible Wave-surface cleanup;
 - settings / diagnostics / error UX;
 - hosted-runtime default/fallback behavior;
