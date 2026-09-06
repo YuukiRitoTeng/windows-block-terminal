@@ -1,93 +1,37 @@
 # Product Direction — Continuous Terminal + Block-Aware Functionality
 
 Status: **CURRENT PRODUCT-DIRECTION AUTHORITY**  
-Effective date: 2026-08-30
+Effective date: 2026-09-06
 
 This document defines the intended user experience for Windows Block Terminal.
-It governs product presentation and interaction direction. It does **not** replace
+It is the product and presentation authority. It does **not** replace
 `CONDITIONAL-ARCHITECTURE-FREEZE.md`, which remains authoritative for runtime
 responsibilities and truth semantics.
 
 ## 1. Product goal
 
-Windows Block Terminal should feel, first and foremost, like a normal continuous
-PowerShell terminal.
-
-The target is:
+Windows Block Terminal is a standalone Windows application. It should feel,
+first and foremost, like a normal continuous PowerShell terminal while adding
+reliable command-aware functionality.
 
 > **Original terminal feel + reliable command-block functionality.**
 
-The terminal should not default to a Warp-style card-per-command layout. The
-live xterm surface remains visually primary and commands continue to appear as a
-single continuous terminal stream.
+The default experience is not a card-per-command renderer, a permanent history
+panel or a dashboard. The live terminal remains visually primary, and each
+terminal pane remains one continuous stream.
 
-The product adds logical command boundaries and reliable actions on top of that
-continuous terminal experience.
+This direction does not remove the useful Wave terminal container capabilities.
+Tabs, split panes, workspaces/layouts and multiple terminal sessions remain part
+of the application. PowerShell/Windows-Terminal injection is an alternative
+that was considered, but it is deferred/reconsiderable rather than the current
+implementation direction.
 
-## 2. Core user requirements
+## 2. Core product decisions
 
-### P0 — Reliable command region semantics
+### 2.1 Continuous terminal first
 
-For an ordinary command, the product must know which command record owns which
-authoritative structured output.
-
-The user-facing concept is a logical command region:
-
-```text
-command
-+ only that command's output
-```
-
-A logical command region is not required to be a separate visual card.
-
-### P0 — Copy command + corresponding output
-
-The primary block-aware copy action copies:
-
-```text
-command
-+ only the corresponding authoritative output
-```
-
-It must not accidentally include the next command, unrelated background output
-or another command's output.
-
-Trusted copy must continue to honor completeness, attribution, text-safety and
-truncation guarantees. A visually convenient boundary is not by itself proof of
-output ownership.
-
-### P0 — Clear Visual History
-
-Clear removes the current product-visible history and rendered terminal history
-without restarting or replacing the user's PowerShell session.
-
-It must preserve the shell, PTY, hosted PowerShell process, persistent Runspace,
-working directory, environment, PowerShell variables and functions.
-
-A raw xterm buffer clear is not equivalent to the product-level Clear Visual
-History operation.
-
-### P0 / P1 — Convenient copy and paste
-
-Normal terminal selection copy and paste remain available. Block-aware copy is
-an additional product action; it should not make the terminal feel less like a
-normal terminal.
-
-### P1 — Lightweight visual distinction
-
-Commands may receive subtle command-aware presentation such as a gutter mark,
-small status indicator, hover affordance, prompt emphasis or other lightweight
-boundary cue.
-
-Visual distinction is secondary to correctness and usability. Large per-command
-cards, strong alternating backgrounds, heavy animation and large visual effects
-are not product requirements.
-
-## 3. Continuous terminal is the primary presentation
-
-The default working surface should be the live Wave / ConPTY / xterm.js terminal.
-
-A typical session should continue to read naturally as:
+The default working surface in every pane is the live Wave / ConPTY / xterm.js
+terminal. A normal session should continue to read naturally:
 
 ```text
 PS C:\> command A
@@ -95,130 +39,227 @@ output A
 
 PS C:\> command B
 output B
-
-PS C:\> command C
-output C
 ```
 
-Command-aware actions should layer onto this surface without turning every
-command into a separate replacement renderer.
+The terminal itself is the visible history. Product features layer onto that
+surface without replacing it with HTML cards or a second dashboard.
 
-## 4. Role of CommandRecord and Command Journal
+### 2.2 Lightweight command identity
 
-`CommandRecord` remains the logical/domain unit for execution and history.
+Each accepted command region should eventually have a subtle, distinct visual
+identity: for example a lightweight marker, gutter cue, boundary or restrained
+color treatment. The exact visual design is **PRODUCT DECIDED / PLANNED**, not
+yet a frozen pixel specification.
 
-It is **not** the same thing as a visual card and it is **not** a Wave Block.
+Large command cards, heavy alternating backgrounds, persistent card panels and
+large animation are not product requirements.
 
-The Command Journal, structured output metadata and trusted-output guarantees
-remain valuable because the product requires reliable command/output ownership,
-not merely a best-effort visual selection.
+### 2.3 One primary local action: Copy All
 
-Durable persistence may support restart history and inspection, but durable
-history is not the primary visual workspace.
+Each logical ordinary-command region should eventually expose one primary local
+action, **Copy All**:
 
-## 5. Role of Command History / Command Cards
+```text
+command
++ only that command's corresponding authoritative output
+```
 
-Command History and Command Cards are retained as an **optional inspector and
-projection layer**.
+The action belongs visually to that command region, preferably near the end of
+its output. Copy Command and Copy Output are not separate primary actions in
+the target UX. This is a product requirement, not a claim that the final
+end-of-region control is already implemented.
 
-They may expose:
+Trusted Copy All must continue to use authoritative Journal/structured-output
+data and explicit completeness, attribution, safety and truncation guarantees.
+It must never infer ownership from row, text, prompt, timestamp, proximity,
+quiet time or scrollback heuristics.
 
-- command metadata;
-- status / exit code / duration / cwd;
-- bounded authoritative output;
-- Copy Command;
-- Copy Output;
-- Copy Command + Output;
-- history inspection.
+### 2.4 Global Clear only
 
-They should not permanently dominate or substantially shrink the live terminal
-by default.
+Clear is a global product operation, not a per-command delete, hide or clear
+control. Global Clear Visual History clears the visible terminal/history
+presentation while preserving the current shell, PTY, hosted process,
+persistent Runspace, working directory, environment, variables and functions.
 
-## 6. Legacy / superseded presentation direction
+The existing backend-first Clear semantics remain authoritative. A raw xterm
+buffer clear alone is not the product Clear operation.
+
+### 2.5 Command navigation, not a history panel
+
+The target command navigation is a thin Codex-like rail or scroll map attached
+to terminal scrollback. Small marks correspond to real command regions; the
+current or nearby command may be emphasized; previous/next navigation and
+click-to-jump may be provided.
+
+This rail is presentation metadata over the continuous terminal. It is not a
+second history database and not a replacement card list. It must use the
+existing causal visual-anchor (CVA) binding where an action needs a
+`CommandRecord`; heuristic row matching is prohibited.
+
+The rail and previous/next interaction are **PRODUCT DECIDED / PLANNED**. No
+claim is made that the final rail is implemented today.
+
+### 2.6 Shared actions and shortcuts
+
+Future Settings may expose configurable shortcuts for Copy All, previous/next
+command, global Clear Visual History and Open Settings. Default key combinations
+are not frozen by this document. Buttons and shortcuts should consume one shared
+product action model rather than duplicate semantics.
+
+## 3. Multi-terminal container and pane model
+
+Wave infrastructure remains useful and is retained for:
+
+- multiple terminal tabs;
+- split panes;
+- multiple PowerShell terminals running in parallel;
+- workspace and layout management.
+
+Each pane may own its own PowerShell/session/runtime state. The product must not
+synchronize independent panes into one authoritative PowerShell session. The
+one-host/one-persistent-Runspace invariant applies per terminal session.
+
+## 4. CommandRecord, Journal and causal authority
+
+`CommandRecord` remains the logical/domain unit for execution and history. It is
+not a visual card and it is not a Wave Block:
+
+```text
+CommandRecord != Wave Block
+```
+
+The Command Journal, structured output metadata, authenticated sidechannel and
+CVA remain necessary reliability infrastructure even though the target product
+does not expose a traditional History panel or permanent Cards. They provide
+command identity, authoritative Copy All data, Clear semantics, recovery and
+provenance guarantees.
+
+Reliable causal visual-anchor → authoritative `CommandRecord` binding is
+already established by CVA. Future direct terminal actions must consume that
+binding; they must not recreate identity with command-text, prompt, timestamp,
+row, array-index, proximity, quiet-time or scrollback heuristics.
+
+## 5. Product surfaces removed from the target direction
+
+The following are no longer desired WBT product features:
+
+- Command History inspector as a normal user-facing destination;
+- Command Cards as a user-facing primary feature;
+- Web functionality in the default/product experience, including the starter
+  web block/default upstream web destination;
+- AI functionality, including Wave AI, BYOK and AI onboarding.
+
+The first-run experience should be WBT-owned and PowerShell-first. It should not
+make Wave AI, Wave community links or an upstream web destination part of the
+default onboarding/workspace experience.
+
+This is a **PRODUCT DECISION**, not a claim that every implementation
+dependency has already been deleted. Current code and historical evidence may
+still contain these surfaces. A later bounded dependency/removal audit must
+identify what can be removed without breaking Command Journal, CommandRecord,
+trusted output, CVA, recovery or other frozen contracts.
+
+Until that implementation work lands, any remaining surface is an
+implementation or historical state, not a change to this product direction.
+
+## 6. Legacy / superseded presentation
 
 The first Visual Productization pass used a permanently visible Command History
-panel and prominent Command Cards as the default presentation.
+panel and prominent Command Cards as its default presentation. That work remains
+valid historical evidence that structured execution, trusted output, persistence
+and Clear worked in a real GUI. It is not deleted or rewritten out of history.
 
-That implementation remains valid historical evidence that the structured
-backend, copy guarantees, persistence and Clear behavior worked in a real GUI.
-It is **not deleted or rewritten out of history**.
+The following presentation statement is **LEGACY / SUPERSEDED**:
 
-However, as a product-direction decision, the following is now superseded:
+> Card-first / always-visible Command History as the default terminal UX.
 
-> **Card-first / always-visible Command History as the default terminal UX.**
-
-Older commits, screenshots, evidence documents and descriptions of that first
-visual pass should be read as **Legacy / Superseded Presentation**, not as the
-final UX specification.
-
-Cards remain a supported auxiliary presentation unless a later product decision
-removes them explicitly.
+Older commits, screenshots, evidence documents and GUI acceptance notes that
+show that layout must be read as historical implementation/evidence, not as the
+current UX specification. Valid backend, packaging, compatibility and test facts
+inside those records remain valid unless separately superseded.
 
 ## 7. Architecture that remains preserved
 
-This product-direction rebaseline does not reopen the architecture freeze.
-The following remain expected:
+This product-direction decision does not reopen the architecture freeze. Preserve:
 
-- Wave / ConPTY / xterm.js is the sole live terminal authority;
-- `CommandRecord != Wave Block`;
-- one hosted PowerShell process and one persistent Runspace;
-- ordinary structured lifecycle/output comes from the authenticated hosted
-  sidechannel;
-- interactive workloads remain PTY/xterm-owned;
+- Wave / ConPTY / xterm.js as the sole live terminal authority;
+- one hosted PowerShell process and one persistent Runspace per terminal session;
+- the authenticated structured sidechannel for ordinary-command lifecycle/output;
+- PTY/xterm ownership for interactive workloads;
 - `Execution Completion != Output Attribution != Output Completion`;
-- trusted Copy/Show requires explicit output guarantees;
-- Clear preserves the live session;
-- no second ANSI/VT terminal renderer is introduced.
+- explicit trusted-output and provenance guarantees;
+- durable history in the product-owned store, not xterm scrollback or term files;
+- Clear session preservation;
+- conservative interactive/TUI semantics;
+- causal CVA binding for direct command-region actions.
+
+No second terminal emulator, second authoritative shell or heuristic attribution
+fallback is introduced by this product rebaseline.
 
 ## 8. Interactive workloads
 
-REPLs, SSH, vim, fzf and other TUI/full-screen workloads remain live-terminal
-workloads.
+REPLs, SSH, Vim, fzf and other TUI/full-screen workloads remain real PTY/xterm
+workloads. Their interaction and session continuity are product concerns, but
+they do not gain an exact retrospective output-attribution promise merely from
+being visible in a command region. Exact interactive Copy All requires separate
+causal evidence before it can be promised.
 
-The product must not invent exact post-hoc output ownership for interactive
-content merely to make every visual region copyable. Exact interactive copy
-requires separate causal evidence before it can be promised.
+## 9. Forward implementation sequence
 
-## 9. Implementation direction
+The near-term product sequence is:
 
-The intended implementation sequence is:
+1. Freeze this product/UX direction and reconcile authority documents.
+2. Perform a bounded dependency/removal audit for History, Web and AI surfaces.
+3. Make the default workspace terminal-only while retaining tabs, splits,
+   workspaces and parallel terminal sessions.
+4. Add per-command lightweight visual identity over the continuous terminal.
+5. Expose CVA-backed per-command Copy All using authoritative Journal data.
+6. Add the thin command navigation rail and previous/next navigation.
+7. Keep global Clear available at the terminal/workspace level.
+8. Add configurable shortcuts/settings using shared action semantics.
+9. Build and validate one packaged Windows candidate after artifact-affecting
+   work is batched.
+10. Complete remaining RC/release closure.
 
-1. Make continuous xterm the default primary surface.
-2. Keep Command History / Cards available as an optional inspector.
-3. Keep authoritative Copy All semantics backed by the structured data path.
-4. Keep Clear Visual History available even when the inspector is closed.
-5. Use the reliable CVA causal mapping already established between a
-   command-aware region on the continuous terminal and the authoritative
-   `CommandRecord` before exposing direct in-terminal block copy.
-6. Add only lightweight visual distinction needed for usability.
+Steps are ordered to avoid rebuilding a candidate after every small artifact
+change. Product/UI items are planned until implementation and evidence say
+otherwise.
 
-Do not implement command-region mapping using command-text matching, timestamp
-matching, prompt matching, row proximity, array index matching or other
-heuristics that could misattribute output.
+## 10. Artifact and release sequencing
 
-## 10. Decision test for future work
+Any work that changes product code, packaging configuration, updater behavior,
+runtime dependencies, bundled assets or installer behavior belongs before the
+final RC source freeze. Policy-only documentation may proceed separately, but
+must be settled before the candidate is declared.
 
-A proposed feature belongs in the core product when it directly improves one of:
+The final packaged RC should be built once from the frozen source and packaging
+configuration, then signed and revalidated against its exact identity.
 
-- reliable command boundaries;
-- command + corresponding-output copy;
-- normal terminal usability;
-- Clear Visual History;
+## 11. Decision test for future work
+
+A proposal belongs in the core product when it improves at least one of:
+
+- normal continuous terminal usability;
+- reliable command identity and boundaries;
+- authoritative command + corresponding-output Copy All;
+- global Clear with session preservation;
 - supported interactive compatibility;
 - release reliability and supportability.
 
-Features unrelated to those goals should not displace release blockers or the
-continuous-terminal UX closure.
+Proposals that restore Card-first presentation, add Web/AI/cloud/sync/search,
+replace the live terminal, or rely on heuristic attribution do not fit this
+direction. They require an explicit new product decision and, where a frozen
+architecture boundary is affected, Architecture Review.
 
-## 11. Relationship to older documents
+## 12. Relationship to older documents
 
-Historical Phase documents, Product Evidence documents, RC evidence and first
-Visual Productization records remain preserved as evidence of how the project
-reached the current architecture.
+Historical Phase documents, Product Evidence, RC evidence and first Visual
+Productization records remain preserved as evidence of how the project reached
+the current architecture. Documents whose product/presentation statements are
+obsolete should be treated as FROZEN, HISTORICAL or SUPERSEDED by this authority;
+their historical facts must not be rewritten to imply that the current direction
+was always the plan.
 
-Where an older document implies that prominent permanent Command Cards are the
-final product UX, that presentation statement is superseded by this document.
-
-Where an older document records architecture evidence, output-truth semantics,
-packaging evidence, compatibility results or historical test results, those
-facts remain valid unless separately superseded by newer evidence.
+For current project state, sequencing, release acceptance and architecture
+responsibilities, use the authority documents linked from
+`docs/ARCHITECTURE-AUTHORITY.md`.

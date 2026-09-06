@@ -30,7 +30,12 @@ not:
 
 > permanently visible Card-first Command History as the primary terminal experience.
 
-The first Card-oriented Visual Productization pass is preserved as historical implementation and GUI evidence. Its default presentation direction is now marked **Legacy / Superseded**. Command Cards remain useful as an optional history/inspection projection.
+The first Card-oriented Visual Productization pass is preserved as historical
+implementation and GUI evidence. Its default presentation direction is now
+marked **Legacy / Superseded**. The target is a terminal-only workspace with a
+future thin causal command-navigation rail, not a traditional History panel or
+Card list. Wave tabs, split panes, workspaces and parallel terminal sessions
+remain retained capabilities.
 
 This product-direction correction does **not** trigger Architecture Review.
 
@@ -63,9 +68,13 @@ Historical M0/M1/M2 labels describe completed evidence work. Historical M3/M4/M5
 Finish all artifact-affecting changes before the final source/package freeze:
 
 - continuous-terminal UX closure;
-- Command History / Cards reduced to optional inspector/presentation rather than permanent dominant UI;
+- bounded removal/dependency audit for the current History/Card projection, Web
+  surfaces and AI/Wave AI/BYOK onboarding;
+- terminal-only default workspace while retaining tabs, split panes, workspaces
+  and parallel terminal sessions;
 - reliable Clear Visual History entry points;
-- preservation of authoritative Copy All semantics;
+- one authoritative Copy All action per command region (planned target);
+- lightweight command identity and a thin causal command-navigation rail;
 - direct in-terminal actions consuming the completed CVA binding;
 - final product branding / remaining Wave-derived user-facing surface cleanup;
 - settings / diagnostics / error-recovery presentation;
@@ -83,7 +92,7 @@ Define and verify release commitments for:
 - startup;
 - memory;
 - continuous-terminal scrolling;
-- optional history inspection;
+- bounded history projection/navigation behavior;
 - long output;
 - current 100-record visible-history limit;
 - pagination / virtualization behavior;
@@ -155,7 +164,9 @@ Make the default product experience match `PRODUCT-DIRECTION.md`:
 - live xterm is the primary continuous terminal surface;
 - ordinary commands retain reliable logical record/output semantics;
 - Copy All remains `command + only corresponding authoritative output`;
-- Command History / Cards are optional inspector/projection UI rather than a permanent primary workspace;
+- the traditional Command History / Card inspector is not the target UX;
+- the terminal remains the visible history, with a future thin causal
+  command-navigation rail;
 - Clear Visual History remains available without resetting the session;
 - visual distinction stays lightweight and functional;
 - no direct in-terminal block action is exposed through heuristic row/text/prompt matching.
@@ -198,7 +209,8 @@ Close retention, delete behavior, ACL, diagnostics/privacy, legal/NOTICE/third-p
 
 Complete only the identity work required for a coherent Beta/RC:
 
-- remove or reframe remaining user-facing Wave product surfaces where appropriate;
+- remove or reframe remaining user-facing Wave product surfaces where
+  appropriate, including the planned Web and AI/Wave AI/BYOK removals;
 - preserve required legal attribution;
 - make settings, errors and diagnostics coherent with Windows Block Terminal identity;
 - validate HiDPI and multi-display presentation;

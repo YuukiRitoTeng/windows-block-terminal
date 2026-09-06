@@ -52,14 +52,25 @@ The current product direction is:
 
 > **Continuous PowerShell terminal first; reliable command-block functionality layered on top.**
 
-The default product experience should preserve the normal continuous xterm surface while providing:
+The default product experience should preserve the normal continuous xterm surface in each pane while providing:
 
 - reliable logical command boundaries;
 - `Copy All = command + only that command's corresponding output`;
 - normal terminal copy/paste;
 - Clear Visual History without session reset;
 - lightweight command distinction where useful;
-- Command History / Cards as an optional inspector rather than the permanent primary workspace.
+- one planned primary local action, `Copy All`, backed by authoritative output;
+- a planned thin command-navigation rail rather than a traditional History panel;
+- retained tabs, split panes, workspaces and parallel terminal sessions.
+
+The product direction no longer includes Command History as a normal user-facing
+inspector, Command Cards as a user-facing feature, Web functionality or AI/Wave
+AI/BYOK onboarding. A bounded implementation/dependency audit applies only to
+code that belongs to those removed product surfaces. Command Journal,
+`CommandRecord`, the authenticated structured sidechannel, CVA,
+trusted-output/provenance infrastructure, Clear semantics and other retained
+architecture contracts are outside that audit; changing or removing them
+requires a separate explicit Architecture Review under the current freeze.
 
 This change is a **presentation/product-priority correction**, not an architecture reversal.
 
@@ -158,11 +169,16 @@ They may evolve while preserving the Conditional Architecture Freeze and the pro
 Before the final release-candidate source freeze, the product presentation must converge on the current target:
 
 - continuous xterm remains the default primary surface;
-- Command History / Cards are optional inspection/projection UI rather than a permanent dominant panel;
+- the traditional Command History / Card inspector is removed from the target UX;
+- the terminal remains the visible history, with a future thin causal command-navigation rail;
 - Clear remains accessible without requiring the inspector to be open;
-- trusted Copy All semantics are preserved;
+- one local Copy All action is planned for each command region and must use the authoritative CVA/Journal binding;
 - direct in-terminal command-region actions must consume the completed CVA binding and must not rely on heuristic xterm-row → `CommandRecord` matching;
 - lightweight visual command distinction should not become a large redesign project.
+
+The target also removes Web and AI/Wave AI/BYOK product surfaces. Existing
+implementation dependencies are not deleted by this status update; they require
+a bounded audit before removal.
 
 CVA has completed the causal binding of actionable command regions to the authoritative `CommandRecord`. Remaining work is product/UI presentation closure that consumes this binding, not a new binding architecture.
 
@@ -192,7 +208,10 @@ Background output attribution and exact interactive-copy semantics remain separa
 - final navigation/settings/error-recovery/diagnostic UX;
 - HiDPI and multi-display validation;
 - Beta feedback loop;
-- systematic cleanup of remaining Wave-derived product surfaces while preserving legal attribution;
+- bounded removal/dependency audit for remaining History, Web and AI/Wave-derived
+  product surfaces while preserving legal attribution;
+- implementation of the terminal-only default workspace, lightweight command
+  identity, causal Copy All and command-navigation rail;
 - packaged validation of the final continuous-terminal presentation.
 
 ### Scale decision
