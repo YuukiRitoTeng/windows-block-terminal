@@ -124,6 +124,23 @@
         align-items: end;
         pointer-events: none;
 
+        .command-navigation-rail-controls {
+            display: flex;
+            gap: 2px;
+            pointer-events: auto;
+        }
+        .command-navigation-rail-control {
+            min-height: 16px;
+            padding: 0 4px;
+            border: 1px solid var(--wbt-border-subtle);
+            border-radius: 3px;
+            background: color-mix(in srgb, var(--wbt-surface) 88%, transparent);
+            color: var(--wbt-text-secondary);
+            font-size: 10px;
+            line-height: 14px;
+            cursor: pointer;
+            &:hover { color: var(--wbt-text-primary); border-color: var(--wbt-border-strong); }
+        }
         .command-navigation-rail-entry { display: flex; gap: 3px; pointer-events: auto; }
         .command-navigation-rail-mark {
             width: 7px;
@@ -135,6 +152,10 @@
             background: #58c142;
             cursor: pointer;
             opacity: 0.78;
+            &.is-active {
+                box-shadow: 0 0 0 2px color-mix(in srgb, #58c142 38%, transparent);
+                opacity: 1;
+            }
         }
         .command-navigation-rail-copy {
             min-height: 16px;

@@ -11,6 +11,43 @@ export type CommandAnchor = Readonly<{ commandId: string }>;
 
 export type MatchedCommandAnchor = Readonly<{ commandId: string; record: RecordView }>;
 
+export type RelativeNavigationDirection = "previous" | "next";
+
+/** Selects an adjacent position using only the confirmed snapshot order. */
+export function getRelativeAnchorIndex(
+    anchorCount: number,
+    activeIndex: number,
+    direction: RelativeNavigationDirection
+): number {
+    if (anchorCount <= 0) return -1;
+    if (!Number.isInteger(activeIndex) || activeIndex < 0) {
+        return direction === "next" ? 0 : anchorCount - 1;
+    }
+    const currentIndex = Math.min(activeIndex, anchorCount - 1);
+    return direction === "next"
+        ? (currentIndex + 1) % anchorCount
+        : (currentIndex - 1 + anchorCount) % anchorCount;
+}
+
+/** Keeps an active mark valid when the confirmed anchor snapshot changes. */
+export function reconcileActiveAnchorIndex(
+    previousAnchors: readonly CommandAnchorSnapshot[],
+    nextAnchors: readonly CommandAnchorSnapshot[],
+    activeIndex: number
+): number {
+    if (nextAnchors.length === 0) return -1;
+    const sameSnapshot =
+        previousAnchors.length === nextAnchors.length &&
+        previousAnchors.every((anchor, index) => anchor.commandId === nextAnchors[index]?.commandId);
+    if (sameSnapshot) {
+        if (!Number.isInteger(activeIndex) || activeIndex < 0) return -1;
+        return Math.min(activeIndex, nextAnchors.length - 1);
+    }
+    const previouslyActive = Number.isInteger(activeIndex) ? previousAnchors[activeIndex] : undefined;
+    if (previouslyActive == null) return -1;
+    return nextAnchors.findIndex((anchor) => anchor.commandId === previouslyActive.commandId);
+}
+
 export class RailRequestEpoch {
     private value = 0;
 
@@ -145,10 +182,15 @@ export const CommandNavigationRail = ({ blockId, termWrap }: CommandNavigationRa
     const [anchors, setAnchors] = React.useState<readonly CommandAnchorSnapshot[]>([]);
     const [records, setRecords] = React.useState<RecordView[]>([]);
     const [message, setMessage] = React.useState<string | null>(null);
+    const [activeAnchorIndex, setActiveAnchorIndex] = React.useState(-1);
+    const previousAnchorsRef = React.useRef<readonly CommandAnchorSnapshot[]>([]);
 
     React.useEffect(() => {
+        setAnchors([]);
         setRecords([]);
         setMessage(null);
+        setActiveAnchorIndex(-1);
+        previousAnchorsRef.current = [];
         const poller = new RailRecordPoller(
             () => services.CommandJournalService.ListVisibleRecords(blockId),
             setRecords,
@@ -165,23 +207,77 @@ export const CommandNavigationRail = ({ blockId, termWrap }: CommandNavigationRa
         };
     }, [blockId, termWrap]);
 
+    React.useEffect(() => {
+        const previousAnchors = previousAnchorsRef.current;
+        previousAnchorsRef.current = anchors;
+        setActiveAnchorIndex((current) => reconcileActiveAnchorIndex(previousAnchors, anchors, current));
+    }, [anchors]);
+
     const matched = matchConfirmedAnchors(anchors, records);
     const recordsById = new Map(matched.map((entry) => [entry.commandId, entry.record]));
+
+    const scrollToAnchor = React.useCallback(
+        (index: number) => {
+            const target = anchors[index];
+            if (target == null) return false;
+            const didScroll = termWrap.scrollToCommandAnchor(target.commandId);
+            if (didScroll) {
+                setActiveAnchorIndex(index);
+            }
+            return didScroll;
+        },
+        [anchors, termWrap]
+    );
+
+    const navigateRelative = React.useCallback(
+        (direction: RelativeNavigationDirection) => {
+            const targetIndex = getRelativeAnchorIndex(anchors.length, activeAnchorIndex, direction);
+            if (targetIndex < 0) return;
+            scrollToAnchor(targetIndex);
+        },
+        [activeAnchorIndex, anchors.length, scrollToAnchor]
+    );
+
     if (anchors.length === 0) return null;
 
     return (
-        <nav className="command-navigation-rail" aria-label="Confirmed commands">
-            {anchors.map((anchor) => {
+        <nav className="command-navigation-rail" aria-label="Confirmed command navigation">
+            <div className="command-navigation-rail-controls" role="group" aria-label="Relative command navigation">
+                <button
+                    className="command-navigation-rail-control"
+                    type="button"
+                    aria-label="Previous confirmed command"
+                    title="Previous confirmed command"
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => navigateRelative("previous")}
+                >
+                    Prev
+                </button>
+                <button
+                    className="command-navigation-rail-control"
+                    type="button"
+                    aria-label="Next confirmed command"
+                    title="Next confirmed command"
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => navigateRelative("next")}
+                >
+                    Next
+                </button>
+            </div>
+            {anchors.map((anchor, index) => {
                 const record = recordsById.get(anchor.commandId);
                 return (
                     <div className="command-navigation-rail-entry" key={anchor.commandId}>
                         <button
-                            className="command-navigation-rail-mark"
+                            className={`command-navigation-rail-mark${activeAnchorIndex === index ? " is-active" : ""}`}
                             type="button"
                             aria-label={`Jump to confirmed command ${anchor.commandId}`}
                             title="Jump to confirmed command"
+                            aria-current={activeAnchorIndex === index ? "true" : undefined}
                             onMouseDown={(event) => event.preventDefault()}
-                            onClick={() => termWrap.scrollToCommandAnchor(anchor.commandId)}
+                            onClick={() => {
+                                scrollToAnchor(index);
+                            }}
                         />
                         {record != null && (
                             <button
