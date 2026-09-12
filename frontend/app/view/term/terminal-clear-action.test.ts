@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import * as React from "react";
 import { describe, expect, it, vi } from "vitest";
+import type { CommandJournalServiceType } from "@/store/services";
 import { clearProductHistory } from "./clear-product-history";
 import {
     createTerminalClearActionRunner,
@@ -85,9 +86,10 @@ describe("terminal-native clear action", () => {
 
     it("preserves backend-first Clear and display-only xterm controls", async () => {
         const order: string[] = [];
-        const service = {
+        const service: Pick<CommandJournalServiceType, "ClearVisualHistory"> = {
             ClearVisualHistory: vi.fn(async () => {
                 order.push("backend");
+                return { generation: 2 };
             }),
         };
         await clearProductHistory("block-1", service, () => order.push("display"));
