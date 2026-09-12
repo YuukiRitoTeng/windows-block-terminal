@@ -291,7 +291,8 @@
         width: 100%;
 
         .xterm-decoration-overview-ruler {
-            display: none !important;
+            display: block !important;
+            opacity: 0.72;
         }
 
         .xterm-viewport {

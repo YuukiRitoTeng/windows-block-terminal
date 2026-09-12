@@ -127,6 +127,7 @@ export class TermWrap {
     lastUpdated: number;
     promptMarkers: TermTypes.IMarker[] = [];
     visualAnchorRegistry = new VisualAnchorRegistry();
+    private visualAnchorCues = new Map<string, { marker: TermTypes.IMarker; decoration?: TermTypes.IDecoration }>();
     visualAnchorEventUnsub: (() => void) | null = null;
     shellIntegrationStatusAtom: jotai.PrimitiveAtom<ShellIntegrationStatus | null>;
     lastCommandAtom: jotai.PrimitiveAtom<string | null>;
@@ -177,6 +178,7 @@ export class TermWrap {
         this.claudeCodeActiveAtom = jotai.atom(false);
         this.webglEnabledAtom = jotai.atom(false) as jotai.PrimitiveAtom<boolean>;
         this.terminal = new Terminal(options);
+        this.terminal.options.overviewRuler = { width: 4, showTopBorder: false, showBottomBorder: false };
         this.fitAddon = new FitAddon();
         this.serializeAddon = new SerializeAddon();
         this.searchAddon = new SearchAddon();
@@ -575,7 +577,28 @@ export class TermWrap {
             marker.dispose();
             return;
         }
-        marker.onDispose(() => this.visualAnchorRegistry.remove(nonce));
+        this.visualAnchorCues.set(nonce, { marker });
+        marker.onDispose(() => {
+            const decoration = this.visualAnchorCues.get(nonce)?.decoration;
+            decoration?.dispose();
+            this.visualAnchorCues.delete(nonce);
+            this.visualAnchorRegistry.remove(nonce);
+        });
+        this.registerConfirmedVisualCue(nonce);
+    }
+
+    private registerConfirmedVisualCue(nonce: string) {
+        const cue = this.visualAnchorCues.get(nonce);
+        if (cue == null || cue.decoration != null || this.visualAnchorRegistry.get(nonce) == null) return;
+        try {
+            const decoration = this.terminal.registerDecoration({
+                marker: cue.marker,
+                overviewRulerOptions: { color: "#58C142", position: "center" },
+            });
+            if (decoration != null) cue.decoration = decoration;
+        } catch (_) {
+            // Decoration support is optional; confirmation and terminal rendering remain independent.
+        }
     }
 
     private confirmVisualAnchor(data: Record<string, unknown>) {
@@ -608,6 +631,7 @@ export class TermWrap {
             runspaceId,
             mode,
         });
+        this.registerConfirmedVisualCue(anchorNonce);
     }
 
     addFocusListener(focusFn: () => void) {
