@@ -22,7 +22,7 @@ import debug from "debug";
 import * as jotai from "jotai";
 import * as React from "react";
 import { TermLinkTooltip } from "./term-tooltip";
-import { CommandHistory } from "./command-history";
+import { CommandNavigationRail } from "./command-navigation-rail";
 import { TermStickers } from "./termsticker";
 import { TermThemeUpdater } from "./termtheme";
 import { computeTheme, normalizeCursorStyle } from "./termutil";
@@ -394,7 +394,7 @@ const TerminalView = ({ blockId, model }: ViewComponentProps<TermViewModel>) => 
             <TermToolbarVDomNode key="vdom-toolbar" blockId={blockId} model={model} />
             <TermVDomNode key="vdom" blockId={blockId} model={model} />
             <div key="connect-elem" className="term-connectelem" ref={connectElemRef} />
-            {termMode == "term" && <CommandHistory blockId={blockId} model={model} />}
+            {termMode == "term" && termWrapInst != null && <CommandNavigationRail blockId={blockId} termWrap={termWrapInst} />}
             <NullErrorBoundary debugName="TermLinkTooltip">
                 <TermLinkTooltip termWrap={termWrapInst} />
             </NullErrorBoundary>

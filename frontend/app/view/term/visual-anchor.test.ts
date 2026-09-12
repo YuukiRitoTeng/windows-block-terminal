@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
 import { VisualAnchorRegistry, type VisualAnchorContext } from "./visual-anchor";
+
+const termwrapSource = readFileSync(new URL("./termwrap.ts", import.meta.url), "utf8");
 
 function anchor(nonce = "nonce-1"): VisualAnchorContext {
     return {
@@ -128,5 +131,22 @@ describe("VisualAnchorRegistry", () => {
         } finally {
             vi.useRealTimers();
         }
+    });
+
+    it("exposes only confirmed registry-backed anchors and exact marker scrolling", () => {
+        // xterm's marker API is unavailable to Vitest here. This contract fails
+        // if the terminal integration falls back to command text, line, or time.
+        expect(termwrapSource).toContain("getCommandAnchorSnapshot()");
+        expect(termwrapSource).toContain("subscribeCommandAnchors(listener");
+        expect(termwrapSource).toContain("scrollToCommandAnchor(commandId: string)");
+        expect(termwrapSource).toContain("this.visualAnchorRegistry.get(nonce)");
+        expect(termwrapSource).toContain("this.terminal.scrollToLine(cue.marker.line)");
+    });
+
+    it("notifies the rail when confirmed markers are created, removed, cleared, or disposed", () => {
+        expect(termwrapSource).toContain("this.notifyCommandAnchorSubscribers()");
+        expect(termwrapSource).toContain("marker.onDispose(() => {");
+        expect(termwrapSource).toContain("clearVisualBuffer()");
+        expect(termwrapSource).toContain("dispose()");
     });
 });

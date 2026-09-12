@@ -6,6 +6,7 @@ import { base64ToArray } from "@/util/util";
 import * as React from "react";
 import type { TermViewModel } from "./term-model";
 import { clearProductHistory } from "./clear-product-history";
+import { copyCommandAndOutput } from "./command-copy-all";
 
 export { clearProductHistory } from "./clear-product-history";
 
@@ -273,6 +274,11 @@ export const CommandHistory = ({ blockId, model }: CommandHistoryProps) => {
     }, [outputs]);
 
     const copyRecord = React.useCallback(async (record: RecordView, kind: "command" | "output" | "all") => {
+        if (kind === "all") {
+            const result = await copyCommandAndOutput(record);
+            setMessage("reason" in result ? result.reason : "Copied command and output.");
+            return;
+        }
         let text = record.command;
         if (kind !== "command") {
             if (!canCopyOutput(record)) {
@@ -285,11 +291,11 @@ export const CommandHistory = ({ blockId, model }: CommandHistoryProps) => {
                 setMessage(projection.reason);
                 return;
             }
-            text = kind === "all" ? `${record.command}\n${projection.text}` : projection.text;
+            text = projection.text;
         }
         try {
             await navigator.clipboard.writeText(text);
-            setMessage(`Copied ${kind === "all" ? "command and output" : kind}.`);
+            setMessage(`Copied ${kind}.`);
         } catch (error) {
             setMessage(`Clipboard unavailable: ${String(error)}`);
         }

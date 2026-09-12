@@ -63,6 +63,54 @@
         margin: 5px 1px 5px 4px;
     }
 
+    .command-navigation-rail {
+        position: absolute;
+        top: 9px;
+        right: 8px;
+        z-index: 2;
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        align-items: end;
+        pointer-events: none;
+
+        .command-navigation-rail-entry { display: flex; gap: 3px; pointer-events: auto; }
+        .command-navigation-rail-mark {
+            width: 7px;
+            height: 7px;
+            margin: 0;
+            padding: 0;
+            border: 1px solid color-mix(in srgb, #58c142 70%, transparent);
+            border-radius: 50%;
+            background: #58c142;
+            cursor: pointer;
+            opacity: 0.78;
+        }
+        .command-navigation-rail-copy {
+            min-height: 16px;
+            padding: 0 4px;
+            border: 1px solid var(--wbt-border-subtle);
+            border-radius: 3px;
+            background: color-mix(in srgb, var(--wbt-surface) 88%, transparent);
+            color: var(--wbt-text-secondary);
+            font-size: 10px;
+            line-height: 14px;
+            cursor: pointer;
+            &:hover:not(:disabled) { color: var(--wbt-text-primary); border-color: var(--wbt-border-strong); }
+            &:disabled { cursor: not-allowed; opacity: 0.42; }
+        }
+        button:focus-visible { outline: 2px solid var(--wbt-focus-ring); outline-offset: 1px; }
+        .command-navigation-rail-message {
+            max-width: 220px;
+            padding: 3px 5px;
+            border: 1px solid var(--wbt-border-subtle);
+            border-radius: 3px;
+            background: var(--wbt-surface-elevated);
+            color: var(--wbt-text-secondary);
+            font-size: 10px;
+        }
+    }
+
     .command-history {
         // The inspector is closed by default so xterm remains the primary
         // surface. Opening it gives history a bounded share of this block.

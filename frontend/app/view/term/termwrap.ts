@@ -81,6 +81,8 @@ type TermWrapOptions = {
     nodeModel?: BlockNodeModel;
 };
 
+export type CommandAnchorSnapshot = Readonly<{ commandId: string }>;
+
 export class TermWrap {
     tabId: string;
     blockId: string;
@@ -113,6 +115,7 @@ export class TermWrap {
             this.ingressState = "live";
         }
         this.visualAnchorRegistry.invalidate();
+        this.notifyCommandAnchorSubscribers();
     }
     handleResize_debounced: () => void;
     hasResized: boolean;
@@ -127,7 +130,8 @@ export class TermWrap {
     lastUpdated: number;
     promptMarkers: TermTypes.IMarker[] = [];
     visualAnchorRegistry = new VisualAnchorRegistry();
-    private visualAnchorCues = new Map<string, { marker: TermTypes.IMarker; decoration?: TermTypes.IDecoration }>();
+    private visualAnchorCues = new Map<string, { marker: TermTypes.IMarker; decoration?: TermTypes.IDecoration; announced?: boolean }>();
+    private commandAnchorSubscribers = new Set<() => void>();
     visualAnchorEventUnsub: (() => void) | null = null;
     shellIntegrationStatusAtom: jotai.PrimitiveAtom<ShellIntegrationStatus | null>;
     lastCommandAtom: jotai.PrimitiveAtom<string | null>;
@@ -135,6 +139,33 @@ export class TermWrap {
     nodeModel: BlockNodeModel; // this can be null
     hoveredLinkUri: string | null = null;
     onLinkHover?: (uri: string | null, mouseX: number, mouseY: number) => void;
+
+    getCommandAnchorSnapshot(): readonly CommandAnchorSnapshot[] {
+        const anchors: CommandAnchorSnapshot[] = [];
+        for (const [nonce] of this.visualAnchorCues) {
+            const confirmed = this.visualAnchorRegistry.get(nonce);
+            if (confirmed != null) anchors.push(Object.freeze({ commandId: confirmed.commandId }));
+        }
+        return Object.freeze(anchors);
+    }
+
+    subscribeCommandAnchors(listener: () => void): () => void {
+        this.commandAnchorSubscribers.add(listener);
+        return () => this.commandAnchorSubscribers.delete(listener);
+    }
+
+    scrollToCommandAnchor(commandId: string): boolean {
+        for (const [nonce, cue] of this.visualAnchorCues) {
+            if (this.visualAnchorRegistry.get(nonce)?.commandId !== commandId) continue;
+            this.terminal.scrollToLine(cue.marker.line);
+            return true;
+        }
+        return false;
+    }
+
+    private notifyCommandAnchorSubscribers(): void {
+        for (const listener of this.commandAnchorSubscribers) listener();
+    }
 
     // Paste deduplication
     // xterm.js paste() method triggers onData event, which can cause duplicate sends
@@ -524,6 +555,8 @@ export class TermWrap {
         this.visualAnchorEventUnsub?.();
         this.visualAnchorEventUnsub = null;
         this.visualAnchorRegistry.invalidate();
+        this.notifyCommandAnchorSubscribers();
+        this.commandAnchorSubscribers.clear();
         this.promptMarkers.forEach((marker) => {
             try {
                 marker.dispose();
@@ -583,13 +616,19 @@ export class TermWrap {
             decoration?.dispose();
             this.visualAnchorCues.delete(nonce);
             this.visualAnchorRegistry.remove(nonce);
+            this.notifyCommandAnchorSubscribers();
         });
         this.registerConfirmedVisualCue(nonce);
     }
 
     private registerConfirmedVisualCue(nonce: string) {
         const cue = this.visualAnchorCues.get(nonce);
-        if (cue == null || cue.decoration != null || this.visualAnchorRegistry.get(nonce) == null) return;
+        if (cue == null || this.visualAnchorRegistry.get(nonce) == null) return;
+        if (!cue.announced) {
+            cue.announced = true;
+            this.notifyCommandAnchorSubscribers();
+        }
+        if (cue.decoration != null) return;
         try {
             const decoration = this.terminal.registerDecoration({
                 marker: cue.marker,
