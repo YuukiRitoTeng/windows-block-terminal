@@ -66,3 +66,24 @@ Implemented and committed from the isolated `codex/terminal-first` worktree. The
 - The poller is presentation-local and does not persist records or create a Journal/CVA store. Matching remains exact `commandId` / `RecordView.id`; anchor snapshots and subscription ownership remain TermWrap/CVA-backed.
 - Empty anchor snapshots clear rendered records and stop the timer. Disposal bumps the epoch and clears the timer, so a late response cannot update a replacement terminal/block.
 - Electron/xterm DOM and packaged acceptance remain unrun and are not claimed.
+
+## Fix round 2 — response-driven settling delay
+
+### Changed files
+
+- `frontend/app/view/term/command-navigation-rail.tsx` — changed `RailRecordPoller` from a fixed `setInterval` to a one-shot `setTimeout`. The next timeout is created only after an unsettled response resolves, so the 750ms bound starts at response completion. Empty anchors, disposal, settled records, in-flight suppression, epoch invalidation, and queued anchor changes remain intact; an explicit anchor change also clears any pending timeout before its immediate refresh.
+- `frontend/app/view/term/command-navigation-rail.test.ts` — added a deferred/slow-query fake-timer test that resolves the second unsettled response one millisecond before the old interval tick and proves no third query occurs until a full 750ms after that response. Existing instant polling, settled-stop, subscription-removal, and queued-anchor-change tests remain.
+
+### Covering test commands and output
+
+- RED: `npm test -- --run frontend/app/view/term/command-navigation-rail.test.ts` — 1 failing test; the deliberate slow-response test observed `expected "spy" to be called 2 times, but got 3 times` with the fixed interval.
+- GREEN: `npm test -- --run frontend/app/view/term/command-navigation-rail.test.ts` — PASS, 1 file / 7 tests.
+- `npm test -- --run frontend/app/view/term/command-copy-all.test.ts frontend/app/view/term/command-navigation-rail.test.ts frontend/app/view/term/visual-anchor.test.ts` — PASS, 3 files / 15 tests.
+- `npm test -- --run frontend/app/view/term/command-history.test.ts frontend/app/view/term/terminal-ingress.test.ts` — PASS, 2 files / 21 tests.
+
+### Self-review
+
+- `RailRecordPoller` has no fixed interval: after each unsettled successful response, one timeout is scheduled for exactly `intervalMs`; its callback clears its handle before issuing the next request. A slow request therefore cannot be followed by a near-immediate fixed tick.
+- `inFlight` still suppresses overlap, `RailRequestEpoch` rejects stale block/terminal or anchor-invalidated responses, and `pendingRefresh` preserves one immediate follow-up for an anchor change observed during an in-flight request.
+- Settled output stops scheduling, an empty CVA-backed anchor snapshot clears records and cancels the timeout, and component cleanup unsubscribes and disposes the poller.
+- Scope remains limited to the rail controller/test/report. Exact `commandId` matching, CVA/Journal authority, Copy All safety, and all brief non-goals are unchanged. Electron/xterm DOM, packaged, and GUI acceptance remain unrun.

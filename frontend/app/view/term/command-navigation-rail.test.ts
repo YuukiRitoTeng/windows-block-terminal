@@ -116,6 +116,43 @@ describe("command navigation rail", () => {
         }
     });
 
+    it("waits a full interval after a slow unsettled response resolves", async () => {
+        // This fails with a fixed interval when a slow response resolves just
+        // before the next tick: the next IPC call would happen almost at once.
+        expect(RailRecordPoller).toBeTypeOf("function");
+        if (RailRecordPoller == null) return;
+        vi.useFakeTimers();
+        try {
+            let resolveSlow: (records: RecordView[]) => void = () => {};
+            const slow = new Promise<RecordView[]>((resolve) => {
+                resolveSlow = resolve;
+            });
+            const query = vi.fn().mockResolvedValueOnce([]).mockReturnValueOnce(slow).mockResolvedValue([]);
+            const poller = new RailRecordPoller(query, vi.fn(), 750);
+
+            poller.setAnchors([{ commandId: "command-1" }]);
+            await Promise.resolve();
+            await Promise.resolve();
+            await vi.advanceTimersByTimeAsync(750);
+            expect(query).toHaveBeenCalledTimes(2);
+
+            await vi.advanceTimersByTimeAsync(749);
+            resolveSlow([]);
+            await Promise.resolve();
+            await Promise.resolve();
+            await vi.advanceTimersByTimeAsync(1);
+            expect(query).toHaveBeenCalledTimes(2);
+            await vi.advanceTimersByTimeAsync(748);
+            expect(query).toHaveBeenCalledTimes(2);
+            await vi.advanceTimersByTimeAsync(1);
+            expect(query).toHaveBeenCalledTimes(3);
+
+            poller.dispose();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it("stops polling when the matched record settles and when anchor subscription reports removal", async () => {
         // This fails if a closed matched record or an invalidated anchor leaves
         // a timer alive that continues querying the Journal.

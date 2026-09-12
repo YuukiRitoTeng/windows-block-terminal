@@ -60,7 +60,7 @@ export function subscribeCommandAnchors(
 
 export class RailRecordPoller {
     private anchors: readonly CommandAnchor[] = [];
-    private timer: ReturnType<typeof setInterval> | null = null;
+    private timer: ReturnType<typeof setTimeout> | null = null;
     private inFlight = false;
     private pendingRefresh = false;
     private disposed = false;
@@ -86,6 +86,7 @@ export class RailRecordPoller {
             this.pendingRefresh = true;
             return;
         }
+        this.stopTimer();
         void this.refresh();
     }
 
@@ -98,12 +99,15 @@ export class RailRecordPoller {
 
     private ensureTimer(): void {
         if (this.timer == null && !this.disposed && this.anchors.length > 0) {
-            this.timer = setInterval(() => void this.refresh(), this.intervalMs);
+            this.timer = setTimeout(() => {
+                this.timer = null;
+                void this.refresh();
+            }, this.intervalMs);
         }
     }
 
     private stopTimer(): void {
-        if (this.timer != null) clearInterval(this.timer);
+        if (this.timer != null) clearTimeout(this.timer);
         this.timer = null;
     }
 
