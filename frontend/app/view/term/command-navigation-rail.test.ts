@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 
 const railSource = readFileSync(new URL("./command-navigation-rail.tsx", import.meta.url), "utf8");
 const termSource = readFileSync(new URL("./term.tsx", import.meta.url), "utf8");
@@ -37,12 +37,16 @@ const record = (overrides: Partial<RecordView> = {}): RecordView => ({
 
 let matchConfirmedAnchors: any;
 let RailRequestEpoch: any;
+let RailRecordPoller: any;
+let subscribeCommandAnchors: any;
 
 beforeAll(async () => {
     try {
         const rail = await import("./command-navigation-rail");
         matchConfirmedAnchors = rail.matchConfirmedAnchors;
         RailRequestEpoch = rail.RailRequestEpoch;
+        RailRecordPoller = rail.RailRecordPoller;
+        subscribeCommandAnchors = rail.subscribeCommandAnchors;
     } catch {
         matchConfirmedAnchors = undefined;
     }
@@ -83,5 +87,97 @@ describe("command navigation rail", () => {
         expect(railSource).toContain("CommandJournalService.ListVisibleRecords(blockId)");
         expect(railSource).toContain("copyCommandAndOutput");
         expect(railSource).toContain("canCopyOutput(record)");
+    });
+
+    it("waits a full polling interval between unsettled Journal queries", async () => {
+        // This fails if a response-array update can immediately schedule another
+        // IPC request instead of waiting for the bounded poll interval.
+        expect(RailRecordPoller).toBeTypeOf("function");
+        if (RailRecordPoller == null) return;
+        vi.useFakeTimers();
+        try {
+            const query = vi.fn().mockResolvedValue([]);
+            const setRecords = vi.fn();
+            const poller = new RailRecordPoller(query, setRecords, 750);
+
+            poller.setAnchors([{ commandId: "command-1" }]);
+            await Promise.resolve();
+            await Promise.resolve();
+            expect(query).toHaveBeenCalledTimes(1);
+
+            await vi.advanceTimersByTimeAsync(749);
+            expect(query).toHaveBeenCalledTimes(1);
+            await vi.advanceTimersByTimeAsync(1);
+            expect(query).toHaveBeenCalledTimes(2);
+
+            poller.dispose();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("stops polling when the matched record settles and when anchor subscription reports removal", async () => {
+        // This fails if a closed matched record or an invalidated anchor leaves
+        // a timer alive that continues querying the Journal.
+        expect(RailRecordPoller).toBeTypeOf("function");
+        expect(subscribeCommandAnchors).toBeTypeOf("function");
+        if (RailRecordPoller == null || subscribeCommandAnchors == null) return;
+        vi.useFakeTimers();
+        try {
+            const query = vi.fn().mockResolvedValue([record()]);
+            const setRecords = vi.fn();
+            const poller = new RailRecordPoller(query, setRecords, 750);
+            let listener: (() => void) | undefined;
+            const unsubscribe = vi.fn();
+            const termWrap = {
+                getCommandAnchorSnapshot: vi
+                    .fn()
+                    .mockReturnValueOnce([{ commandId: "command-1" }])
+                    .mockReturnValueOnce([]),
+                subscribeCommandAnchors: vi.fn((next) => {
+                    listener = next;
+                    return unsubscribe;
+                }),
+            };
+
+            const stopSubscription = subscribeCommandAnchors(termWrap, (anchors) => poller.setAnchors(anchors));
+            await Promise.resolve();
+            await Promise.resolve();
+            expect(query).toHaveBeenCalledTimes(1);
+            await vi.advanceTimersByTimeAsync(1000);
+            expect(query).toHaveBeenCalledTimes(1);
+
+            listener?.();
+            expect(setRecords).toHaveBeenLastCalledWith([]);
+            await vi.advanceTimersByTimeAsync(1000);
+            expect(query).toHaveBeenCalledTimes(1);
+            stopSubscription();
+            expect(unsubscribe).toHaveBeenCalledTimes(1);
+            poller.dispose();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("requeries after an anchor change invalidates an in-flight response", async () => {
+        // This fails if a subscription update while one request is pending drops
+        // the new confirmed command until some unrelated future event occurs.
+        expect(RailRecordPoller).toBeTypeOf("function");
+        if (RailRecordPoller == null) return;
+        let resolveFirst: (records: RecordView[]) => void = () => {};
+        const first = new Promise<RecordView[]>((resolve) => {
+            resolveFirst = resolve;
+        });
+        const query = vi.fn().mockReturnValueOnce(first).mockResolvedValueOnce([]);
+        const poller = new RailRecordPoller(query, vi.fn(), 750);
+
+        poller.setAnchors([{ commandId: "command-1" }]);
+        poller.setAnchors([{ commandId: "command-2" }]);
+        resolveFirst([]);
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(query).toHaveBeenCalledTimes(2);
+        poller.dispose();
     });
 });

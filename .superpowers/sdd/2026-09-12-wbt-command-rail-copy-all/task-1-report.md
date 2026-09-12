@@ -45,3 +45,24 @@ Implemented and committed from the isolated `codex/terminal-first` worktree. The
 - Unit tests validate the helper contracts and permitted source-level xterm/React integration seam. Electron/real xterm DOM, packaged-app, and real clipboard acceptance were not run and are not claimed.
 - Repository-wide TypeScript remains blocked by unrelated preview mock errors listed above. No task-file TypeScript error remains.
 - Prettier rewrote the four new files, but `prettier --check frontend/app/view/term/command-copy-all.test.ts` still reported that same test file non-idempotent under the repository formatter configuration; no broad formatting rewrite was applied to existing files.
+
+## Fix round 1 — bounded rail polling
+
+### Changed files
+
+- `frontend/app/view/term/command-navigation-rail.tsx` — replaced the `records`-dependent React polling effect with `RailRecordPoller`. The controller owns one timer, suppresses overlapping requests, waits the complete 750ms interval after an unsettled response, stops on settled/empty-anchor state, invalidates stale responses through `RailRequestEpoch`, and queues one refresh for a confirmed-anchor change received while a request is in flight. `subscribeCommandAnchors` is a small lifecycle seam that forwards the current snapshot and returns the exact TermWrap unsubscribe function.
+- `frontend/app/view/term/command-navigation-rail.test.ts` — added fake-timer tests for no early requery before 750ms, stopping after a settled matching record and after a subscription sends the empty snapshot, unsubscribing the listener, and a queued requery after an in-flight response is invalidated by an anchor change.
+
+### Test command and output
+
+- RED: `npm test -- --run frontend/app/view/term/command-navigation-rail.test.ts` failed with `RailRecordPoller` / `subscribeCommandAnchors` absent; the added in-flight-anchor test then failed with `expected spy to be called 2 times, but got 1 times` before the queued-refresh path was added.
+- GREEN: `npm test -- --run frontend/app/view/term/command-navigation-rail.test.ts` — PASS, 1 file / 6 tests.
+- `npm test -- --run frontend/app/view/term/command-copy-all.test.ts frontend/app/view/term/command-navigation-rail.test.ts frontend/app/view/term/visual-anchor.test.ts` — PASS, 3 files / 14 tests.
+- `npm test -- --run frontend/app/view/term/command-history.test.ts frontend/app/view/term/terminal-ingress.test.ts` — PASS, 2 files / 21 tests.
+
+### Self-review
+
+- Successful Journal responses now update React presentation state only; they do not recreate an effect or start a new immediate request. The only ordinary repeat trigger is the controller timer at 750ms, and its `inFlight` guard prevents overlap.
+- The poller is presentation-local and does not persist records or create a Journal/CVA store. Matching remains exact `commandId` / `RecordView.id`; anchor snapshots and subscription ownership remain TermWrap/CVA-backed.
+- Empty anchor snapshots clear rendered records and stop the timer. Disposal bumps the epoch and clears the timer, so a late response cannot update a replacement terminal/block.
+- Electron/xterm DOM and packaged acceptance remain unrun and are not claimed.

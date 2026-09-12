@@ -47,6 +47,91 @@ function recordsAreSettling(anchors: readonly CommandAnchor[], records: readonly
     });
 }
 
+type CommandAnchorSource = Pick<TermWrap, "getCommandAnchorSnapshot" | "subscribeCommandAnchors">;
+
+export function subscribeCommandAnchors(
+    termWrap: CommandAnchorSource,
+    listener: (anchors: readonly CommandAnchorSnapshot[]) => void
+): () => void {
+    const refreshAnchors = () => listener(termWrap.getCommandAnchorSnapshot());
+    refreshAnchors();
+    return termWrap.subscribeCommandAnchors(refreshAnchors);
+}
+
+export class RailRecordPoller {
+    private anchors: readonly CommandAnchor[] = [];
+    private timer: ReturnType<typeof setInterval> | null = null;
+    private inFlight = false;
+    private pendingRefresh = false;
+    private disposed = false;
+    private epoch = new RailRequestEpoch();
+
+    constructor(
+        private queryRecords: () => Promise<RecordView[]>,
+        private setRecords: (records: RecordView[]) => void,
+        private intervalMs = 750,
+        private setError?: (error: unknown) => void
+    ) {}
+
+    setAnchors(anchors: readonly CommandAnchor[]): void {
+        this.epoch.bump();
+        this.anchors = anchors;
+        if (anchors.length === 0) {
+            this.pendingRefresh = false;
+            this.stopTimer();
+            this.setRecords([]);
+            return;
+        }
+        if (this.inFlight) {
+            this.pendingRefresh = true;
+            return;
+        }
+        void this.refresh();
+    }
+
+    dispose(): void {
+        this.disposed = true;
+        this.epoch.bump();
+        this.pendingRefresh = false;
+        this.stopTimer();
+    }
+
+    private ensureTimer(): void {
+        if (this.timer == null && !this.disposed && this.anchors.length > 0) {
+            this.timer = setInterval(() => void this.refresh(), this.intervalMs);
+        }
+    }
+
+    private stopTimer(): void {
+        if (this.timer != null) clearInterval(this.timer);
+        this.timer = null;
+    }
+
+    private async refresh(): Promise<void> {
+        if (this.disposed || this.inFlight || this.anchors.length === 0) return;
+        this.inFlight = true;
+        const capturedEpoch = this.epoch.capture();
+        try {
+            const next = (await this.queryRecords()) ?? [];
+            if (this.disposed || !this.epoch.isCurrent(capturedEpoch)) return;
+            this.setRecords(next);
+            if (recordsAreSettling(this.anchors, next)) this.ensureTimer();
+            else this.stopTimer();
+        } catch (error) {
+            if (!this.disposed && this.epoch.isCurrent(capturedEpoch)) {
+                this.setError?.(error);
+                this.ensureTimer();
+            }
+        } finally {
+            this.inFlight = false;
+            if (this.pendingRefresh && !this.disposed && this.anchors.length > 0) {
+                this.pendingRefresh = false;
+                void this.refresh();
+            }
+        }
+    }
+}
+
 type CommandNavigationRailProps = {
     blockId: string;
     termWrap: TermWrap;
@@ -56,41 +141,25 @@ export const CommandNavigationRail = ({ blockId, termWrap }: CommandNavigationRa
     const [anchors, setAnchors] = React.useState<readonly CommandAnchorSnapshot[]>([]);
     const [records, setRecords] = React.useState<RecordView[]>([]);
     const [message, setMessage] = React.useState<string | null>(null);
-    const requestEpoch = React.useRef(new RailRequestEpoch());
 
     React.useEffect(() => {
-        requestEpoch.current.bump();
         setRecords([]);
         setMessage(null);
-        const refreshAnchors = () => setAnchors(termWrap.getCommandAnchorSnapshot());
-        refreshAnchors();
-        return termWrap.subscribeCommandAnchors(refreshAnchors);
-    }, [blockId, termWrap]);
-
-    React.useEffect(() => {
-        if (anchors.length === 0) {
-            setRecords([]);
-            return;
-        }
-        let cancelled = false;
-        const refresh = async () => {
-            const capturedEpoch = requestEpoch.current.capture();
-            try {
-                const next = await services.CommandJournalService.ListVisibleRecords(blockId);
-                if (!cancelled && requestEpoch.current.isCurrent(capturedEpoch)) setRecords(next ?? []);
-            } catch (error) {
-                if (!cancelled && requestEpoch.current.isCurrent(capturedEpoch)) {
-                    setMessage(`Commands unavailable: ${String(error)}`);
-                }
-            }
-        };
-        void refresh();
-        const interval = recordsAreSettling(anchors, records) ? window.setInterval(() => void refresh(), 750) : null;
+        const poller = new RailRecordPoller(
+            () => services.CommandJournalService.ListVisibleRecords(blockId),
+            setRecords,
+            750,
+            (error) => setMessage(`Commands unavailable: ${String(error)}`)
+        );
+        const unsubscribe = subscribeCommandAnchors(termWrap, (nextAnchors) => {
+            setAnchors(nextAnchors);
+            poller.setAnchors(nextAnchors);
+        });
         return () => {
-            cancelled = true;
-            if (interval != null) window.clearInterval(interval);
+            unsubscribe();
+            poller.dispose();
         };
-    }, [anchors, blockId, records]);
+    }, [blockId, termWrap]);
 
     const matched = matchConfirmedAnchors(anchors, records);
     const recordsById = new Map(matched.map((entry) => [entry.commandId, entry.record]));
