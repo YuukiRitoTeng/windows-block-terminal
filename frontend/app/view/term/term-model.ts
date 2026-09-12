@@ -897,6 +897,11 @@ export class TermViewModel implements ViewModel {
             },
         });
 
+        menu.push({
+            label: "Clear visual history",
+            click: () => fireAndForget(() => clearProductHistoryForModel(this)),
+        });
+
         menu.push({ type: "separator" });
 
         const magnified = globalStore.get(this.nodeModel.isMagnified);
