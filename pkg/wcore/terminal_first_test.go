@@ -5,11 +5,13 @@ package wcore
 
 import (
 	"go/ast"
+	"go/format"
 	"go/parser"
 	"go/token"
 	"os"
 	"reflect"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/wavetermdev/waveterm/pkg/waveobj"
@@ -37,6 +39,73 @@ func TestGetStarterLayoutIsOneFocusedTerminal(t *testing.T) {
 	if got := entry.BlockDef.Meta[waveobj.MetaKey_Controller]; got != "shell" {
 		t.Errorf("starter layout controller = %q, want %q", got, "shell")
 	}
+}
+
+func TestCreateWorkspaceHidesWidgetsOnlyOnInitialLaunch(t *testing.T) {
+	source, err := os.ReadFile("workspace.go")
+	if err != nil {
+		t.Fatalf("read workspace.go: %v", err)
+	}
+	file, err := parser.ParseFile(token.NewFileSet(), "workspace.go", source, 0)
+	if err != nil {
+		t.Fatalf("parse workspace.go: %v", err)
+	}
+
+	var createWorkspace *ast.FuncDecl
+	for _, declaration := range file.Decls {
+		function, ok := declaration.(*ast.FuncDecl)
+		if ok && function.Name.Name == "CreateWorkspace" {
+			createWorkspace = function
+			break
+		}
+	}
+	if createWorkspace == nil {
+		t.Fatal("CreateWorkspace declaration not found")
+	}
+
+	insertIndex, metadataIndex := -1, -1
+	metadataCalls := 0
+	for index, statement := range createWorkspace.Body.List {
+		if strings.Contains(exprText(statement), "wstore.DBInsert(ctx, ws)") {
+			insertIndex = index
+		}
+		ifStatement, ok := statement.(*ast.IfStmt)
+		if !ok || exprText(ifStatement.Cond) != "isInitialLaunch" {
+			continue
+		}
+		var hasWidgetMetadata bool
+		ast.Inspect(ifStatement.Body, func(node ast.Node) bool {
+			call, ok := node.(*ast.CallExpr)
+			if !ok || exprText(call.Fun) != "wstore.UpdateObjectMeta" {
+				return true
+			}
+			metadataCalls++
+			if strings.Contains(exprText(call), "waveobj.MetaKey_LayoutWidgetsVisible: false") {
+				hasWidgetMetadata = true
+			}
+			return true
+		})
+		if hasWidgetMetadata {
+			metadataIndex = index
+		}
+	}
+	if insertIndex == -1 {
+		t.Fatal("CreateWorkspace does not insert the workspace")
+	}
+	if metadataIndex <= insertIndex {
+		t.Fatalf("initial widget metadata index = %d, want after workspace insert index %d", metadataIndex, insertIndex)
+	}
+	if metadataCalls != 1 {
+		t.Fatalf("initial widget metadata writes = %d, want exactly 1 behind isInitialLaunch", metadataCalls)
+	}
+}
+
+func exprText(node ast.Node) string {
+	var text strings.Builder
+	if err := format.Node(&text, token.NewFileSet(), node); err != nil {
+		return ""
+	}
+	return text.String()
 }
 
 func TestEnsureInitialDataCreatesWBTStarterWorkspace(t *testing.T) {

@@ -82,7 +82,7 @@ export const DurableSessionPage = ({
                     <TailDeployLogCommand />
                 </div>
             </div>
-            <OnboardingFooter currentStep={2} totalSteps={4} onNext={onNext} onPrev={onPrev} onSkip={onSkip} />
+            <OnboardingFooter currentStep={1} totalSteps={3} onNext={onNext} onPrev={onPrev} onSkip={onSkip} />
         </div>
     );
 };

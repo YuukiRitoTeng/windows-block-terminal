@@ -62,6 +62,13 @@ func CreateWorkspace(ctx context.Context, name string, icon string, color string
 	if err != nil {
 		return nil, fmt.Errorf("error inserting workspace: %w", err)
 	}
+	if isInitialLaunch {
+		workspaceORef := waveobj.ORefFromWaveObj(ws)
+		err = wstore.UpdateObjectMeta(ctx, *workspaceORef, waveobj.MetaMapType{waveobj.MetaKey_LayoutWidgetsVisible: false}, false)
+		if err != nil {
+			return nil, fmt.Errorf("error setting initial workspace metadata: %w", err)
+		}
+	}
 	_, err = CreateTab(ctx, ws.OID, "", true, isInitialLaunch)
 	if err != nil {
 		return nil, fmt.Errorf("error creating tab: %w", err)

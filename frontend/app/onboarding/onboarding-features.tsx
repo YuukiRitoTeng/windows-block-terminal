@@ -17,7 +17,7 @@ import { DurableSessionPage } from "./onboarding-durable";
 import { OnboardingFooter } from "./onboarding-features-footer";
 import { FakeLayout } from "./onboarding-layout";
 
-type FeaturePageName = "waveai" | "durable" | "magnify" | "files";
+type FeaturePageName = "durable" | "magnify" | "files";
 
 export const WaveAIPage = ({ onNext, onSkip }: { onNext: () => void; onSkip: () => void }) => {
     const isMac = isMacOS();
@@ -167,7 +167,7 @@ export const MagnifyBlocksPage = ({
                     <FakeLayout />
                 </div>
             </div>
-            <OnboardingFooter currentStep={3} totalSteps={4} onNext={onNext} onPrev={onPrev} onSkip={onSkip} />
+            <OnboardingFooter currentStep={2} totalSteps={3} onNext={onNext} onPrev={onPrev} onSkip={onSkip} />
         </div>
     );
 };
@@ -259,13 +259,13 @@ export const FilesPage = ({ onFinish, onPrev }: { onFinish: () => void; onPrev?:
                     {commands[commandIndex](handleCommandComplete)}
                 </div>
             </div>
-            <OnboardingFooter currentStep={4} totalSteps={4} onNext={onFinish} onPrev={onPrev} />
+            <OnboardingFooter currentStep={3} totalSteps={3} onNext={onFinish} onPrev={onPrev} />
         </div>
     );
 };
 
 export const OnboardingFeatures = ({ onComplete }: { onComplete: () => void }) => {
-    const [currentPage, setCurrentPage] = useState<FeaturePageName>("waveai");
+    const [currentPage, setCurrentPage] = useState<FeaturePageName>("durable");
 
     useEffect(() => {
         const clientId = ClientModel.getInstance().clientId;
@@ -282,9 +282,7 @@ export const OnboardingFeatures = ({ onComplete }: { onComplete: () => void }) =
     }, []);
 
     const handleNext = () => {
-        if (currentPage === "waveai") {
-            setCurrentPage("durable");
-        } else if (currentPage === "durable") {
+        if (currentPage === "durable") {
             setCurrentPage("magnify");
         } else if (currentPage === "magnify") {
             setCurrentPage("files");
@@ -292,9 +290,7 @@ export const OnboardingFeatures = ({ onComplete }: { onComplete: () => void }) =
     };
 
     const handlePrev = () => {
-        if (currentPage === "durable") {
-            setCurrentPage("waveai");
-        } else if (currentPage === "magnify") {
+        if (currentPage === "magnify") {
             setCurrentPage("durable");
         } else if (currentPage === "files") {
             setCurrentPage("magnify");
@@ -315,9 +311,6 @@ export const OnboardingFeatures = ({ onComplete }: { onComplete: () => void }) =
 
     let pageComp: React.JSX.Element = null;
     switch (currentPage) {
-        case "waveai":
-            pageComp = <WaveAIPage onNext={handleNext} onSkip={handleSkip} />;
-            break;
         case "durable":
             pageComp = <DurableSessionPage onNext={handleNext} onSkip={handleSkip} onPrev={handlePrev} />;
             break;
