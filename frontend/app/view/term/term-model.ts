@@ -1,8 +1,8 @@
 // Copyright 2026, Command Line Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { WaveAIModel } from "@/app/aipanel/waveai-model";
 import { BlockNodeModel } from "@/app/block/blocktypes";
+import { SNAP_TOUCHED_META_KEY, shouldMarkSnapTerminalTouched } from "@/app/workspace/snapReclaim";
 import { appHandleKeyDown } from "@/app/store/keymodel";
 import { modalsModel } from "@/app/store/modalmodel";
 import type { TabModel } from "@/app/store/tab-model";
@@ -10,10 +10,9 @@ import { waveEventSubscribeSingle } from "@/app/store/wps";
 import { RpcApi } from "@/app/store/wshclientapi";
 import { makeFeBlockRouteId } from "@/app/store/wshrouter";
 import { DefaultRouter, TabRpcClient } from "@/app/store/wshrpcutil";
-import { TermClaudeIcon, TerminalView } from "@/app/view/term/term";
+import { TerminalView } from "@/app/view/term/term";
 import { TermWshClient } from "@/app/view/term/term-wsh";
 import { VDomModel } from "@/app/view/vdom/vdom-model";
-import { WorkspaceLayoutModel } from "@/app/workspace/workspace-layout-model";
 import {
     atoms,
     createBlock,
@@ -37,11 +36,13 @@ import * as services from "@/store/services";
 import * as keyutil from "@/util/keyutil";
 import { isMacOS, isWindows } from "@/util/platformutil";
 import { boundNumber, fireAndForget, stringToBase64 } from "@/util/util";
+import { uiText } from "@/util/ui-locale";
 import * as jotai from "jotai";
 import * as React from "react";
-import { getBlockingCommand } from "./shellblocking";
 import { clearProductHistoryForModel } from "./clear-product-history";
-import { computeTheme, DefaultTermTheme, isLikelyOnSameHost, trimTerminalSelection } from "./termutil";
+import { broadcastToOtherPanes } from "./multi-input";
+import { markSnapTerminalTouched } from "./snap-touch";
+import { computeTheme, DefaultTermTheme, trimTerminalSelection } from "./termutil";
 import { TermWrap, WebGLSupported } from "./termwrap";
 
 export class TermViewModel implements ViewModel {
@@ -133,7 +134,7 @@ export class TermViewModel implements ViewModel {
                     {
                         elemtype: "iconbutton",
                         icon: "square-terminal",
-                        title: "Switch back to Terminal",
+                        title: uiText("terminal.switchToTerminal"),
                         click: () => {
                             this.setTermMode("term");
                         },
@@ -146,7 +147,7 @@ export class TermViewModel implements ViewModel {
                 rtn.push({
                     elemtype: "iconbutton",
                     icon: "bolt",
-                    title: "Switch to Wave App",
+                    title: uiText("terminal.switchToWaveApp"),
                     click: () => {
                         this.setTermMode("vdom");
                     },
@@ -172,7 +173,7 @@ export class TermViewModel implements ViewModel {
                         icon: "refresh",
                         iconColor: "var(--success-color)",
                         iconSpin: true,
-                        title: "Restarting Command",
+                                title: uiText("terminal.restartingCommand"),
                         noAction: true,
                     });
                 } else {
@@ -183,7 +184,7 @@ export class TermViewModel implements ViewModel {
                                 elemtype: "iconbutton",
                                 icon: "check",
                                 iconColor: "var(--success-color)",
-                                title: "Command Exited Successfully",
+                                title: uiText("terminal.commandExited"),
                                 noAction: true,
                             });
                         } else {
@@ -191,7 +192,7 @@ export class TermViewModel implements ViewModel {
                                 elemtype: "iconbutton",
                                 icon: "xmark-large",
                                 iconColor: "var(--error-color)",
-                                title: "Exit Code: " + fullShellProcStatus?.shellprocexitcode,
+                                title: uiText("terminal.exitCode", { code: fullShellProcStatus?.shellprocexitcode ?? "" }),
                                 noAction: true,
                             });
                         }
@@ -202,9 +203,9 @@ export class TermViewModel implements ViewModel {
             if (isMI && this.isBasicTerm(get)) {
                 rtn.push({
                     elemtype: "textbutton",
-                    text: "Multi Input ON",
+                    text: uiText("terminal.multiInputOn"),
                     className: "yellow !py-[2px] !px-[10px] text-[11px] font-[500]",
-                    title: "Input will be sent to all connected terminals (click to disable)",
+                        title: uiText("terminal.broadcastInput"),
                     onClick: () => {
                         globalStore.set(this.tabModel.isTermMultiInput, false);
                     },
@@ -286,14 +287,6 @@ export class TermViewModel implements ViewModel {
             const isCmd = get(this.isCmdController);
             const rtn: IconButtonDecl[] = [];
 
-            const isAIPanelOpen = get(WorkspaceLayoutModel.getInstance().panelVisibleAtom);
-            if (isAIPanelOpen) {
-                const shellIntegrationButton = this.getShellIntegrationIconButton(get);
-                if (shellIntegrationButton) {
-                    rtn.push(shellIntegrationButton);
-                }
-            }
-
             if (get(getSettingsKeyAtom("debug:webglstatus"))) {
                 const webglButton = this.getWebGlIconButton(get);
                 if (webglButton) {
@@ -312,13 +305,13 @@ export class TermViewModel implements ViewModel {
             const noun = isCmd ? "Command" : "Shell";
             if (shellProcStatus == "init") {
                 iconName = "play";
-                title = "Click to Start " + noun;
+                title = uiText("terminal.clickToStart", { noun: isCmd ? "命令" : noun });
             } else if (shellProcStatus == "running") {
                 iconName = "refresh";
-                title = noun + " Running. Click to Restart";
+                title = uiText("terminal.runningRestart", { noun: isCmd ? "命令" : noun });
             } else if (shellProcStatus == "done") {
                 iconName = "refresh";
-                title = noun + " Exited. Click to Restart";
+                title = uiText("terminal.exitedRestart", { noun: isCmd ? "命令" : noun });
             }
             if (iconName != null) {
                 const buttonDecl: IconButtonDecl = {
@@ -400,63 +393,13 @@ export class TermViewModel implements ViewModel {
         });
     }
 
-    getShellIntegrationIconButton(get: jotai.Getter): IconButtonDecl | null {
-        if (!this.termRef.current?.shellIntegrationStatusAtom) {
-            return null;
-        }
-        const shellIntegrationStatus = get(this.termRef.current.shellIntegrationStatusAtom);
-        const claudeCodeActive = get(this.termRef.current.claudeCodeActiveAtom);
-        const icon = claudeCodeActive ? React.createElement(TermClaudeIcon) : "sparkles";
-        if (shellIntegrationStatus == null) {
-            return {
-                elemtype: "iconbutton",
-                icon,
-                className: "text-muted",
-                title: "No shell integration — Wave AI unable to run commands.",
-                noAction: true,
-            };
-        }
-        if (shellIntegrationStatus === "ready") {
-            return {
-                elemtype: "iconbutton",
-                icon,
-                className: "text-accent",
-                title: "Shell ready — Wave AI can run commands in this terminal.",
-                noAction: true,
-            };
-        }
-        if (shellIntegrationStatus === "running-command") {
-            let title = claudeCodeActive
-                ? "Claude Code Detected"
-                : "Shell busy — Wave AI unable to run commands while another command is running.";
-
-            if (this.termRef.current) {
-                const inAltBuffer = this.termRef.current.terminal?.buffer?.active?.type === "alternate";
-                const lastCommand = get(this.termRef.current.lastCommandAtom);
-                const blockingCmd = getBlockingCommand(lastCommand, inAltBuffer);
-                if (blockingCmd) {
-                    title = `Wave AI integration disabled while you're inside ${blockingCmd}.`;
-                }
-            }
-
-            return {
-                elemtype: "iconbutton",
-                icon,
-                className: "text-warning",
-                title: title,
-                noAction: true,
-            };
-        }
-        return null;
-    }
-
     getWebGlIconButton(get: jotai.Getter): IconButtonDecl | null {
         if (!WebGLSupported) {
             return {
                 elemtype: "iconbutton",
                 icon: "microchip",
                 iconColor: "var(--error-color)",
-                title: "WebGL not supported",
+                title: uiText("terminal.webglUnsupported"),
                 noAction: true,
             };
         }
@@ -469,7 +412,7 @@ export class TermViewModel implements ViewModel {
                 elemtype: "iconbutton",
                 icon: "microchip",
                 iconColor: "var(--success-color)",
-                title: "WebGL enabled (click to disable)",
+                title: uiText("terminal.webglEnabled"),
                 click: () => this.toggleWebGl(),
             };
         }
@@ -477,7 +420,7 @@ export class TermViewModel implements ViewModel {
             elemtype: "iconbutton",
             icon: "microchip",
             iconColor: "var(--secondary-text-color)",
-            title: "WebGL disabled (click to enable)",
+            title: uiText("terminal.webglDisabled"),
             click: () => this.toggleWebGl(),
         };
     }
@@ -499,17 +442,45 @@ export class TermViewModel implements ViewModel {
     }
 
     multiInputHandler(data: string) {
-        const tvms = getAllBasicTermModels();
-        for (const tvm of tvms) {
-            if (tvm != this) {
-                tvm.sendDataToController(data);
-            }
-        }
+        // A broadcast types into the other panes on purpose, so those panes are being used; the panes
+        // themselves record that in sendUserInputToController. The targets are resolved here, when the
+        // input is produced, so a pane created after multi-input was switched on is included.
+        broadcastToOtherPanes(getAllBasicTermModels(), this, (atom) => globalStore.get(atom), data);
     }
 
+    /**
+     * Sends input the *user* produced, recording that this terminal has been used first.
+     *
+     * This is the path for every place the app itself turns a user action into terminal input - a
+     * rewritten key press, a multi-input broadcast, a sticker's click command - because those return
+     * false from the terminal's key handler and therefore never reach xterm's own key event.
+     */
+    sendUserInputToController(data: string) {
+        this.markSnapTerminalTouched();
+        this.sendDataToController(data);
+    }
+
+    /**
+     * Low-level send to the block's controller.
+     *
+     * Do not call this for user input: it is also the terminal's data channel, which carries the
+     * answers xterm generates for the program's queries. Use `sendUserInputToController` instead.
+     */
     sendDataToController(data: string) {
         const b64data = stringToBase64(data);
         RpcApi.ControllerInputCommand(TabRpcClient, { blockid: this.blockId, inputdata64: b64data });
+    }
+
+    /**
+     * Marks this terminal as used, the first time the user sends it input.
+     *
+     * Only terminals the Snap Bar created carry the provenance marker, and only those are ever
+     * eligible for reclamation by a smaller preset. Writing this marker means "somebody typed here",
+     * which disqualifies the pane for good - so a preset that would have to remove a pane can never
+     * remove one that was used, even if the command journal never recorded a command for it.
+     */
+    markSnapTerminalTouched() {
+        markSnapTerminalTouched(this.blockId);
     }
 
     setTermMode(mode: "term" | "vdom") {
@@ -711,13 +682,13 @@ export class TermViewModel implements ViewModel {
 
         if (isMacOS()) {
             if (keyutil.checkKeyPressed(waveEvent, "Cmd:ArrowLeft")) {
-                this.sendDataToController("\x01"); // Ctrl-A (beginning of line)
+                this.sendUserInputToController("\x01"); // Ctrl-A (beginning of line)
                 event.preventDefault();
                 event.stopPropagation();
                 return false;
             }
             if (keyutil.checkKeyPressed(waveEvent, "Cmd:ArrowRight")) {
-                this.sendDataToController("\x05"); // Ctrl-E (end of line)
+                this.sendUserInputToController("\x05"); // Ctrl-E (end of line)
                 event.preventDefault();
                 event.stopPropagation();
                 return false;
@@ -727,7 +698,7 @@ export class TermViewModel implements ViewModel {
             const shiftEnterNewlineAtom = getOverrideConfigAtom(this.blockId, "term:shiftenternewline");
             const shiftEnterNewlineEnabled = globalStore.get(shiftEnterNewlineAtom) ?? true;
             if (shiftEnterNewlineEnabled) {
-                this.sendDataToController("\n");
+                this.sendUserInputToController("\n");
                 event.preventDefault();
                 event.stopPropagation();
                 return false;
@@ -830,7 +801,7 @@ export class TermViewModel implements ViewModel {
 
         if (hasSelection) {
             menu.push({
-                label: "Copy",
+            label: uiText("terminal.copy"),
                 click: () => {
                     if (selection) {
                         const text =
@@ -841,22 +812,6 @@ export class TermViewModel implements ViewModel {
                     }
                 },
             });
-            menu.push({ type: "separator" });
-            menu.push({
-                label: "Send to Wave AI",
-                click: () => {
-                    if (selection) {
-                        const aiModel = WaveAIModel.getInstance();
-                        aiModel.appendText(selection, true, { scrollToBottom: true });
-                        const layoutModel = WorkspaceLayoutModel.getInstance();
-                        if (!layoutModel.getAIPanelVisible()) {
-                            layoutModel.setAIPanelVisible(true);
-                        }
-                        aiModel.focusInput();
-                    }
-                },
-            });
-
             menu.push({ type: "separator" });
         }
 
@@ -870,18 +825,7 @@ export class TermViewModel implements ViewModel {
             }
             if (hoveredURL) {
                 menu.push({
-                    label: hoveredURL.hostname ? "Open URL (" + hoveredURL.hostname + ")" : "Open URL",
-                    click: () => {
-                        createBlock({
-                            meta: {
-                                view: "web",
-                                url: hoveredURL.toString(),
-                            },
-                        });
-                    },
-                });
-                menu.push({
-                    label: "Open URL in External Browser",
+            label: uiText("terminal.openUrlExternal"),
                     click: () => {
                         getApi().openExternal(hoveredURL.toString());
                     },
@@ -891,14 +835,14 @@ export class TermViewModel implements ViewModel {
         }
 
         menu.push({
-            label: "Paste",
+            label: uiText("terminal.paste"),
             click: () => {
                 getApi().nativePaste();
             },
         });
 
         menu.push({
-            label: "Clear visual history",
+            label: uiText("terminal.clearVisualHistory"),
             click: () => fireAndForget(() => clearProductHistoryForModel(this)),
         });
 
@@ -906,7 +850,7 @@ export class TermViewModel implements ViewModel {
 
         const magnified = globalStore.get(this.nodeModel.isMagnified);
         menu.push({
-            label: magnified ? "Un-Magnify Block" : "Magnify Block",
+            label: magnified ? uiText("block.unmagnify") : uiText("block.magnify"),
             click: () => {
                 this.nodeModel.toggleMagnify();
             },
@@ -943,7 +887,7 @@ export class TermViewModel implements ViewModel {
 
         const fullMenu: ContextMenuItem[] = [];
         fullMenu.push({
-            label: "Split Horizontally",
+                label: uiText("terminal.splitHorizontal"),
             click: () => {
                 const blockData = globalStore.get(this.blockAtom);
                 const blockDef: BlockDef = {
@@ -953,7 +897,7 @@ export class TermViewModel implements ViewModel {
             },
         });
         fullMenu.push({
-            label: "Split Vertically",
+                label: uiText("terminal.splitVertical"),
             click: () => {
                 const blockData = globalStore.get(this.blockAtom);
                 const blockDef: BlockDef = {
@@ -964,33 +908,8 @@ export class TermViewModel implements ViewModel {
         });
         fullMenu.push({ type: "separator" });
 
-        const lastCommand = globalStore.get(this.termRef?.current?.lastCommandAtom);
-        const cwd = blockData?.meta?.["cmd:cwd"];
-        const canShowFileBrowser = cwd != null && isLikelyOnSameHost(lastCommand);
-
-        if (canShowFileBrowser) {
-            fullMenu.push({
-                label: "File Browser",
-                click: () => {
-                    const blockData = globalStore.get(this.blockAtom);
-                    const connection = blockData?.meta?.connection;
-                    const cwd = blockData?.meta?.["cmd:cwd"];
-                    const meta: Record<string, any> = {
-                        view: "preview",
-                        file: cwd,
-                    };
-                    if (connection) {
-                        meta.connection = connection;
-                    }
-                    const blockDef: BlockDef = { meta };
-                    createBlock(blockDef);
-                },
-            });
-            fullMenu.push({ type: "separator" });
-        }
-
         fullMenu.push({
-            label: "Save Session As...",
+                label: uiText("terminal.saveSession"),
             click: () => {
                 if (this.termRef.current) {
                     const content = this.termRef.current.getScrollbackContent();
@@ -1005,13 +924,13 @@ export class TermViewModel implements ViewModel {
                                 console.error("Failed to save scrollback:", error);
                                 const errorMessage = error?.message || "An unknown error occurred";
                                 modalsModel.pushModal("MessageModal", {
-                                    children: `Failed to save session scrollback: ${errorMessage}`,
+                                    children: uiText("terminal.saveFailed", { detail: errorMessage }),
                                 });
                             }
                         });
                     } else {
                         modalsModel.pushModal("MessageModal", {
-                            children: "No scrollback content to save.",
+                            children: uiText("terminal.noScrollback"),
                         });
                     }
                 }
@@ -1028,14 +947,14 @@ export class TermViewModel implements ViewModel {
             };
         });
         submenu.unshift({
-            label: "Default",
+            label: uiText("terminal.default"),
             type: "checkbox",
             checked: curThemeName == null,
             click: () => this.setTerminalTheme(null),
         });
         const transparencySubMenu: ContextMenuItem[] = [];
         transparencySubMenu.push({
-            label: "Default",
+            label: uiText("terminal.default"),
             type: "checkbox",
             checked: transparencyMeta == null,
             click: () => {
@@ -1046,7 +965,7 @@ export class TermViewModel implements ViewModel {
             },
         });
         transparencySubMenu.push({
-            label: "Transparent Background",
+            label: uiText("terminal.transparentBackground"),
             type: "checkbox",
             checked: transparencyMeta == 0.5,
             click: () => {
@@ -1057,7 +976,7 @@ export class TermViewModel implements ViewModel {
             },
         });
         transparencySubMenu.push({
-            label: "No Transparency",
+            label: uiText("terminal.noTransparency"),
             type: "checkbox",
             checked: transparencyMeta == 0,
             click: () => {
@@ -1084,7 +1003,7 @@ export class TermViewModel implements ViewModel {
             }
         );
         fontSizeSubMenu.unshift({
-            label: "Default (" + defaultFontSize + "px)",
+            label: uiText("terminal.defaultWithValue", { value: defaultFontSize + "px" }),
             type: "checkbox",
             checked: overrideFontSize == null,
             click: () => {
@@ -1102,7 +1021,7 @@ export class TermViewModel implements ViewModel {
         const effectiveCursorBlink = overrideCursorBlink === true;
         const cursorSubMenu: ContextMenuItem[] = [
             {
-                label: "Default",
+                label: uiText("terminal.cursorDefault"),
                 type: "checkbox",
                 checked: isCursorDefault,
                 click: () => {
@@ -1113,7 +1032,7 @@ export class TermViewModel implements ViewModel {
                 },
             },
             {
-                label: "Block",
+                label: uiText("terminal.cursorBlock"),
                 type: "checkbox",
                 checked: !isCursorDefault && effectiveCursor === "block" && !effectiveCursorBlink,
                 click: () => {
@@ -1124,7 +1043,7 @@ export class TermViewModel implements ViewModel {
                 },
             },
             {
-                label: "Block (Blinking)",
+                label: uiText("terminal.cursorBlockBlink"),
                 type: "checkbox",
                 checked: !isCursorDefault && effectiveCursor === "block" && effectiveCursorBlink,
                 click: () => {
@@ -1135,7 +1054,7 @@ export class TermViewModel implements ViewModel {
                 },
             },
             {
-                label: "Bar",
+                label: uiText("terminal.cursorBar"),
                 type: "checkbox",
                 checked: !isCursorDefault && effectiveCursor === "bar" && !effectiveCursorBlink,
                 click: () => {
@@ -1146,7 +1065,7 @@ export class TermViewModel implements ViewModel {
                 },
             },
             {
-                label: "Bar (Blinking)",
+                label: uiText("terminal.cursorBarBlink"),
                 type: "checkbox",
                 checked: !isCursorDefault && effectiveCursor === "bar" && effectiveCursorBlink,
                 click: () => {
@@ -1157,7 +1076,7 @@ export class TermViewModel implements ViewModel {
                 },
             },
             {
-                label: "Underline",
+                label: uiText("terminal.cursorUnderline"),
                 type: "checkbox",
                 checked: !isCursorDefault && effectiveCursor === "underline" && !effectiveCursorBlink,
                 click: () => {
@@ -1168,7 +1087,7 @@ export class TermViewModel implements ViewModel {
                 },
             },
             {
-                label: "Underline (Blinking)",
+                label: uiText("terminal.cursorUnderlineBlink"),
                 type: "checkbox",
                 checked: !isCursorDefault && effectiveCursor === "underline" && effectiveCursorBlink,
                 click: () => {
@@ -1180,29 +1099,29 @@ export class TermViewModel implements ViewModel {
             },
         ];
         fullMenu.push({
-            label: "Themes",
+            label: uiText("terminal.themes"),
             submenu: submenu,
         });
         fullMenu.push({
-            label: "Font Size",
+            label: uiText("terminal.fontSize"),
             submenu: fontSizeSubMenu,
         });
         fullMenu.push({
-            label: "Cursor",
+            label: uiText("terminal.cursor"),
             submenu: cursorSubMenu,
         });
         fullMenu.push({
-            label: "Transparency",
+            label: uiText("terminal.transparency"),
             submenu: transparencySubMenu,
         });
         fullMenu.push({ type: "separator" });
         const advancedSubmenu: ContextMenuItem[] = [];
         const allowBracketedPaste = blockData?.meta?.["term:allowbracketedpaste"];
         advancedSubmenu.push({
-            label: "Allow Bracketed Paste Mode",
+            label: uiText("terminal.allowBracketedPaste"),
             submenu: [
                 {
-                    label: "Default (" + (defaultAllowBracketedPaste ? "On" : "Off") + ")",
+                    label: uiText("terminal.defaultWithValue", { value: defaultAllowBracketedPaste ? uiText("menu.on") : uiText("menu.off") }),
                     type: "checkbox",
                     checked: allowBracketedPaste == null,
                     click: () => {
@@ -1213,7 +1132,7 @@ export class TermViewModel implements ViewModel {
                     },
                 },
                 {
-                    label: "On",
+                    label: uiText("menu.on"),
                     type: "checkbox",
                     checked: allowBracketedPaste === true,
                     click: () => {
@@ -1224,7 +1143,7 @@ export class TermViewModel implements ViewModel {
                     },
                 },
                 {
-                    label: "Off",
+                    label: uiText("menu.off"),
                     type: "checkbox",
                     checked: allowBracketedPaste === false,
                     click: () => {
@@ -1237,15 +1156,15 @@ export class TermViewModel implements ViewModel {
             ],
         });
         advancedSubmenu.push({
-            label: "Force Restart Controller",
+            label: uiText("terminal.forceRestartController"),
             click: () => fireAndForget(() => this.forceRestartController()),
         });
         const isClearOnStart = blockData?.meta?.["cmd:clearonstart"];
         advancedSubmenu.push({
-            label: "Clear Output On Restart",
+            label: uiText("terminal.clearOutputOnRestart"),
             submenu: [
                 {
-                    label: "On",
+                    label: uiText("menu.on"),
                     type: "checkbox",
                     checked: isClearOnStart,
                     click: () => {
@@ -1256,7 +1175,7 @@ export class TermViewModel implements ViewModel {
                     },
                 },
                 {
-                    label: "Off",
+                    label: uiText("menu.off"),
                     type: "checkbox",
                     checked: !isClearOnStart,
                     click: () => {
@@ -1270,10 +1189,10 @@ export class TermViewModel implements ViewModel {
         });
         const runOnStart = blockData?.meta?.["cmd:runonstart"];
         advancedSubmenu.push({
-            label: "Run On Startup",
+            label: uiText("terminal.runOnStartup"),
             submenu: [
                 {
-                    label: "On",
+                    label: uiText("menu.on"),
                     type: "checkbox",
                     checked: runOnStart,
                     click: () => {
@@ -1284,7 +1203,7 @@ export class TermViewModel implements ViewModel {
                     },
                 },
                 {
-                    label: "Off",
+                    label: uiText("menu.off"),
                     type: "checkbox",
                     checked: !runOnStart,
                     click: () => {
@@ -1298,10 +1217,10 @@ export class TermViewModel implements ViewModel {
         });
         const debugConn = blockData?.meta?.["term:conndebug"];
         advancedSubmenu.push({
-            label: "Debug Connection",
+            label: uiText("terminal.debugConnection"),
             submenu: [
                 {
-                    label: "Off",
+                    label: uiText("menu.off"),
                     type: "checkbox",
                     checked: !debugConn,
                     click: () => {
@@ -1312,7 +1231,7 @@ export class TermViewModel implements ViewModel {
                     },
                 },
                 {
-                    label: "Info",
+                    label: uiText("terminal.info"),
                     type: "checkbox",
                     checked: debugConn == "info",
                     click: () => {
@@ -1323,7 +1242,7 @@ export class TermViewModel implements ViewModel {
                     },
                 },
                 {
-                    label: "Verbose",
+                    label: uiText("terminal.verbose"),
                     type: "checkbox",
                     checked: debugConn == "debug",
                     click: () => {
@@ -1339,20 +1258,20 @@ export class TermViewModel implements ViewModel {
         const isDurable = globalStore.get(getBlockTermDurableAtom(this.blockId));
         if (isDurable) {
             advancedSubmenu.push({
-                label: "Session Durability",
+            label: uiText("terminal.sessionDurability"),
                 submenu: [
                     {
-                        label: "Restart Session in Standard Mode",
+                        label: uiText("terminal.restartStandard"),
                         click: () => fireAndForget(() => this.restartSessionWithDurability(false)),
                     },
                 ],
             });
         } else if (isDurable === false) {
             advancedSubmenu.push({
-                label: "Session Durability",
+                label: uiText("terminal.sessionDurability"),
                 submenu: [
                     {
-                        label: "Restart Session in Durable Mode",
+                        label: uiText("terminal.restartDurable"),
                         click: () => fireAndForget(() => this.restartSessionWithDurability(true)),
                     },
                 ],
@@ -1360,13 +1279,13 @@ export class TermViewModel implements ViewModel {
         }
 
         fullMenu.push({
-            label: "Advanced",
+            label: uiText("terminal.advanced"),
             submenu: advancedSubmenu,
         });
         if (blockData?.meta?.["term:vdomtoolbarblockid"]) {
             fullMenu.push({ type: "separator" });
             fullMenu.push({
-                label: "Close Toolbar",
+                label: uiText("terminal.closeToolbar"),
                 click: () => {
                     RpcApi.DeleteSubBlockCommand(TabRpcClient, { blockid: blockData.meta["term:vdomtoolbarblockid"] });
                 },

@@ -39,8 +39,6 @@ let matchConfirmedAnchors: any;
 let RailRequestEpoch: any;
 let RailRecordPoller: any;
 let subscribeCommandAnchors: any;
-let getRelativeAnchorIndex: any;
-let reconcileActiveAnchorIndex: any;
 
 beforeAll(async () => {
     try {
@@ -49,56 +47,11 @@ beforeAll(async () => {
         RailRequestEpoch = rail.RailRequestEpoch;
         RailRecordPoller = rail.RailRecordPoller;
         subscribeCommandAnchors = rail.subscribeCommandAnchors;
-        getRelativeAnchorIndex = rail.getRelativeAnchorIndex;
-        reconcileActiveAnchorIndex = rail.reconcileActiveAnchorIndex;
     } catch {
         matchConfirmedAnchors = undefined;
     }
 });
 
-describe("relative command navigation", () => {
-    it("selects the initial target and wraps in confirmed snapshot order", () => {
-        expect(getRelativeAnchorIndex).toBeTypeOf("function");
-        if (getRelativeAnchorIndex == null) return;
-
-        expect(getRelativeAnchorIndex(0, -1, "next")).toBe(-1);
-        expect(getRelativeAnchorIndex(3, -1, "next")).toBe(0);
-        expect(getRelativeAnchorIndex(3, -1, "previous")).toBe(2);
-        expect(getRelativeAnchorIndex(3, 2, "next")).toBe(0);
-        expect(getRelativeAnchorIndex(3, 0, "previous")).toBe(2);
-        expect(getRelativeAnchorIndex(3, 1, "next")).toBe(2);
-        expect(getRelativeAnchorIndex(3, 1, "previous")).toBe(0);
-    });
-
-    it("resets or preserves the active confirmed mark by id as snapshots change", () => {
-        expect(reconcileActiveAnchorIndex).toBeTypeOf("function");
-        if (reconcileActiveAnchorIndex == null) return;
-        const previous = [{ commandId: "command-1" }, { commandId: "command-2" }, { commandId: "command-3" }];
-
-        expect(reconcileActiveAnchorIndex(previous, previous, 8)).toBe(2);
-        expect(reconcileActiveAnchorIndex(previous, [], 1)).toBe(-1);
-        expect(reconcileActiveAnchorIndex(previous, [{ commandId: "replacement" }], 1)).toBe(-1);
-        expect(
-            reconcileActiveAnchorIndex(previous, [{ commandId: "command-3" }, { commandId: "command-1" }], 0)
-        ).toBe(1);
-    });
-
-    it("uses exact confirmed anchor scrolling for controls and marks", () => {
-        // The real xterm scroll and keyboard interaction remain outside this
-        // source-contract test; no command text, row, or time matching is allowed.
-        expect(railSource).toContain("getRelativeAnchorIndex(anchors.length, activeAnchorIndex, direction)");
-        expect(railSource).toContain("const didScroll = termWrap.scrollToCommandAnchor(target.commandId)");
-        expect(railSource).toContain("if (didScroll)");
-        expect(railSource).toContain("command-navigation-rail-controls");
-        expect(railSource).toContain('onClick={() => navigateRelative("previous")}' );
-        expect(railSource).toContain('onClick={() => navigateRelative("next")}' );
-        expect(railSource).toContain("onMouseDown={(event) => event.preventDefault()}");
-        expect(railSource).toContain('className={`command-navigation-rail-mark${activeAnchorIndex === index ? " is-active" : ""}`}' );
-        expect(railSource).not.toContain("record.command");
-        expect(railSource).not.toContain("started_at");
-        expect(railSource).not.toContain("finished_at");
-    });
-});
 
 describe("command navigation rail", () => {
     it("matches a Journal record only by the confirmed command id", () => {
@@ -129,12 +82,12 @@ describe("command navigation rail", () => {
     it("mounts a compact rail in place of the default history footer and uses the shared Copy All operation", () => {
         // Electron/xterm DOM is not available in this unit environment. This
         // integration contract guards the required mount, authority, and scope.
-        expect(termSource).toContain("<CommandNavigationRail");
+        expect(termSource).toContain("<TerminalContentFrame");
         expect(termSource).not.toContain("<CommandHistory blockId={blockId} model={model} />");
         expect(railSource).toContain("termWrap.subscribeCommandAnchors");
         expect(railSource).toContain("CommandJournalService.ListVisibleRecords(blockId)");
         expect(railSource).toContain("copyCommandAndOutput");
-        expect(railSource).toContain("canCopyOutput(record)");
+        expect(railSource).toContain("canCopyOutput(selectedRecord)");
     });
 
     it("waits a full polling interval between unsettled Journal queries", async () => {

@@ -17,14 +17,14 @@ export const OnboardingFooter = ({
     onSkip?: () => void;
 }) => {
     const isLastStep = currentStep === totalSteps;
-    const buttonText = isLastStep ? "Get Started" : "Next";
+    const buttonText = isLastStep ? "开始使用" : "下一步";
 
     return (
         <footer className="unselectable flex-shrink-0 mt-5 relative">
             <div className="absolute left-0 top-1/2 -translate-y-1/2 flex items-center gap-2">
                 {currentStep > 1 && onPrev && (
                     <button className="text-muted cursor-pointer hover:text-foreground text-[13px]" onClick={onPrev}>
-                        &lt; Prev
+                        &lt; 上一步
                     </button>
                 )}
                 <span className="text-muted text-[13px]">
@@ -41,7 +41,7 @@ export const OnboardingFooter = ({
                     className="absolute right-0 top-1/2 -translate-y-1/2 text-muted cursor-pointer hover:text-muted-hover text-[13px]"
                     onClick={onSkip}
                 >
-                    Skip Feature Tour &gt;
+                    跳过功能导览 &gt;
                 </button>
             )}
         </footer>

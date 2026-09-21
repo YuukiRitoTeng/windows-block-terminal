@@ -4,9 +4,12 @@
 package shellutil
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	_ "embed"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -82,6 +85,20 @@ const (
 	FishIntegrationDir = "shell/fish"
 	WaveHomeBinDir     = "bin"
 	ZshHistoryFileName = ".zsh_history"
+	// WshBinResourcesDirName is the resources-relative directory electron-builder delivers the
+	// remote-deploy wsh binaries into, used when app.asar.unpacked/dist/bin lacks the variant.
+	WshBinResourcesDirName = "wsh-bin"
+	// WshBinPlaceholderExt is the extension those shipped binaries carry. They are delivered as a
+	// non-executable placeholder because the install environment filters *.exe out of that
+	// resources path; GetLocalWshBinaryPath materializes a runnable copy on first use.
+	WshBinPlaceholderExt = ".dat"
+	// WshBinCacheDirName is the data-dir subdirectory holding the materialized runnable copies.
+	WshBinCacheDirName = "wsh-bin"
+	// wshBinCommitTimeout / wshBinCommitBackoff bound the concurrent-commit retry loop. Windows can
+	// transiently refuse both the replacing rename and a read of the destination while a competing
+	// writer is finishing, so the commit is confirmed by retrying rather than by one attempt.
+	wshBinCommitTimeout = 10 * time.Second
+	wshBinCommitBackoff = 25 * time.Millisecond
 )
 
 func DetectLocalShellPath() string {
@@ -349,7 +366,191 @@ func GetLocalWshBinaryPath(version string, goos string, goarch string) (string, 
 		return "", fmt.Errorf("unsupported wsh platform: %s-%s", goos, goarch)
 	}
 	baseName := fmt.Sprintf("wsh-%s-%s.%s%s", version, goos, goarch, ext)
-	return filepath.Join(wavebase.GetWaveAppBinPath(), baseName), nil
+	// Primary path wins unconditionally: when the platform variant is present in the packaged bin
+	// directory the fallback is never consulted and behaviour is byte-for-byte unchanged.
+	primaryPath := filepath.Join(wavebase.GetWaveAppBinPath(), baseName)
+	if _, err := os.Stat(primaryPath); err == nil {
+		return primaryPath, nil
+	}
+	// Packaging fallback: a real NSIS install filters the Windows ARM64 remote-deploy wsh out of
+	// app.asar.unpacked/dist/bin, so electron-builder also ships it as an extraResource named *.dat.
+	// Windows only executes a *.exe, so materialize a runnable copy in the data dir and use it.
+	resourcesPath := wavebase.GetWaveAppResourcesPath()
+	if resourcesPath == "" {
+		return "", fmt.Errorf("wsh binary %q is unavailable: WAVETERM_RESOURCES_PATH is not set", baseName)
+	}
+	datPath := filepath.Join(resourcesPath, WshBinResourcesDirName, baseName+WshBinPlaceholderExt)
+	if _, err := os.Stat(datPath); err != nil {
+		return "", fmt.Errorf("wsh binary %q is unavailable: no fallback payload at %q: %w", baseName, datPath, err)
+	}
+	cachedPath := filepath.Join(wavebase.GetWaveDataDir(), WshBinCacheDirName, baseName)
+	matched, err := wshBinCacheMatchesPayload(datPath, cachedPath)
+	if err != nil {
+		return "", fmt.Errorf("wsh fallback cache check for %q failed: %w", baseName, err)
+	}
+	if !matched {
+		// Either this is the first materialization or the shipped payload changed within the same
+		// version; both require (re)writing the cache from the current payload.
+		if err := materializeWshBinary(datPath, cachedPath); err != nil {
+			return "", fmt.Errorf("wsh fallback materialize for %q from %q failed: %w", baseName, datPath, err)
+		}
+	}
+	return cachedPath, nil
+}
+
+// wshBinCacheMatchesPayload reports whether an existing cache file already holds exactly the bytes
+// of the shipped payload. This is what lets a same-version payload update invalidate the cache.
+func wshBinCacheMatchesPayload(payloadPath string, cachedPath string) (bool, error) {
+	cachedInfo, err := os.Stat(cachedPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("stat cached %q: %w", cachedPath, err)
+	}
+	if cachedInfo.IsDir() {
+		return false, fmt.Errorf("cached path %q is a directory", cachedPath)
+	}
+	payloadInfo, err := os.Stat(payloadPath)
+	if err != nil {
+		return false, fmt.Errorf("stat payload %q: %w", payloadPath, err)
+	}
+	if payloadInfo.Size() != cachedInfo.Size() {
+		return false, nil
+	}
+	payloadSum, err := sha256FileSum(payloadPath)
+	if err != nil {
+		return false, fmt.Errorf("hash payload %q: %w", payloadPath, err)
+	}
+	cachedSum, err := sha256FileSum(cachedPath)
+	if err != nil {
+		return false, fmt.Errorf("hash cached %q: %w", cachedPath, err)
+	}
+	return bytes.Equal(payloadSum, cachedSum), nil
+}
+
+func sha256FileSum(path string) ([]byte, error) {
+	// Open with explicit share flags: concurrent materialization reads the destination while another
+	// caller may still hold a handle to it, and the default Go open mode denies that on Windows.
+	file, err := openFileShared(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	hasher := sha256.New()
+	if _, err := io.Copy(hasher, file); err != nil {
+		return nil, err
+	}
+	return hasher.Sum(nil), nil
+}
+
+// materializeWshBinary atomically writes a runnable copy of the shipped *.dat payload. Each call
+// copies through its own uniquely named temporary file in the destination directory, flushes it with
+// Sync, closes it, and only then renames it into place. Concurrent callers therefore each write a
+// complete file and the rename commits complete identical bytes; the final file is re-verified so a
+// rename race can never leave a torn payload behind.
+func materializeWshBinary(srcPath string, dstPath string) error {
+	dir := filepath.Dir(dstPath)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("create cache dir %q: %w", dir, err)
+	}
+	src, err := os.Open(srcPath)
+	if err != nil {
+		return fmt.Errorf("open payload %q: %w", srcPath, err)
+	}
+	defer src.Close()
+	tmp, err := os.CreateTemp(dir, filepath.Base(dstPath)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("create temp file in %q: %w", dir, err)
+	}
+	tmpPath := tmp.Name()
+	committed := false
+	defer func() {
+		if !committed {
+			os.Remove(tmpPath)
+		}
+	}()
+	if _, err := io.Copy(tmp, src); err != nil {
+		tmp.Close()
+		return fmt.Errorf("copy payload %q -> %q: %w", srcPath, tmpPath, err)
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return fmt.Errorf("sync temp file %q: %w", tmpPath, err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close temp file %q: %w", tmpPath, err)
+	}
+	// On unix this replaces the destination atomically. On Windows os.Rename can fail transiently
+	// while a concurrent writer holds the destination, so the commit retries the rename itself (not
+	// just a destination poll) and accepts a destination another caller already committed.
+	// committed stays false until the payload is confirmed in place, so every failure path below is
+	// still covered by the deferred temp-file removal above.
+	if err := commitWshBinaryFile(tmpPath, dstPath, srcPath); err != nil {
+		return err
+	}
+	committed = true
+	payloadSum, err := sha256FileSum(srcPath)
+	if err != nil {
+		return fmt.Errorf("verify payload %q: %w", srcPath, err)
+	}
+	if !destinationMatchesPayload(dstPath, payloadSum) {
+		return fmt.Errorf("materialized %q does not match payload %q", dstPath, srcPath)
+	}
+	return nil
+}
+
+// commitWshBinaryFile places the payload at dstPath, tolerating concurrent callers racing to
+// materialize the same bytes. It never removes tmpPath: the caller owns temp-file cleanup until the
+// commit is confirmed, so a failed commit cannot leak a `.tmp-*` file.
+//
+// The loop retries the rename itself rather than only polling the destination, because on Windows
+// os.Rename fails with "Access is denied" while a competing writer holds the target. A rename error
+// is therefore not fatal on its own: it is only reported when the destination never reaches the
+// payload bytes within the commit window.
+func commitWshBinaryFile(tmpPath string, dstPath string, payloadPath string) error {
+	payloadSum, err := sha256FileSum(payloadPath)
+	if err != nil {
+		return fmt.Errorf("verify payload %q: %w", payloadPath, err)
+	}
+	var lastRenameErr error
+	moved := false
+	deadline := time.Now().Add(wshBinCommitTimeout)
+	for {
+		if !moved {
+			if renameErr := os.Rename(tmpPath, dstPath); renameErr != nil {
+				lastRenameErr = renameErr
+			} else {
+				moved = true
+			}
+		}
+		if destinationMatchesPayload(dstPath, payloadSum) {
+			// Committed by this call, or already committed by a concurrent caller with identical
+			// bytes. Discard our temporary file on every success path so a successful return never
+			// leaves a `.tmp-*` behind, no matter which caller performed the rename.
+			moved = true
+			os.Remove(tmpPath)
+			return nil
+		}
+		if time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(wshBinCommitBackoff)
+	}
+	if lastRenameErr != nil {
+		return fmt.Errorf("rename %q -> %q: %w", tmpPath, dstPath, lastRenameErr)
+	}
+	return fmt.Errorf("materialized %q does not match payload %q", dstPath, payloadPath)
+}
+
+// destinationMatchesPayload is a best-effort, non-fatal check used by the commit loop; an
+// unreadable destination (a concurrent writer holding it) simply reads as "not yet".
+func destinationMatchesPayload(path string, payloadSum []byte) bool {
+	writtenSum, err := sha256FileSum(path)
+	if err != nil {
+		return false
+	}
+	return bytes.Equal(payloadSum, writtenSum)
 }
 
 // absWshBinDir must be an absolute, expanded path (no ~ or $HOME, etc.)

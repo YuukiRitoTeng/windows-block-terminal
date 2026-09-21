@@ -689,6 +689,14 @@ func StartLocalShellProc(logCtx context.Context, termSize waveobj.TermSize, cmdS
 	if os.Getenv("LANG") == "" {
 		envToAdd["LANG"] = wavebase.DetermineLang()
 	}
+	if useHostedPowerShell {
+		// Hosted PowerShell bypasses the ordinary -File integration script, so
+		// preserve the existing WBT data-bin PATH contract explicitly.
+		wshBinDir := envToAdd["WAVETERM_WSHBINDIR"]
+		if wshBinDir != "" {
+			envToAdd["PATH"] = wshBinDir + string(os.PathListSeparator) + os.Getenv("PATH")
+		}
+	}
 	shellutil.UpdateCmdEnv(ecmd, envToAdd)
 	if useHostedPowerShell {
 		var err error

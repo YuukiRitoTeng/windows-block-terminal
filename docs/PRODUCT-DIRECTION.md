@@ -1,7 +1,7 @@
 # Product Direction — Continuous Terminal + Block-Aware Functionality
 
 Status: **CURRENT PRODUCT-DIRECTION AUTHORITY**  
-Effective date: 2026-09-06
+Effective date: 2026-09-06; R2 UI contract updated 2026-09-16
 
 This document defines the intended user experience for Windows Block Terminal.
 It is the product and presentation authority. It does **not** replace
@@ -46,28 +46,32 @@ surface without replacing it with HTML cards or a second dashboard.
 
 ### 2.2 Lightweight command identity
 
-Each accepted command region should eventually have a subtle, distinct visual
-identity: for example a lightweight marker, gutter cue, boundary or restrained
-color treatment. The exact visual design is **PRODUCT DECIDED / PLANNED**, not
-yet a frozen pixel specification.
+Every navigable ordinary command region must have a lightweight visual marker
+at its confirmed CVA anchor. The selected region must be distinguishable by
+both marker shape/weight and restrained accent color. Markers are presentation
+of confirmed identity, not an inferred output extent. Do not derive region
+ownership or boundaries from rows, prompts, text or proximity.
 
 Large command cards, heavy alternating backgrounds, persistent card panels and
 large animation are not product requirements.
 
-### 2.3 One primary local action: Copy All
+### 2.3 One selected-region action: Copy All
 
-Each logical ordinary-command region should eventually expose one primary local
-action, **Copy All**:
+Each terminal pane exposes exactly one persistent **Copy All** control at the
+bottom-right of its terminal content area. It acts on the currently selected
+ordinary command region:
 
 ```text
 command
 + only that command's corresponding authoritative output
 ```
 
-The action belongs visually to that command region, preferably near the end of
-its output. Copy Command and Copy Output are not separate primary actions in
-the target UX. This is a product requirement, not a claim that the final
-end-of-region control is already implemented.
+The selected commandId is shared by navigation, selected-region marking and
+Copy All. Hover does not select a command or change the copy target. The earlier
+per-region/end-of-output Copy All placement is superseded. Copy Command and
+Copy Output are not separate primary actions. Missing, running, unsafe,
+incomplete, truncated or interactive output keeps Copy All disabled with an
+accessible explanation; never substitute another command's output.
 
 Trusted Copy All must continue to use authoritative Journal/structured-output
 data and explicit completeness, attribution, safety and truncation guarantees.
@@ -84,20 +88,51 @@ persistent Runspace, working directory, environment, variables and functions.
 The existing backend-first Clear semantics remain authoritative. A raw xterm
 buffer clear alone is not the product Clear operation.
 
+The discoverable Global Clear control is fixed at the top-right of each pane's
+terminal content area, outside terminal text and independent of selection.
+Success feedback is transient, outside the terminal stream; it must not remain
+as permanent terminal text. Clear preserves the existing backend-first contract.
+
 ### 2.5 Command navigation, not a history panel
 
-The target command navigation is a thin Codex-like rail or scroll map attached
-to terminal scrollback. Small marks correspond to real command regions; the
-current or nearby command may be emphasized; previous/next navigation and
-click-to-jump may be provided.
+Previous/Next controls sit on the far right, vertically centered within each
+pane's terminal content area. They move the one selected commandId through
+valid confirmed ordinary-command regions. Navigation does not wrap: Previous
+is disabled at the first region and Next at the last. No valid region disables
+both navigation controls and Copy All. Offscreen navigation scrolls using the
+existing confirmed-anchor operation, never a text or row-search heuristic.
 
 This rail is presentation metadata over the continuous terminal. It is not a
 second history database and not a replacement card list. It must use the
 existing causal visual-anchor (CVA) binding where an action needs a
 `CommandRecord`; heuristic row matching is prohibited.
 
-The rail and previous/next interaction are **PRODUCT DECIDED / PLANNED**. No
-claim is made that the final rail is implemented today.
+Initial selection is the newest completed eligible region, or the newest
+eligible running region when none has completed. New completion follows the
+latest region only while selection is already following latest; explicitly
+selecting an older region prevents stealing selection. Scrolling, hover and
+resize never change selection. If the selected anchor disappears, select the
+newest remaining eligible region, or none; Clear/session replacement resets
+selection. State is pane-local and never shared between independent sessions.
+
+These are required acceptance contracts, not claims of implemented behavior.
+The fixed controls must occupy reserved pane-local chrome rather than cover
+terminal glyphs. Use conventional restrained hover/disabled/focus styling,
+accessible names, visible keyboard focus and no unnecessary animation.
+
+### 2.5.1 Mandatory pre-package UI consistency gate
+
+Director must find and correct conflicts identifiable from source structure,
+layout, responsibilities, tests or this product contract before packaging.
+Check top-right Clear, right-center Previous/Next, bottom-right Copy All,
+visible selected-region identity, one shared selection state, overlap and hit
+testing, split/resize behavior and terminal visual primacy. Authored-CSS or
+source-text assertions alone do not establish actual geometry. Run available
+rendered/component/layout checks and record their limits. Missing mandatory
+evidence blocks packaging; it is not delegated to USER as bug discovery.
+Only subjective visual judgment, real OS behavior and human interaction
+experience remain manual acceptance items. No package may be represented as
+R2-complete while a defined control or marker is absent.
 
 ### 2.6 Shared actions and shortcuts
 
@@ -213,9 +248,9 @@ The near-term product sequence is:
 3. Make the default workspace terminal-only while retaining tabs, splits,
    workspaces and parallel terminal sessions.
 4. Add per-command lightweight visual identity over the continuous terminal.
-5. Expose CVA-backed per-command Copy All using authoritative Journal data.
+5. Expose fixed bottom-right Copy All for the selected CVA-backed command using authoritative Journal data.
 6. Add the thin command navigation rail and previous/next navigation.
-7. Keep global Clear available at the terminal/workspace level.
+7. Keep global Clear at the top-right of each terminal pane's content area.
 8. Add configurable shortcuts/settings using shared action semantics.
 9. Build and validate one packaged Windows candidate after artifact-affecting
    work is batched.

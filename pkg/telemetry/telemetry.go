@@ -64,8 +64,6 @@ type TelemetryData struct {
 	ActiveMinutes       int                          `json:"activeminutes"`
 	FgMinutes           int                          `json:"fgminutes"`
 	OpenMinutes         int                          `json:"openminutes"`
-	WaveAIActiveMinutes int                          `json:"waveaiactiveminutes,omitempty"`
-	WaveAIFgMinutes     int                          `json:"waveaifgminutes,omitempty"`
 	NumTabs             int                          `json:"numtabs"`
 	NumBlocks           int                          `json:"numblocks,omitempty"`
 	NumWindows          int                          `json:"numwindows,omitempty"`
@@ -152,8 +150,6 @@ func mergeActivity(curActivity *telemetrydata.TEventProps, newActivity telemetry
 	curActivity.ActiveMinutes += newActivity.ActiveMinutes
 	curActivity.FgMinutes += newActivity.FgMinutes
 	curActivity.OpenMinutes += newActivity.OpenMinutes
-	curActivity.WaveAIActiveMinutes += newActivity.WaveAIActiveMinutes
-	curActivity.WaveAIFgMinutes += newActivity.WaveAIFgMinutes
 	curActivity.TermCommandsRun += newActivity.TermCommandsRun
 	curActivity.TermCommandsRemote += newActivity.TermCommandsRemote
 	curActivity.TermCommandsDurable += newActivity.TermCommandsDurable
@@ -363,8 +359,6 @@ func UpdateActivity(ctx context.Context, update wshrpc.ActivityUpdate) error {
 		tdata.FgMinutes += update.FgMinutes
 		tdata.ActiveMinutes += update.ActiveMinutes
 		tdata.OpenMinutes += update.OpenMinutes
-		tdata.WaveAIFgMinutes += update.WaveAIFgMinutes
-		tdata.WaveAIActiveMinutes += update.WaveAIActiveMinutes
 		tdata.NewTab += update.NewTab
 		tdata.NumStartup += update.Startup
 		tdata.NumShutdown += update.Shutdown

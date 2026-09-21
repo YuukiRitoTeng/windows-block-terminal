@@ -528,23 +528,9 @@ function getLocalHostDisplayNameAtom(): Atom<string> {
     return LocalHostDisplayNameAtom;
 }
 
-/**
- * Open a link in a new window, or in a new web widget. The user can set all links to open in a new web widget using the `web:openlinksinternally` setting.
- * @param uri The link to open.
- * @param forceOpenInternally Force the link to open in a new web widget.
- */
-async function openLink(uri: string, forceOpenInternally = false) {
-    if (forceOpenInternally || globalStore.get(atoms.settingsAtom)?.["web:openlinksinternally"]) {
-        const blockDef: BlockDef = {
-            meta: {
-                view: "web",
-                url: uri,
-            },
-        };
-        await createBlock(blockDef);
-    } else {
-        getApi().openExternal(uri);
-    }
+/** Open a link through the surviving external-browser path. */
+async function openLink(uri: string, _forceOpenInternally = false) {
+    getApi().openExternal(uri);
 }
 
 function registerBlockComponentModel(blockId: string, bcm: BlockComponentModel) {

@@ -1414,35 +1414,26 @@ func (ws *WshServer) PathCommand(ctx context.Context, data wshrpc.PathCommandDat
 	pathType := data.PathType
 	openInternal := data.Open
 	openExternal := data.OpenExternal
-	var path string
-	switch pathType {
-	case "config":
-		path = wavebase.GetWaveConfigDir()
-	case "data":
-		path = wavebase.GetWaveDataDir()
-	case "log":
-		path = filepath.Join(wavebase.GetWaveDataDir(), "waveapp.log")
+	path := data.Path
+	if path == "" {
+		switch pathType {
+		case "config":
+			path = wavebase.GetWaveConfigDir()
+		case "data":
+			path = wavebase.GetWaveDataDir()
+		case "log":
+			path = filepath.Join(wavebase.GetWaveDataDir(), "waveapp.log")
+		}
+	}
+	if path == "" {
+		return "", fmt.Errorf("path is required")
 	}
 
 	if openInternal && openExternal {
 		return "", fmt.Errorf("open and openExternal cannot both be true")
 	}
 
-	if openInternal {
-		_, err := ws.CreateBlockCommand(ctx, wshrpc.CommandCreateBlockData{
-			TabId: data.TabId,
-			BlockDef: &waveobj.BlockDef{Meta: map[string]any{
-				waveobj.MetaKey_View: "preview",
-				waveobj.MetaKey_File: path,
-			}},
-			Ephemeral: true,
-			Focused:   true,
-		})
-
-		if err != nil {
-			return path, fmt.Errorf("error opening path: %w", err)
-		}
-	} else if openExternal {
+	if openInternal || openExternal {
 		err := open.Run(path)
 		if err != nil {
 			return path, fmt.Errorf("error opening path: %w", err)

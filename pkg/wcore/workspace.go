@@ -69,7 +69,9 @@ func CreateWorkspace(ctx context.Context, name string, icon string, color string
 			return nil, fmt.Errorf("error setting initial workspace metadata: %w", err)
 		}
 	}
-	_, err = CreateTab(ctx, ws.OID, "", true, isInitialLaunch)
+	// A new workspace opens in the workspace layout (two terminals side by side); plain New Tab keeps
+	// the single-terminal layout.
+	_, err = CreateWorkspaceTab(ctx, ws.OID, isInitialLaunch)
 	if err != nil {
 		return nil, fmt.Errorf("error creating tab: %w", err)
 	}
@@ -228,6 +230,23 @@ func getNextTabName(tabNames []string) string {
 
 // returns tabid
 func CreateTab(ctx context.Context, workspaceId string, tabName string, activateTab bool, isInitialLaunch bool) (string, error) {
+	return createTabWithLayout(ctx, workspaceId, tabName, activateTab, isInitialLaunch, GetNewTabLayout())
+}
+
+// CreateWorkspaceTab creates the first tab of a newly created workspace, which opens in the workspace
+// layout (two local terminals side by side) instead of the single-terminal layout a plain New Tab gets.
+func CreateWorkspaceTab(ctx context.Context, workspaceId string, isInitialLaunch bool) (string, error) {
+	return createTabWithLayout(ctx, workspaceId, "", true, isInitialLaunch, GetWorkspaceLayout())
+}
+
+func createTabWithLayout(
+	ctx context.Context,
+	workspaceId string,
+	tabName string,
+	activateTab bool,
+	isInitialLaunch bool,
+	layout PortableLayout,
+) (string, error) {
 	if tabName == "" {
 		ws, err := GetWorkspace(ctx, workspaceId)
 		if err != nil {
@@ -257,7 +276,7 @@ func CreateTab(ctx context.Context, workspaceId string, tabName string, activate
 
 	// No need to apply an initial layout for the initial launch, since the starter layout will get applied after onboarding modal dismissal
 	if !isInitialLaunch {
-		err = ApplyPortableLayout(ctx, tab.OID, GetNewTabLayout(), true)
+		err = ApplyPortableLayout(ctx, tab.OID, layout, true)
 		if err != nil {
 			return tab.OID, fmt.Errorf("error applying new tab layout: %w", err)
 		}

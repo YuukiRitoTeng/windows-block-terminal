@@ -15,7 +15,7 @@ import {
 } from "@/app/suggestion/suggestion";
 import { MockBoundary } from "@/app/waveenv/mockboundary";
 import { useWaveEnv } from "@/app/waveenv/waveenv";
-import { openLink } from "@/store/global";
+import { getApi, openLink } from "@/store/global";
 import { adaptFromReactOrNativeKeyEvent, checkKeyPressed } from "@/util/keyutil";
 import { fireAndForget, useAtomValueSafe } from "@/util/util";
 import clsx from "clsx";
@@ -754,17 +754,9 @@ const BookmarkTypeahead = memo(
     ({ model, blockRef }: { model: WebViewModel; blockRef: React.RefObject<HTMLDivElement> }) => {
         const env = useWaveEnv<WebViewEnv>();
         const openBookmarksJson = () => {
-            fireAndForget(async () => {
-                const path = `${env.electron.getConfigDir()}/presets/bookmarks.json`;
-                const blockDef: BlockDef = {
-                    meta: {
-                        view: "preview",
-                        file: path,
-                    },
-                };
-                await env.createBlock(blockDef, false, true);
-                model.setTypeaheadOpen(false);
-            });
+            const path = `${env.electron.getConfigDir()}/presets/bookmarks.json`;
+            getApi().openNativePath(path);
+            model.setTypeaheadOpen(false);
         };
         return (
             <BlockHeaderSuggestionControl

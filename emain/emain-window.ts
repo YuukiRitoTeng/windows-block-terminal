@@ -25,6 +25,8 @@ import {
     setWasInFg,
 } from "./emain-activity";
 import { log } from "./emain-log";
+import { getAllBuilderWindows } from "./emain-builder";
+import { confirmApplicationQuit } from "./emain-quit";
 import { getElectronAppBasePath, isDev, unamePlatform } from "./emain-platform";
 import { getOrCreateWebViewForTab, getWaveTabViewByWebContentsId, WaveTabView } from "./emain-tabview";
 import { delay, ensureBoundsAreVisible, waveKeyToElectronKey } from "./emain-util";
@@ -44,10 +46,19 @@ export type WindowOpts = {
 export const MinWindowWidth = 800;
 export const MinWindowHeight = 500;
 
+/**
+ * Size a brand-new Windows window opens with when neither an explicit size nor a window to inherit
+ * from exists. Wide enough to show two terminals side by side, which is what a new workspace opens
+ * with, without filling the screen; the work area still clamps it on smaller displays.
+ */
+export const NewWindowFallbackWidth = 1280;
+export const NewWindowFallbackHeight = 800;
+
 export function calculateWindowBounds(
     winSize?: { width?: number; height?: number },
     pos?: { x?: number; y?: number },
-    settings?: any
+    settings?: any,
+    newWindowDisplay?: { referenceBounds?: Electron.Rectangle; workArea: Electron.Rectangle }
 ): { x: number; y: number; width: number; height: number } {
     let winWidth = winSize?.width;
     let winHeight = winSize?.height;
@@ -75,6 +86,28 @@ export function calculateWindowBounds(
         } else {
             console.warn('Invalid window:dimensions format. Expected "widthxheight".');
         }
+    }
+
+    // Opt in only for new Windows windows; restored and legacy callers retain
+    // their existing geometry policy.
+    if (newWindowDisplay) {
+        const { referenceBounds, workArea } = newWindowDisplay;
+        const width = Math.min(
+            workArea.width,
+            Math.max(MinWindowWidth, winWidth || referenceBounds?.width || NewWindowFallbackWidth)
+        );
+        const height = Math.min(
+            workArea.height,
+            Math.max(MinWindowHeight, winHeight || referenceBounds?.height || NewWindowFallbackHeight)
+        );
+        const x = referenceBounds ? referenceBounds.x + 32 : workArea.x + (workArea.width - width) / 2;
+        const y = referenceBounds ? referenceBounds.y + 32 : workArea.y + (workArea.height - height) / 2;
+        return {
+            x: Math.round(Math.max(workArea.x, Math.min(x, workArea.x + workArea.width - width))),
+            y: Math.round(Math.max(workArea.y, Math.min(y, workArea.y + workArea.height - height))),
+            width,
+            height,
+        };
     }
 
     if (winWidth == null || winWidth == 0) {
@@ -160,6 +193,7 @@ export class WaveBrowserWindow extends BaseWindow {
     allLoadedTabViews: Map<string, WaveTabView>;
     activeTabView: WaveTabView;
     private canClose: boolean;
+    private closePending = false;
     private deleteAllowed: boolean;
     private actionQueue: WindowActionQueueEntry[];
 
@@ -167,14 +201,25 @@ export class WaveBrowserWindow extends BaseWindow {
         const settings = fullConfig?.settings;
 
         console.log("create win", waveWindow.oid);
-        const winBounds = calculateWindowBounds(waveWindow.winsize, waveWindow.pos, settings);
+        const isNewWindowsWindow = opts.unamePlatform === "win32" && waveWindow.isnew;
+        const referenceWindow = focusedWaveWindow && !focusedWaveWindow.isDestroyed() ? focusedWaveWindow : null;
+        const newWindowDisplay = isNewWindowsWindow
+            ? {
+                  referenceBounds: referenceWindow?.getNormalBounds(),
+                  workArea: (referenceWindow
+                      ? screen.getDisplayMatching(referenceWindow.getBounds())
+                      : screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
+                  ).workArea,
+              }
+            : undefined;
+        const winBounds = calculateWindowBounds(waveWindow.winsize, waveWindow.pos, settings, newWindowDisplay);
         const winOpts: BaseWindowConstructorOptions = {
             x: winBounds.x,
             y: winBounds.y,
             width: winBounds.width,
             height: winBounds.height,
-            minWidth: MinWindowWidth,
-            minHeight: MinWindowHeight,
+            minWidth: isNewWindowsWindow ? Math.min(MinWindowWidth, winBounds.width) : MinWindowWidth,
+            minHeight: isNewWindowsWindow ? Math.min(MinWindowHeight, winBounds.height) : MinWindowHeight,
             show: false,
             title: "Windows Block Terminal",
         };
@@ -321,11 +366,16 @@ export class WaveBrowserWindow extends BaseWindow {
                 return;
             }
             e.preventDefault();
+            if (this.closePending) {
+                return;
+            }
+            this.closePending = true;
             fireAndForget(async () => {
-                const numWindows = waveWindowMap.size;
-                const fullConfig = await RpcApi.GetFullConfigCommand(ElectronWshClient);
-                if (numWindows > 1 || !fullConfig.settings["window:savelastwindow"]) {
-                    if (fullConfig.settings["window:confirmclose"]) {
+                try {
+                    const fullConfig = await RpcApi.GetFullConfigCommand(ElectronWshClient);
+                    const numWindows = waveWindowMap.size;
+                    const deleteOnClose = numWindows > 1 || !fullConfig.settings["window:savelastwindow"];
+                    if (deleteOnClose && fullConfig.settings["window:confirmclose"]) {
                         const workspace = await WorkspaceService.GetWorkspace(this.workspaceId);
                         if (isNonEmptyUnsavedWorkspace(workspace)) {
                             const choice = dialog.showMessageBoxSync(this, {
@@ -340,10 +390,25 @@ export class WaveBrowserWindow extends BaseWindow {
                             }
                         }
                     }
-                    this.deleteAllowed = true;
+                    // Recount after asynchronous reads. Windows already approved
+                    // for closing must not hide the final window's quit gate.
+                    const remainingWindows = [...waveWindowMap.values()].filter(
+                        (win) => !win.isDestroyed() && !win.canClose
+                    ).length;
+                    if (
+                        opts.unamePlatform === "win32" &&
+                        remainingWindows === 1 &&
+                        getAllBuilderWindows().length === 0 &&
+                        !confirmApplicationQuit(fullConfig.settings["app:confirmquit"] ?? true)
+                    ) {
+                        return;
+                    }
+                    this.deleteAllowed = deleteOnClose;
+                    this.canClose = true;
+                    this.close();
+                } finally {
+                    this.closePending = false;
                 }
-                this.canClose = true;
-                this.close();
             });
         });
         this.on("closed", () => {
@@ -771,13 +836,6 @@ ipcMain.on("create-tab", async (event, _opts) => {
     }
     event.returnValue = true;
     return null;
-});
-
-ipcMain.on("set-waveai-open", (event, isOpen: boolean) => {
-    const tabView = getWaveTabViewByWebContentsId(event.sender.id);
-    if (tabView) {
-        tabView.isWaveAIOpen = isOpen;
-    }
 });
 
 ipcMain.handle("close-tab", async (event, workspaceId: string, tabId: string, confirmClose: boolean) => {

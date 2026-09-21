@@ -1,8 +1,6 @@
 // Copyright 2026, Command Line Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { WaveAIModel } from "@/app/aipanel/waveai-model";
-import { FocusManager } from "@/app/store/focusManager";
 import {
     atoms,
     createBlock,
@@ -21,10 +19,9 @@ import {
     WOS,
 } from "@/app/store/global";
 import { getActiveTabModel } from "@/app/store/tab-model";
-import { WorkspaceLayoutModel } from "@/app/workspace/workspace-layout-model";
+import { MultiInputToggleKey, nextMultiInputState } from "@/app/view/term/multi-input";
 import { deleteLayoutModelForTab, getLayoutModelForStaticTab, NavigateDirection } from "@/layout/index";
 import * as keyutil from "@/util/keyutil";
-import { isWindows } from "@/util/platformutil";
 import { CHORD_TIMEOUT } from "@/util/sharedconst";
 import { fireAndForget } from "@/util/util";
 import * as jotai from "jotai";
@@ -145,22 +142,6 @@ function simpleCloseStaticTab() {
 }
 
 function uxCloseBlock(blockId: string) {
-    const workspaceLayoutModel = WorkspaceLayoutModel.getInstance();
-    const isAIPanelOpen = workspaceLayoutModel.getAIPanelVisible();
-    if (isAIPanelOpen && getStaticTabBlockCount() === 1) {
-        const aiModel = WaveAIModel.getInstance();
-        const shouldSwitchToAI = !globalStore.get(aiModel.isChatEmptyAtom) || aiModel.hasNonEmptyInput();
-        if (shouldSwitchToAI) {
-            replaceBlock(blockId, { meta: { view: "launcher" } }, false);
-            setTimeout(() => WaveAIModel.getInstance().focusInput(), 50);
-            return;
-        }
-    }
-
-    const blockAtom = WOS.getWaveObjectAtom<Block>(WOS.makeORef("block", blockId));
-    const blockData = globalStore.get(blockAtom);
-    const isAIFileDiff = blockData?.meta?.view === "aifilediff";
-
     // If this is the last block, closing it will close the tab — route through simpleCloseStaticTab
     // so the tab:confirmclose setting is respected.
     if (getStaticTabBlockCount() === 1) {
@@ -172,35 +153,10 @@ function uxCloseBlock(blockId: string) {
     const node = layoutModel.getNodeByBlockId(blockId);
     if (node) {
         fireAndForget(() => layoutModel.closeNode(node.id));
-
-        if (isAIFileDiff && isAIPanelOpen) {
-            setTimeout(() => WaveAIModel.getInstance().focusInput(), 50);
-        }
     }
 }
 
 function genericClose() {
-    const focusType = FocusManager.getInstance().getFocusType();
-    if (focusType === "waveai") {
-        WorkspaceLayoutModel.getInstance().setAIPanelVisible(false);
-        return;
-    }
-
-    const workspaceLayoutModel = WorkspaceLayoutModel.getInstance();
-    const isAIPanelOpen = workspaceLayoutModel.getAIPanelVisible();
-    if (isAIPanelOpen && getStaticTabBlockCount() === 1) {
-        const aiModel = WaveAIModel.getInstance();
-        const shouldSwitchToAI = !globalStore.get(aiModel.isChatEmptyAtom) || aiModel.hasNonEmptyInput();
-        if (shouldSwitchToAI) {
-            const layoutModel = getLayoutModelForStaticTab();
-            const focusedNode = globalStore.get(layoutModel.focusedNode);
-            if (focusedNode) {
-                replaceBlock(focusedNode.data.blockId, { meta: { view: "launcher" } }, false);
-                setTimeout(() => WaveAIModel.getInstance().focusInput(), 50);
-                return;
-            }
-        }
-    }
     const blockCount = getStaticTabBlockCount();
     if (blockCount === 0) {
         simpleCloseStaticTab();
@@ -216,16 +172,7 @@ function genericClose() {
 
     const layoutModel = getLayoutModelForStaticTab();
     const focusedNode = globalStore.get(layoutModel.focusedNode);
-    const blockId = focusedNode?.data?.blockId;
-    const blockAtom = blockId ? WOS.getWaveObjectAtom<Block>(WOS.makeORef("block", blockId)) : null;
-    const blockData = blockAtom ? globalStore.get(blockAtom) : null;
-    const isAIFileDiff = blockData?.meta?.view === "aifilediff";
-
     fireAndForget(layoutModel.closeFocusedNode.bind(layoutModel));
-
-    if (isAIFileDiff && isAIPanelOpen) {
-        setTimeout(() => WaveAIModel.getInstance().focusInput(), 50);
-    }
 }
 
 function switchBlockByBlockNum(index: number) {
@@ -241,36 +188,14 @@ function switchBlockByBlockNum(index: number) {
 
 function switchBlockInDirection(direction: NavigateDirection) {
     const layoutModel = getLayoutModelForStaticTab();
-    const focusType = FocusManager.getInstance().getFocusType();
-
     if (direction === NavigateDirection.Left) {
         const numBlocks = globalStore.get(layoutModel.numLeafs);
-        if (focusType === "waveai") {
-            return;
-        }
         if (numBlocks === 1) {
-            FocusManager.getInstance().requestWaveAIFocus();
-            setTimeout(() => {
-                FocusManager.getInstance().refocusNode();
-            }, 10);
             return;
         }
     }
 
-    if (direction === NavigateDirection.Right && focusType === "waveai") {
-        FocusManager.getInstance().requestNodeFocus();
-        return;
-    }
-
-    const inWaveAI = focusType === "waveai";
-    const navResult = layoutModel.switchNodeFocusInDirection(direction, inWaveAI);
-    if (navResult.atLeft) {
-        FocusManager.getInstance().requestWaveAIFocus();
-        setTimeout(() => {
-            FocusManager.getInstance().refocusNode();
-        }, 10);
-        return;
-    }
+    layoutModel.switchNodeFocusInDirection(direction, false);
     setTimeout(() => {
         globalRefocus();
     }, 10);
@@ -655,17 +580,16 @@ function registerGlobalKeys() {
             return true;
         }
     });
-    globalKeyMap.set("Ctrl:Shift:i", () => {
+    globalKeyMap.set(MultiInputToggleKey, () => {
         const tabModel = getActiveTabModel();
         if (tabModel == null) {
             return true;
         }
         const curMI = globalStore.get(tabModel.isTermMultiInput);
-        if (!curMI && countTermBlocks() <= 1) {
-            // don't turn on multi-input unless there are 2 or more basic term blocks
-            return true;
+        const nextMI = nextMultiInputState(curMI, countTermBlocks());
+        if (nextMI !== curMI) {
+            globalStore.set(tabModel.isTermMultiInput, nextMI);
         }
-        globalStore.set(tabModel.isTermMultiInput, !curMI);
         return true;
     });
     for (let idx = 1; idx <= 9; idx++) {
@@ -679,25 +603,6 @@ function registerGlobalKeys() {
         });
         globalKeyMap.set(`Ctrl:Shift:c{Numpad${idx}}`, () => {
             switchBlockByBlockNum(idx);
-            return true;
-        });
-    }
-    if (isWindows()) {
-        globalKeyMap.set("Alt:c{Digit0}", () => {
-            WaveAIModel.getInstance().focusInput();
-            return true;
-        });
-        globalKeyMap.set("Alt:c{Numpad0}", () => {
-            WaveAIModel.getInstance().focusInput();
-            return true;
-        });
-    } else {
-        globalKeyMap.set("Ctrl:Shift:c{Digit0}", () => {
-            WaveAIModel.getInstance().focusInput();
-            return true;
-        });
-        globalKeyMap.set("Ctrl:Shift:c{Numpad0}", () => {
-            WaveAIModel.getInstance().focusInput();
             return true;
         });
     }
@@ -739,11 +644,6 @@ function registerGlobalKeys() {
             return true;
         }
         return false;
-    });
-    globalKeyMap.set("Cmd:Shift:a", () => {
-        const currentVisible = WorkspaceLayoutModel.getInstance().getAIPanelVisible();
-        WorkspaceLayoutModel.getInstance().setAIPanelVisible(!currentVisible);
-        return true;
     });
     const allKeys = Array.from(globalKeyMap.keys());
     // special case keys, handled by web view

@@ -32,25 +32,36 @@ type PortableLayout []struct {
 	Focused  bool              `json:"focused"`
 }
 
-func GetStarterLayout() PortableLayout {
-	return PortableLayout{
-		{IndexArr: []int{0}, BlockDef: &waveobj.BlockDef{
-			Meta: waveobj.MetaMapType{
-				waveobj.MetaKey_View:       "term",
-				waveobj.MetaKey_Controller: "shell",
-			},
-		}, Focused: true},
+func termBlockDef() *waveobj.BlockDef {
+	return &waveobj.BlockDef{
+		Meta: waveobj.MetaMapType{
+			waveobj.MetaKey_View:       "term",
+			waveobj.MetaKey_Controller: "shell",
+		},
 	}
 }
 
+// GetWorkspaceLayout is the layout a newly created workspace opens with: two local terminals side by
+// side, split evenly. It matches the frontend's default Snap Layout preset ("two-columns"), so a
+// workspace that has never been rearranged already looks like the preset the Snap Bar offers.
+//
+// Neither entry carries an explicit size on purpose. The first insert turns its node into the group
+// that holds the panes, so an explicit size on that entry ends up on the group while its pane keeps
+// the default - which would leave the two panes uneven (10:50 for sizes 50/50). Equal defaults are
+// what an even split looks like here; frontend/layout/tests/workspaceDefaultLayout.test.ts runs this
+// exact layout through the real tree reducer and asserts the panes stay equal.
+func GetWorkspaceLayout() PortableLayout {
+	return PortableLayout{
+		{IndexArr: []int{0}, BlockDef: termBlockDef(), Focused: true},
+		{IndexArr: []int{1}, BlockDef: termBlockDef()},
+	}
+}
+
+// GetNewTabLayout is the layout a plain New Tab opens with: a single local terminal. Only the first
+// tab of a new workspace opens in GetWorkspaceLayout.
 func GetNewTabLayout() PortableLayout {
 	return PortableLayout{
-		{IndexArr: []int{0}, BlockDef: &waveobj.BlockDef{
-			Meta: waveobj.MetaMapType{
-				waveobj.MetaKey_View:       "term",
-				waveobj.MetaKey_Controller: "shell",
-			},
-		}, Focused: true},
+		{IndexArr: []int{0}, BlockDef: termBlockDef(), Focused: true},
 	}
 }
 
@@ -151,10 +162,10 @@ func BootstrapStarterLayout(ctx context.Context) error {
 
 	tabId := workspace.ActiveTabId
 
-	starterLayout := GetStarterLayout()
-	err = ApplyPortableLayout(ctx, tabId, starterLayout, false)
+	workspaceLayout := GetWorkspaceLayout()
+	err = ApplyPortableLayout(ctx, tabId, workspaceLayout, false)
 	if err != nil {
-		return fmt.Errorf("error applying starter layout: %w", err)
+		return fmt.Errorf("error applying workspace layout: %w", err)
 	}
 
 	return nil

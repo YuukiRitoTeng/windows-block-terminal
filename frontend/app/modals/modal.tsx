@@ -3,6 +3,7 @@
 
 import { Button } from "@/app/element/button";
 import { cn } from "@/util/util";
+import { uiText } from "@/util/ui-locale";
 import clsx from "clsx";
 import { forwardRef } from "react";
 import ReactDOM from "react-dom";
@@ -48,7 +49,7 @@ const Modal = forwardRef<HTMLDivElement, ModalProps>(
             <div className="modal-wrapper">
                 {renderBackdrop(onClickBackdrop)}
                 <div ref={ref} className={clsx(`modal`, className)}>
-                    <Button className="grey ghost modal-close-btn" onClick={onClose} title="Close (ESC)">
+                    <Button className="grey ghost modal-close-btn" onClick={onClose} title={uiText("modal.closeEsc")}>
                         <i className="fa-sharp fa-solid fa-xmark"></i>
                     </Button>
                     <div className="content-wrapper">
@@ -92,8 +93,8 @@ interface ModalFooterProps {
 const ModalFooter = ({
     onCancel,
     onOk,
-    cancelLabel = "Cancel",
-    okLabel = "Ok",
+    cancelLabel = uiText("modal.cancel"),
+    okLabel = uiText("modal.ok"),
     okDisabled,
     cancelDisabled,
 }: ModalFooterProps) => {

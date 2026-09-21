@@ -8,15 +8,12 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/wavetermdev/waveterm/pkg/waveobj"
+	"github.com/wavetermdev/waveterm/pkg/remote/conncontroller"
 	"github.com/wavetermdev/waveterm/pkg/wshrpc"
 	"github.com/wavetermdev/waveterm/pkg/wshrpc/wshclient"
 )
-
-var viewMagnified bool
 
 var viewCmd = &cobra.Command{
 	Use:     "view {file|directory|URL}",
@@ -34,10 +31,20 @@ var editCmd = &cobra.Command{
 }
 
 func init() {
-	viewCmd.Flags().BoolVarP(&viewMagnified, "magnified", "m", false, "open view in magnified mode")
 	rootCmd.AddCommand(viewCmd)
-	editCmd.Flags().BoolVarP(&viewMagnified, "magnified", "m", false, "open view in magnified mode")
 	rootCmd.AddCommand(editCmd)
+}
+
+func openExternalTarget(tabId string, target string) error {
+	_, err := wshclient.PathCommand(RpcClient, wshrpc.PathCommandData{
+		Path:         target,
+		OpenExternal: true,
+		TabId:        tabId,
+	}, &wshrpc.RpcOpts{Timeout: 2000})
+	if err != nil {
+		return fmt.Errorf("opening target externally: %w", err)
+	}
+	return nil
 }
 
 func viewRun(cmd *cobra.Command, args []string) (rtnErr error) {
@@ -58,57 +65,39 @@ func viewRun(cmd *cobra.Command, args []string) (rtnErr error) {
 		return fmt.Errorf("no WAVETERM_TABID env var set")
 	}
 	fileArg := args[0]
-	conn := RpcContext.Conn
-	var wshCmd *wshrpc.CommandCreateBlockData
-	if strings.HasPrefix(fileArg, "http://") || strings.HasPrefix(fileArg, "https://") {
-		wshCmd = &wshrpc.CommandCreateBlockData{
-			TabId: tabId,
-			BlockDef: &waveobj.BlockDef{
-				Meta: map[string]any{
-					waveobj.MetaKey_View: "web",
-					waveobj.MetaKey_Url:  fileArg,
-				},
-			},
-			Magnified: viewMagnified,
-			Focused:   true,
-		}
+	var resolved editTarget
+	var err error
+	if cmdName == "edit" {
+		resolved, err = resolveEditTarget(RpcContext.Conn, fileArg)
 	} else {
-		absFile, err := filepath.Abs(fileArg)
-		if err != nil {
-			return fmt.Errorf("getting absolute path: %w", err)
-		}
-		absParent, err := filepath.Abs(filepath.Dir(fileArg))
-		if err != nil {
-			return fmt.Errorf("getting absolute path of parent dir: %w", err)
-		}
-		_, err = os.Stat(absParent)
-		if err == fs.ErrNotExist {
-			return fmt.Errorf("parent directory does not exist: %q", absParent)
-		}
-		if err != nil {
-			return fmt.Errorf("getting file info: %w", err)
-		}
-		wshCmd = &wshrpc.CommandCreateBlockData{
-			TabId: tabId,
-			BlockDef: &waveobj.BlockDef{
-				Meta: map[string]interface{}{
-					waveobj.MetaKey_View: "preview",
-					waveobj.MetaKey_File: absFile,
-				},
-			},
-			Magnified: viewMagnified,
-			Focused:   true,
-		}
-		if cmdName == "edit" {
-			wshCmd.BlockDef.Meta[waveobj.MetaKey_Edit] = true
-		}
-		if conn != "" {
-			wshCmd.BlockDef.Meta[waveobj.MetaKey_Connection] = conn
-		}
+		resolved, err = resolveViewTarget(RpcContext.Conn, fileArg)
 	}
-	_, err := wshclient.CreateBlockCommand(RpcClient, *wshCmd, &wshrpc.RpcOpts{Timeout: 2000})
 	if err != nil {
-		return fmt.Errorf("running view command: %w", err)
+		return err
 	}
-	return nil
+	if resolved.kind != editTargetExternal {
+		if cmdName != "edit" {
+			return fmt.Errorf("%s target cannot use the Terminal editor route", cmdName)
+		}
+		return createRemoteEditorTerminal(tabId, resolved.connection, resolved.target, false)
+	}
+	if isExternalURL(fileArg) || !conncontroller.IsLocalConnName(resolved.connection) {
+		return openExternalTarget(tabId, resolved.target)
+	}
+	absFile, err := filepath.Abs(resolved.target)
+	if err != nil {
+		return fmt.Errorf("getting absolute path: %w", err)
+	}
+	absParent, err := filepath.Abs(filepath.Dir(resolved.target))
+	if err != nil {
+		return fmt.Errorf("getting absolute path of parent dir: %w", err)
+	}
+	_, err = os.Stat(absParent)
+	if err == fs.ErrNotExist {
+		return fmt.Errorf("parent directory does not exist: %q", absParent)
+	}
+	if err != nil {
+		return fmt.Errorf("getting file info: %w", err)
+	}
+	return openExternalTarget(tabId, absFile)
 }

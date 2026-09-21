@@ -199,6 +199,7 @@ static class Program
         runspace = rs;
         rs.Open();
         log.Write($"RUNSPACE_OPEN instance_id={rs.InstanceId}");
+        InitializeHostedRunspace();
         sidechannel.Send(new { kind = "runtime_ready", hostId = Environment.ProcessId.ToString(CultureInfo.InvariantCulture), runspaceId = rs.InstanceId.ToString("N") });
         Console.WriteLine("WBT hosted PowerShell ready");
 
@@ -226,6 +227,69 @@ static class Program
         log.Write($"RUNSPACE_CLOSE instance_id={rs.InstanceId}");
         sidechannel.Dispose();
         return 0;
+    }
+
+    static void InitializeHostedRunspace()
+    {
+        var ownerPid = Environment.GetEnvironmentVariable("WAVETERM_SI_OWNER_PID") ?? "";
+        var installed = Environment.GetEnvironmentVariable("WAVETERM_SI_INSTALLED") ?? "";
+        var currentPid = Environment.ProcessId.ToString(CultureInfo.InvariantCulture);
+        var wshBinDir = Environment.GetEnvironmentVariable("WAVETERM_WSHBINDIR") ?? "";
+        var swapToken = Environment.GetEnvironmentVariable("WAVETERM_SWAPTOKEN") ?? "";
+
+        trace!.Write($"SI_INIT_BEGIN owner_pid={Escape(ownerPid)} installed={Escape(installed)} current_pid={currentPid}");
+        if (!string.IsNullOrWhiteSpace(ownerPid) && !string.Equals(ownerPid, currentPid, StringComparison.Ordinal))
+        {
+            trace.Write($"SI_INIT_FOREIGN_OWNER owner_pid={Escape(ownerPid)} action=hosted_takeover current_pid={currentPid}");
+        }
+        if (string.Equals(installed, "1", StringComparison.Ordinal))
+        {
+            trace.Write("SI_INIT_INSTALLED value=1 action=hosted_reinitialize");
+        }
+        if (string.IsNullOrWhiteSpace(wshBinDir))
+        {
+            trace.Write("SI_INIT_SKIPPED reason=missing_wsh_bindir");
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(swapToken))
+        {
+            trace.Write("SI_INIT_SKIPPED reason=missing_swap_token");
+            return;
+        }
+
+        using var ps = PowerShell.Create();
+        ps.Runspace = runspace;
+        const string initScript = @"
+param($wshBinDir, $swapToken, $ownerPid)
+$env:PATH = $wshBinDir + [IO.Path]::PathSeparator + $env:PATH
+$env:WAVETERM_SI_OWNER_PID = $ownerPid
+$env:WAVETERM_SI_INSTALLED = '1'
+$env:WAVETERM_SWAPTOKEN = $swapToken
+$waveterm_swaptoken_output = wsh token $env:WAVETERM_SWAPTOKEN pwsh 2>$null | Out-String
+if ([string]::IsNullOrWhiteSpace($waveterm_swaptoken_output)) {
+    throw 'wsh token returned an empty hosted initialization script'
+}
+Invoke-Expression $waveterm_swaptoken_output
+Remove-Variable -Name waveterm_swaptoken_output
+Remove-Item Env:WAVETERM_SWAPTOKEN -ErrorAction SilentlyContinue
+";
+        ps.AddScript(initScript).AddArgument(wshBinDir).AddArgument(swapToken).AddArgument(currentPid).Invoke();
+        if (ps.HadErrors)
+        {
+            var error = ps.Streams.Error.FirstOrDefault()?.ToString() ?? "unknown hosted initialization error";
+            trace.Write($"SI_INIT_ERROR message={Escape(error)}");
+            throw new InvalidOperationException(error);
+        }
+
+        using var verify = PowerShell.Create();
+        verify.Runspace = runspace;
+        var command = verify.AddCommand("Get-Command").AddParameter("Name", "wsh").Invoke().FirstOrDefault();
+        if (command?.BaseObject is not CommandInfo info || info.CommandType != CommandTypes.Application)
+        {
+            trace.Write("SI_INIT_ERROR message=wsh_not_resolved_as_application");
+            throw new InvalidOperationException("hosted initialization did not resolve wsh");
+        }
+        trace.Write($"SI_INIT_COMPLETE command_type={info.CommandType} source={Escape(info.Source)}");
     }
 
     static void RunScript(string command)

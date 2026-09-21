@@ -1,16 +1,19 @@
 // Copyright 2025, Command Line Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { autoUpdate, FloatingPortal, Middleware, offset, useFloating } from "@floating-ui/react";
+import { autoUpdate, FloatingPortal, Middleware, offset, size, useFloating } from "@floating-ui/react";
 import clsx from "clsx";
 import { atom, useAtom, WritableAtom } from "jotai";
 import { memo, useCallback, useEffect, useMemo, useRef } from "react";
 import { IconButton, ToggleIconButton } from "./iconbutton";
 import { Input } from "./input";
+import { uiText } from "@/util/ui-locale";
 import "./search.scss";
 
 type SearchProps = SearchAtoms & {
     anchorRef?: React.RefObject<HTMLElement>;
+    className?: string;
+    maxWidth?: number | ((referenceWidth: number) => number);
     offsetX?: number;
     offsetY?: number;
     onSearch?: (search: string) => void;
@@ -28,6 +31,8 @@ const SearchComponent = ({
     isOpen: isOpenAtom,
     focusInput: focusInputAtom,
     anchorRef,
+    className,
+    maxWidth,
     offsetX = 10,
     offsetY = 10,
     onSearch,
@@ -91,6 +96,20 @@ const SearchComponent = ({
         [offsetX, offsetY]
     );
     middleware.push(offset(offsetCallback));
+    if (maxWidth != null) {
+        middleware.push(
+            size({
+                apply({ rects, elements }) {
+                    const requestedWidth =
+                        typeof maxWidth === "function" ? maxWidth(rects.reference.width) : maxWidth;
+                    elements.floating.style.setProperty(
+                        "--search-constrained-max-width",
+                        `${Math.max(0, requestedWidth)}px`
+                    );
+                },
+            })
+        );
+    }
 
     const { refs, floatingStyles } = useFloating({
         placement: "top-end",
@@ -129,7 +148,7 @@ const SearchComponent = ({
     const prevDecl: IconButtonDecl = {
         elemtype: "iconbutton",
         icon: "chevron-up",
-        title: "Previous Result (Shift+Enter)",
+        title: uiText("search.previousResult"),
         disabled: numResults === 0,
         click: onPrevWrapper,
     };
@@ -137,7 +156,7 @@ const SearchComponent = ({
     const nextDecl: IconButtonDecl = {
         elemtype: "iconbutton",
         icon: "chevron-down",
-        title: "Next Result (Enter)",
+        title: uiText("search.nextResult"),
         disabled: numResults === 0,
         click: onNextWrapper,
     };
@@ -145,22 +164,39 @@ const SearchComponent = ({
     const closeDecl: IconButtonDecl = {
         elemtype: "iconbutton",
         icon: "xmark-large",
-        title: "Close (Esc)",
+        title: uiText("search.close"),
         click: () => setIsOpen(false),
     };
 
-    const regexDecl = createToggleButtonDecl(regexAtom, "custom@regex", "Regular Expression");
-    const wholeWordDecl = createToggleButtonDecl(wholeWordAtom, "custom@whole-word", "Whole Word");
-    const caseSensitiveDecl = createToggleButtonDecl(caseSensitiveAtom, "custom@case-sensitive", "Case Sensitive");
+    const constrainedStyles: React.CSSProperties =
+        maxWidth == null
+            ? {}
+            : {
+                  boxSizing: "border-box",
+                  maxWidth: "var(--search-constrained-max-width)",
+                  minWidth: "min(200px, var(--search-constrained-max-width))",
+              };
+
+    const regexDecl = createToggleButtonDecl(regexAtom, "custom@regex", uiText("search.regex"));
+    const wholeWordDecl = createToggleButtonDecl(wholeWordAtom, "custom@whole-word", uiText("search.wholeWord"));
+    const caseSensitiveDecl = createToggleButtonDecl(
+        caseSensitiveAtom,
+        "custom@case-sensitive",
+        uiText("search.caseSensitive")
+    );
 
     return (
         <>
             {isOpen && (
                 <FloatingPortal>
-                    <div className="search-container" style={{ ...floatingStyles }} ref={refs.setFloating}>
+                    <div
+                        className={clsx("search-container", className)}
+                        style={{ ...floatingStyles, ...constrainedStyles }}
+                        ref={refs.setFloating}
+                    >
                         <Input
                             ref={inputRef}
-                            placeholder="Search"
+                            placeholder={uiText("search.placeholder")}
                             value={search}
                             onChange={setSearch}
                             onKeyDown={onKeyDown}
@@ -169,7 +205,7 @@ const SearchComponent = ({
                         <div
                             className={clsx("search-results", { hidden: numResults === 0 })}
                             aria-live="polite"
-                            aria-label="Search Results"
+                            aria-label={uiText("search.results")}
                         >
                             {index + 1}/{numResults}
                         </div>

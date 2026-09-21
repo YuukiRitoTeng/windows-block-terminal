@@ -8,15 +8,14 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/spf13/cobra"
-	"github.com/wavetermdev/waveterm/pkg/waveobj"
+	"github.com/wavetermdev/waveterm/pkg/remote/conncontroller"
 	"github.com/wavetermdev/waveterm/pkg/wps"
 	"github.com/wavetermdev/waveterm/pkg/wshrpc"
 	"github.com/wavetermdev/waveterm/pkg/wshrpc/wshclient"
 )
-
-var editMagnified bool
 
 var editorCmd = &cobra.Command{
 	Use:     "editor",
@@ -26,7 +25,6 @@ var editorCmd = &cobra.Command{
 }
 
 func init() {
-	editorCmd.Flags().BoolVarP(&editMagnified, "magnified", "m", false, "open view in magnified mode")
 	rootCmd.AddCommand(editorCmd)
 }
 
@@ -43,49 +41,65 @@ func editorRun(cmd *cobra.Command, args []string) (rtnErr error) {
 		return fmt.Errorf("too many arguments.  wsh editor requires exactly one argument")
 	}
 	fileArg := args[0]
-	absFile, err := filepath.Abs(fileArg)
+	resolved, err := resolveEditTarget(RpcContext.Conn, fileArg)
 	if err != nil {
-		return fmt.Errorf("getting absolute path: %w", err)
+		return err
 	}
-	_, err = os.Stat(absFile)
-	if err == fs.ErrNotExist {
-		return fmt.Errorf("file does not exist: %q", absFile)
-	}
-	if err != nil {
-		return fmt.Errorf("getting file info: %w", err)
-	}
-
 	tabId := getTabIdFromEnv()
 	if tabId == "" {
 		return fmt.Errorf("no WAVETERM_TABID env var set")
 	}
+	if resolved.kind == editTargetTerminal {
+		return createRemoteEditorTerminal(tabId, resolved.connection, resolved.target, true)
+	}
+	target := resolved.target
+	if !isExternalURL(fileArg) && conncontroller.IsLocalConnName(resolved.connection) {
+		absFile, err := filepath.Abs(target)
+		if err != nil {
+			return fmt.Errorf("getting absolute path: %w", err)
+		}
+		_, err = os.Stat(absFile)
+		if err == fs.ErrNotExist {
+			return fmt.Errorf("file does not exist: %q", absFile)
+		}
+		if err != nil {
+			return fmt.Errorf("getting file info: %w", err)
+		}
+		target = absFile
+	}
 
-	wshCmd := wshrpc.CommandCreateBlockData{
-		TabId: tabId,
-		BlockDef: &waveobj.BlockDef{
-			Meta: map[string]any{
-				waveobj.MetaKey_View: "preview",
-				waveobj.MetaKey_File: absFile,
-				waveobj.MetaKey_Edit: true,
-			},
-		},
-		Magnified: editMagnified,
-		Focused:   true,
-	}
-	if RpcContext.Conn != "" {
-		wshCmd.BlockDef.Meta[waveobj.MetaKey_Connection] = RpcContext.Conn
-	}
-	blockRef, err := wshclient.CreateBlockCommand(RpcClient, wshCmd, &wshrpc.RpcOpts{Timeout: 2000})
+	_, err = wshclient.PathCommand(RpcClient, wshrpc.PathCommandData{
+		Path:         target,
+		OpenExternal: true,
+		TabId:        tabId,
+	}, &wshrpc.RpcOpts{Timeout: 2000})
 	if err != nil {
-		return fmt.Errorf("running view command: %w", err)
+		return fmt.Errorf("opening file externally: %w", err)
 	}
-	doneCh := make(chan bool)
+	return nil
+}
+
+func createRemoteEditorTerminal(tabId string, connection string, target string, waitForClose bool) error {
+	blockRef, err := wshclient.CreateBlockCommand(RpcClient, buildRemoteEditorBlockData(tabId, connection, target), &wshrpc.RpcOpts{Timeout: 2000})
+	if err != nil {
+		return fmt.Errorf("creating remote Terminal editor: %w", err)
+	}
+	if !waitForClose {
+		return nil
+	}
+	doneCh := make(chan struct{})
+	var closeOnce sync.Once
 	RpcClient.EventListener.On(wps.Event_BlockClose, func(event *wps.WaveEvent) {
 		if event.HasScope(blockRef.String()) {
-			close(doneCh)
+			closeOnce.Do(func() { close(doneCh) })
 		}
 	})
-	wshclient.EventSubCommand(RpcClient, wps.SubscriptionRequest{Event: wps.Event_BlockClose, Scopes: []string{blockRef.String()}}, nil)
+	if err := wshclient.EventSubCommand(RpcClient, wps.SubscriptionRequest{
+		Event:  wps.Event_BlockClose,
+		Scopes: []string{blockRef.String()},
+	}, &wshrpc.RpcOpts{Timeout: 2000}); err != nil {
+		return fmt.Errorf("subscribing to remote Terminal editor close: %w", err)
+	}
 	<-doneCh
 	return nil
 }

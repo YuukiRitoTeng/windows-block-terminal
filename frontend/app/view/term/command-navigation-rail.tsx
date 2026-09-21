@@ -3,9 +3,15 @@
 
 import * as services from "@/store/services";
 import * as React from "react";
+import { uiText } from "@/util/ui-locale";
 import { copyCommandAndOutput } from "./command-copy-all";
 import { canCopyOutput } from "./command-history";
 import type { CommandAnchorSnapshot, TermWrap } from "./termwrap";
+import { adjacentId, reconcileSelection, type RegionSelection } from "./command-region-selection";
+import { TerminalClearAction } from "./terminal-clear-action";
+import type { TermViewModel } from "./term-model";
+import { Search } from "@/app/element/search";
+import { TermStickers } from "./termsticker";
 
 export type CommandAnchor = Readonly<{ commandId: string }>;
 
@@ -13,40 +19,6 @@ export type MatchedCommandAnchor = Readonly<{ commandId: string; record: RecordV
 
 export type RelativeNavigationDirection = "previous" | "next";
 
-/** Selects an adjacent position using only the confirmed snapshot order. */
-export function getRelativeAnchorIndex(
-    anchorCount: number,
-    activeIndex: number,
-    direction: RelativeNavigationDirection
-): number {
-    if (anchorCount <= 0) return -1;
-    if (!Number.isInteger(activeIndex) || activeIndex < 0) {
-        return direction === "next" ? 0 : anchorCount - 1;
-    }
-    const currentIndex = Math.min(activeIndex, anchorCount - 1);
-    return direction === "next"
-        ? (currentIndex + 1) % anchorCount
-        : (currentIndex - 1 + anchorCount) % anchorCount;
-}
-
-/** Keeps an active mark valid when the confirmed anchor snapshot changes. */
-export function reconcileActiveAnchorIndex(
-    previousAnchors: readonly CommandAnchorSnapshot[],
-    nextAnchors: readonly CommandAnchorSnapshot[],
-    activeIndex: number
-): number {
-    if (nextAnchors.length === 0) return -1;
-    const sameSnapshot =
-        previousAnchors.length === nextAnchors.length &&
-        previousAnchors.every((anchor, index) => anchor.commandId === nextAnchors[index]?.commandId);
-    if (sameSnapshot) {
-        if (!Number.isInteger(activeIndex) || activeIndex < 0) return -1;
-        return Math.min(activeIndex, nextAnchors.length - 1);
-    }
-    const previouslyActive = Number.isInteger(activeIndex) ? previousAnchors[activeIndex] : undefined;
-    if (previouslyActive == null) return -1;
-    return nextAnchors.findIndex((anchor) => anchor.commandId === previouslyActive.commandId);
-}
 
 export class RailRequestEpoch {
     private value = 0;
@@ -181,129 +153,125 @@ type CommandNavigationRailProps = {
 export const CommandNavigationRail = ({ blockId, termWrap }: CommandNavigationRailProps) => {
     const [anchors, setAnchors] = React.useState<readonly CommandAnchorSnapshot[]>([]);
     const [records, setRecords] = React.useState<RecordView[]>([]);
+    const [selection, setSelection] = React.useState<RegionSelection>({ selectedCommandId: null, followingLatest: true });
     const [message, setMessage] = React.useState<string | null>(null);
-    const [activeAnchorIndex, setActiveAnchorIndex] = React.useState(-1);
-    const previousAnchorsRef = React.useRef<readonly CommandAnchorSnapshot[]>([]);
+    const [copying, setCopying] = React.useState(false);
+    const generation = React.useRef(0);
+    const copyPending = React.useRef(false);
+    const mounted = React.useRef(false);
 
     React.useEffect(() => {
-        setAnchors([]);
-        setRecords([]);
-        setMessage(null);
-        setActiveAnchorIndex(-1);
-        previousAnchorsRef.current = [];
+        generation.current++;
+        mounted.current = true;
+        setAnchors([]); setRecords([]); setMessage(null);
+        setSelection({ selectedCommandId: null, followingLatest: true });
         const poller = new RailRecordPoller(
-            () => services.CommandJournalService.ListVisibleRecords(blockId),
-            setRecords,
-            750,
-            (error) => setMessage(`Commands unavailable: ${String(error)}`)
+            () => services.CommandJournalService.ListVisibleRecords(blockId), setRecords, 750,
+            error => setMessage(uiText("command.unavailable", { detail: String(error) }))
         );
-        const unsubscribe = subscribeCommandAnchors(termWrap, (nextAnchors) => {
-            setAnchors(nextAnchors);
-            poller.setAnchors(nextAnchors);
-        });
-        return () => {
-            unsubscribe();
-            poller.dispose();
-        };
+        const unsubscribe = subscribeCommandAnchors(termWrap, next => { setAnchors(next); poller.setAnchors(next); });
+        return () => { mounted.current = false; generation.current++; unsubscribe(); poller.dispose(); termWrap.setSelectedCommandAnchor(null); };
     }, [blockId, termWrap]);
 
+    const matched = matchConfirmedAnchors(anchors, records).filter(entry =>
+        entry.record.wave_block_id === blockId && entry.record.execution_mode === "structured");
+    const entries = matched.map(entry => ({ id: entry.commandId, completed: entry.record.state !== "running" }));
+    const reconciled = reconcileSelection(selection, entries);
+    const selectedId = reconciled.selectedCommandId;
+    const selectedRecord = matched.find(entry => entry.commandId === selectedId)?.record;
+    const ids = matched.map(entry => entry.commandId);
+    const previousId = adjacentId(ids, selectedId, "previous");
+    const nextId = adjacentId(ids, selectedId, "next");
+
     React.useEffect(() => {
-        const previousAnchors = previousAnchorsRef.current;
-        previousAnchorsRef.current = anchors;
-        setActiveAnchorIndex((current) => reconcileActiveAnchorIndex(previousAnchors, anchors, current));
-    }, [anchors]);
+        setSelection(current => current.selectedCommandId === reconciled.selectedCommandId &&
+            current.followingLatest === reconciled.followingLatest ? current : reconciled);
+    }, [reconciled.selectedCommandId, reconciled.followingLatest]);
+    React.useEffect(() => {
+        generation.current++;
+        setMessage(null);
+        termWrap.setSelectedCommandAnchor(selectedId);
+    }, [termWrap, selectedId]);
+    React.useEffect(() => {
+        if (!message) return;
+        const timer = setTimeout(() => setMessage(null), 3000);
+        return () => clearTimeout(timer);
+    }, [message]);
 
-    const matched = matchConfirmedAnchors(anchors, records);
-    const recordsById = new Map(matched.map((entry) => [entry.commandId, entry.record]));
-
-    const scrollToAnchor = React.useCallback(
-        (index: number) => {
-            const target = anchors[index];
-            if (target == null) return false;
-            const didScroll = termWrap.scrollToCommandAnchor(target.commandId);
-            if (didScroll) {
-                setActiveAnchorIndex(index);
-            }
-            return didScroll;
-        },
-        [anchors, termWrap]
-    );
-
-    const navigateRelative = React.useCallback(
-        (direction: RelativeNavigationDirection) => {
-            const targetIndex = getRelativeAnchorIndex(anchors.length, activeAnchorIndex, direction);
-            if (targetIndex < 0) return;
-            scrollToAnchor(targetIndex);
-        },
-        [activeAnchorIndex, anchors.length, scrollToAnchor]
-    );
-
-    if (anchors.length === 0) return null;
+    const navigate = (id: string | null) => {
+        if (id == null) return;
+        if (termWrap.scrollToCommandAnchor(id)) {
+            setSelection({ selectedCommandId: id, followingLatest: id === ids[ids.length - 1] });
+        } else {
+            setAnchors(termWrap.getCommandAnchorSnapshot());
+        }
+    };
+    const canCopy = selectedRecord != null && selectedRecord.state !== "running" && canCopyOutput(selectedRecord);
+    const copy = async () => {
+        if (!canCopy || copyPending.current) return;
+        copyPending.current = true; setCopying(true);
+        const epoch = generation.current;
+        try {
+            const result = await copyCommandAndOutput(selectedRecord);
+            if (epoch === generation.current) setMessage("reason" in result ? result.reason : uiText("command.copiedAndOutput"));
+        } finally {
+            copyPending.current = false;
+            if (mounted.current) setCopying(false);
+        }
+    };
+    // Reset pending UI on selection changes; the in-flight operation retains its captured identity.
+    React.useEffect(() => { setCopying(copyPending.current); }, [selectedId]);
 
     return (
-        <nav className="command-navigation-rail" aria-label="Confirmed command navigation">
-            <div className="command-navigation-rail-controls" role="group" aria-label="Relative command navigation">
-                <button
-                    className="command-navigation-rail-control"
-                    type="button"
-                    aria-label="Previous confirmed command"
-                    title="Previous confirmed command"
-                    onMouseDown={(event) => event.preventDefault()}
-                    onClick={() => navigateRelative("previous")}
-                >
-                    Prev
-                </button>
-                <button
-                    className="command-navigation-rail-control"
-                    type="button"
-                    aria-label="Next confirmed command"
-                    title="Next confirmed command"
-                    onMouseDown={(event) => event.preventDefault()}
-                    onClick={() => navigateRelative("next")}
-                >
-                    Next
-                </button>
+        <nav className="command-navigation-rail" aria-label={uiText("command.navigation")} data-selected-command-id={selectedId ?? ""}>
+            <div className="command-navigation-rail-controls" role="group" aria-label={uiText("command.relativeNavigation")}>
+                <button type="button" className="command-navigation-rail-control" disabled={!previousId}
+                    aria-label={uiText("command.previous")} title={uiText("command.previous")}
+                    onClick={() => navigate(previousId)}>↑</button>
+                <span className="command-selection-position" aria-live="polite">{selectedId ? ids.indexOf(selectedId) + 1 : 0}/{ids.length}</span>
+                <button type="button" className="command-navigation-rail-control" disabled={!nextId}
+                    aria-label={uiText("command.next")} title={uiText("command.next")}
+                    onClick={() => navigate(nextId)}>↓</button>
             </div>
-            {anchors.map((anchor, index) => {
-                const record = recordsById.get(anchor.commandId);
-                return (
-                    <div className="command-navigation-rail-entry" key={anchor.commandId}>
-                        <button
-                            className={`command-navigation-rail-mark${activeAnchorIndex === index ? " is-active" : ""}`}
-                            type="button"
-                            aria-label={`Jump to confirmed command ${anchor.commandId}`}
-                            title="Jump to confirmed command"
-                            aria-current={activeAnchorIndex === index ? "true" : undefined}
-                            onMouseDown={(event) => event.preventDefault()}
-                            onClick={() => {
-                                scrollToAnchor(index);
-                            }}
-                        />
-                        {record != null && (
-                            <button
-                                className="command-navigation-rail-copy"
-                                type="button"
-                                aria-label="Copy command and output"
-                                title="Copy command and output"
-                                disabled={!canCopyOutput(record)}
-                                onMouseDown={(event) => event.preventDefault()}
-                                onClick={() => {
-                                    void copyCommandAndOutput(record).then((result) => {
-                                        setMessage("reason" in result ? result.reason : "Copied command and output.");
-                                    });
-                                }}
-                            >
-                                All
-                            </button>
-                        )}
-                    </div>
-                );
-            })}
-            {message != null && (
-                <span className="command-navigation-rail-message" role="status">
-                    {message}
-                </span>
-            )}
+            <button type="button" className="command-navigation-rail-copy" disabled={!canCopy || copying}
+                aria-label={uiText("command.copyAndOutput")}
+                title={canCopy ? uiText("command.copyAndOutput") : uiText("command.selectedUnavailable")}
+                onClick={() => void copy()}>⧉</button>
+            {message && <span className="command-navigation-rail-message" role="status">{message}</span>}
         </nav>
+    );
+};
+
+// Shared production composition: TerminalView and the isolated renderer mount this exact JSX.
+export const TerminalContentFrame = ({ blockId, model, termWrap, connectElemRef, searchProps, stickerConfig }: {
+    blockId: string;
+    model: Pick<TermViewModel, "blockId" | "termRef">;
+    termWrap: TermWrap | null;
+    connectElemRef: React.Ref<HTMLDivElement>;
+    searchProps?: React.ComponentProps<typeof Search>;
+    stickerConfig?: React.ComponentProps<typeof TermStickers>["config"];
+}) => {
+    const terminalSearchMaxWidth = React.useCallback(
+        (referenceWidth: number) => Math.min(300, Math.max(0, referenceWidth - 12)),
+        []
+    );
+    const terminalSearchClassName = ["terminal-search", searchProps?.className].filter(Boolean).join(" ");
+
+    return (
+        <div className="term-content-frame">
+            {stickerConfig && <TermStickers config={stickerConfig} />}
+            <div className="term-connectelem" ref={connectElemRef} />
+            {termWrap != null && <aside className="terminal-action-gutter" aria-label={uiText("terminal.actions")}>
+                <TerminalClearAction model={model} />
+                <CommandNavigationRail key={blockId} blockId={blockId} termWrap={termWrap} />
+            </aside>}
+            {searchProps && (
+                <Search
+                    {...searchProps}
+                    className={terminalSearchClassName}
+                    maxWidth={terminalSearchMaxWidth}
+                />
+            )}
+        </div>
     );
 };

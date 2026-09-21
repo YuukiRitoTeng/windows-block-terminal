@@ -19,6 +19,7 @@ import {
 import * as services from "@/store/services";
 import { PLATFORM, PlatformMacOS } from "@/util/platformutil";
 import { base64ToArray, fireAndForget } from "@/util/util";
+import { installUserInputSeam, UserInputSeam } from "./user-input-source";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { SerializeAddon } from "@xterm/addon-serialize";
@@ -78,6 +79,13 @@ type TermWrapOptions = {
     keydownHandler?: (e: KeyboardEvent) => boolean;
     useWebGl?: boolean;
     sendDataHandler?: (data: string) => void;
+    /**
+     * Called the first time the user sends input to this terminal.
+     *
+     * Used to mark a Snap-created filler terminal as used, so a preset that would have to remove a
+     * pane can never reclaim one somebody has typed into. Fires at most once per TermWrap.
+     */
+    userInputHandler?: () => void;
     nodeModel?: BlockNodeModel;
 };
 
@@ -121,6 +129,13 @@ export class TermWrap {
     hasResized: boolean;
     multiInputCallback: (data: string) => void;
     sendDataHandler: (data: string) => void;
+    userInputHandler?: () => void;
+    private userInputReported: boolean;
+    /**
+     * Tells user input apart from the answers xterm generates to the program's queries.
+     * xterm classifies every outgoing payload itself, so this needs no timing assumption.
+     */
+    private userInputSeam: UserInputSeam | null = null;
     onSearchResultsDidChange?: (result: { resultIndex: number; resultCount: number }) => void;
     toDispose: TermTypes.IDisposable[] = [];
     webglAddon: WebglAddon | null = null;
@@ -130,7 +145,8 @@ export class TermWrap {
     lastUpdated: number;
     promptMarkers: TermTypes.IMarker[] = [];
     visualAnchorRegistry = new VisualAnchorRegistry();
-    private visualAnchorCues = new Map<string, { marker: TermTypes.IMarker; decoration?: TermTypes.IDecoration; announced?: boolean }>();
+    private visualAnchorCues = new Map<string, { marker: TermTypes.IMarker; decoration?: TermTypes.IDecoration; inlineDecoration?: TermTypes.IDecoration; inlineRender?: TermTypes.IDisposable; announced?: boolean }>();
+    private selectedCommandAnchor: string | null = null;
     private commandAnchorSubscribers = new Set<() => void>();
     visualAnchorEventUnsub: (() => void) | null = null;
     shellIntegrationStatusAtom: jotai.PrimitiveAtom<ShellIntegrationStatus | null>;
@@ -142,9 +158,9 @@ export class TermWrap {
 
     getCommandAnchorSnapshot(): readonly CommandAnchorSnapshot[] {
         const anchors: CommandAnchorSnapshot[] = [];
-        for (const [nonce] of this.visualAnchorCues) {
+        for (const [nonce, cue] of this.visualAnchorCues) {
             const confirmed = this.visualAnchorRegistry.get(nonce);
-            if (confirmed != null) anchors.push(Object.freeze({ commandId: confirmed.commandId }));
+            if (confirmed?.mode === "structured" && !cue.marker.isDisposed) anchors.push(Object.freeze({ commandId: confirmed.commandId }));
         }
         return Object.freeze(anchors);
     }
@@ -156,11 +172,48 @@ export class TermWrap {
 
     scrollToCommandAnchor(commandId: string): boolean {
         for (const [nonce, cue] of this.visualAnchorCues) {
-            if (this.visualAnchorRegistry.get(nonce)?.commandId !== commandId) continue;
+            const confirmed = this.visualAnchorRegistry.get(nonce);
+            if (confirmed?.mode !== "structured" || confirmed.commandId !== commandId || cue.marker.isDisposed) continue;
             this.terminal.scrollToLine(cue.marker.line);
             return true;
         }
         return false;
+    }
+
+    setSelectedCommandAnchor(commandId: string | null): void {
+        const validId = this.getCommandAnchorSnapshot().some(anchor => anchor.commandId === commandId) ? commandId : null;
+        if (this.selectedCommandAnchor === validId) return;
+        const previous = this.selectedCommandAnchor;
+        this.selectedCommandAnchor = validId;
+        for (const [nonce] of this.visualAnchorCues) {
+            const id = this.visualAnchorRegistry.get(nonce)?.commandId;
+            if (id === previous || id === validId) this.renderSelectedCommandCue(nonce);
+        }
+    }
+
+    private renderSelectedCommandCue(nonce: string): void {
+        const cue = this.visualAnchorCues.get(nonce);
+        if (!cue) return;
+        cue.inlineRender?.dispose();
+        cue.inlineDecoration?.dispose();
+        cue.inlineRender = undefined;
+        cue.inlineDecoration = undefined;
+        const confirmed = this.visualAnchorRegistry.get(nonce);
+        if (confirmed?.mode !== "structured" || cue.marker.isDisposed) return;
+        try {
+            const decoration = this.terminal.registerDecoration({ marker: cue.marker, width: 1, height: 1, layer: "top" });
+            if (decoration != null) {
+                const selected = confirmed.commandId === this.selectedCommandAnchor;
+                cue.inlineDecoration = decoration;
+                cue.inlineRender = decoration.onRender(element => {
+                    element.className = `xterm-decoration command-region-cue${selected ? " is-selected" : ""}`;
+                    element.dataset.commandId = confirmed.commandId;
+                    element.setAttribute("aria-hidden", "true");
+                });
+            }
+        } catch (_) {
+            // Decoration support is optional; never disrupt the live terminal.
+        }
     }
 
     private notifyCommandAnchorSubscribers(): void {
@@ -198,6 +251,7 @@ export class TermWrap {
         this.tabId = tabId;
         this.blockId = blockId;
         this.sendDataHandler = waveOptions.sendDataHandler;
+        this.userInputHandler = waveOptions.userInputHandler;
         this.nodeModel = waveOptions.nodeModel;
         this.ptyOffset = 0;
         this.dataBytesProcessed = 0;
@@ -369,6 +423,8 @@ export class TermWrap {
                 }
             }
             if (paths.length > 0) {
+                // terminal.paste() goes through xterm's own user-input path, so the seam reports and
+                // broadcasts the dropped paths exactly like any other paste.
                 this.terminal.paste(paths.join(" ") + " ");
             }
         };
@@ -450,6 +506,20 @@ export class TermWrap {
         const copyOnSelectAtom = getSettingsKeyAtom("term:copyonselect");
         const trimTrailingWhitespaceAtom = getSettingsKeyAtom("term:trimtrailingwhitespace");
         this.toDispose.push(this.terminal.onData(this.handleTermData.bind(this)));
+        // A key press is the one signal only the user can produce: xterm fires this for keys it
+        // handles, never for the answers it generates to the program's queries.
+        this.toDispose.push(this.terminal.onKey(() => this.reportUserInput()));
+        // Everything xterm itself classifies as user input - key presses, pastes, IME composition,
+        // Terminal.input() - is reported and broadcast from one place. The seam is the only source
+        // for the multi-input broadcast, so a protocol answer can never reach the other panes.
+        this.userInputSeam?.uninstall();
+        this.userInputSeam = installUserInputSeam(this.terminal, (data) => {
+            this.reportUserInput();
+            this.multiInputCallback?.(data);
+        });
+        if (!this.userInputSeam.installed) {
+            console.warn("terminal user-input seam unavailable: multi-input will not broadcast");
+        }
         this.toDispose.push(
             this.terminal.onSelectionChange(
                 debounce(50, () => {
@@ -565,6 +635,8 @@ export class TermWrap {
             }
         });
         this.promptMarkers = [];
+        this.userInputSeam?.uninstall();
+        this.userInputSeam = null;
         this.webglContextLossDisposable?.dispose();
         this.webglContextLossDisposable = null;
         this.terminal.dispose();
@@ -583,8 +655,27 @@ export class TermWrap {
             return;
         }
 
+        // Every data event goes to this terminal's own controller, including the answers xterm
+        // generates for the program's queries. What may be broadcast as multi-input is decided by the
+        // user-input seam instead, which reads xterm's own classification of each emission.
         this.sendDataHandler?.(data);
-        this.multiInputCallback?.(data);
+    }
+
+    /**
+     * Notifies the owner once, the first time the user sends input to this terminal.
+     *
+     * Deliberately *not* called from `handleTermData`: the terminal's data channel also carries the
+     * answers xterm generates for the program's queries (device attributes, cursor position, colours),
+     * so a shell that merely starts would look like a user typing. Only real user input reports here -
+     * a key press, a paste, files dropped on the terminal, or text committed by an input method - and
+     * every one of those reaches this method from the user-input seam or from `onKey`.
+     */
+    private reportUserInput() {
+        if (this.userInputReported) {
+            return;
+        }
+        this.userInputReported = true;
+        this.userInputHandler?.();
     }
 
     registerVisualAnchor(data: Record<string, unknown>) {
@@ -612,8 +703,11 @@ export class TermWrap {
         }
         this.visualAnchorCues.set(nonce, { marker });
         marker.onDispose(() => {
-            const decoration = this.visualAnchorCues.get(nonce)?.decoration;
+            const cue = this.visualAnchorCues.get(nonce);
+            const decoration = cue?.decoration;
             decoration?.dispose();
+            cue?.inlineRender?.dispose();
+            cue?.inlineDecoration?.dispose();
             this.visualAnchorCues.delete(nonce);
             this.visualAnchorRegistry.remove(nonce);
             this.notifyCommandAnchorSubscribers();
@@ -623,7 +717,8 @@ export class TermWrap {
 
     private registerConfirmedVisualCue(nonce: string) {
         const cue = this.visualAnchorCues.get(nonce);
-        if (cue == null || this.visualAnchorRegistry.get(nonce) == null) return;
+        if (cue == null || this.visualAnchorRegistry.get(nonce)?.mode !== "structured" || cue.marker.isDisposed) return;
+        if (cue.inlineDecoration == null) this.renderSelectedCommandCue(nonce);
         if (!cue.announced) {
             cue.announced = true;
             this.notifyCommandAnchorSubscribers();

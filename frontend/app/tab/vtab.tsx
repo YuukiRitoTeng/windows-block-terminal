@@ -3,6 +3,7 @@
 
 import { refocusNode } from "@/app/store/global";
 import { validateCssColor } from "@/util/color-validator";
+import { uiText } from "@/util/ui-locale";
 import { cn } from "@/util/util";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { TabBadges } from "./tabbadges";
@@ -194,7 +195,7 @@ export function VTab({
                 )}
                 contentEditable={isEditable}
                 role="textbox"
-                aria-label="Tab name"
+                aria-label={uiText("tab.name")}
                 aria-readonly={!isEditable}
                 onBlur={handleBlur}
                 onKeyDown={handleKeyDown}
@@ -213,7 +214,7 @@ export function VTab({
                         event.stopPropagation();
                         onClose();
                     }}
-                    aria-label="Close tab"
+                        aria-label={uiText("tab.close")}
                 >
                     <i className="fa fa-solid fa-xmark" />
                 </button>

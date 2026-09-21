@@ -17,28 +17,130 @@ import (
 	"github.com/wavetermdev/waveterm/pkg/waveobj"
 )
 
-func TestGetStarterLayoutIsOneFocusedTerminal(t *testing.T) {
-	layout := GetStarterLayout()
+func TestGetWorkspaceLayoutIsTwoEvenTerminals(t *testing.T) {
+	layout := GetWorkspaceLayout()
+	if len(layout) != 2 {
+		t.Fatalf("workspace layout length = %d, want 2", len(layout))
+	}
+
+	for index, entry := range layout {
+		if !reflect.DeepEqual(entry.IndexArr, []int{index}) {
+			t.Errorf("workspace layout entry %d index = %v, want [%d]", index, entry.IndexArr, index)
+		}
+		// Equal (unset) sizes are the even split: an explicit size on the first entry lands on the
+		// group node the first insert creates, not on its pane.
+		if entry.Size != nil {
+			t.Errorf("workspace layout entry %d size = %d, want an even split with no explicit size", index, *entry.Size)
+		}
+		if entry.BlockDef == nil {
+			t.Fatalf("workspace layout entry %d block definition is nil", index)
+		}
+		if got := entry.BlockDef.Meta[waveobj.MetaKey_View]; got != "term" {
+			t.Errorf("workspace layout entry %d view = %q, want %q", index, got, "term")
+		}
+		if got := entry.BlockDef.Meta[waveobj.MetaKey_Controller]; got != "shell" {
+			t.Errorf("workspace layout entry %d controller = %q, want %q", index, got, "shell")
+		}
+	}
+
+	// Exactly one pane may take focus, and it must be the left pane.
+	if !layout[0].Focused {
+		t.Error("workspace layout left pane is not focused")
+	}
+	if layout[1].Focused {
+		t.Error("workspace layout right pane must not be focused")
+	}
+}
+
+func TestGetNewTabLayoutIsOneFocusedTerminal(t *testing.T) {
+	layout := GetNewTabLayout()
 	if len(layout) != 1 {
-		t.Fatalf("starter layout length = %d, want 1", len(layout))
+		t.Fatalf("new tab layout length = %d, want 1", len(layout))
 	}
 
 	entry := layout[0]
 	if !reflect.DeepEqual(entry.IndexArr, []int{0}) {
-		t.Errorf("starter layout index = %v, want [0]", entry.IndexArr)
+		t.Errorf("new tab layout index = %v, want [0]", entry.IndexArr)
+	}
+	if entry.Size != nil {
+		t.Errorf("new tab layout size = %d, want unset", *entry.Size)
 	}
 	if !entry.Focused {
-		t.Error("starter layout entry is not focused")
+		t.Error("new tab layout entry is not focused")
 	}
 	if entry.BlockDef == nil {
-		t.Fatal("starter layout block definition is nil")
+		t.Fatal("new tab layout block definition is nil")
 	}
 	if got := entry.BlockDef.Meta[waveobj.MetaKey_View]; got != "term" {
-		t.Errorf("starter layout view = %q, want %q", got, "term")
+		t.Errorf("new tab layout view = %q, want %q", got, "term")
 	}
 	if got := entry.BlockDef.Meta[waveobj.MetaKey_Controller]; got != "shell" {
-		t.Errorf("starter layout controller = %q, want %q", got, "shell")
+		t.Errorf("new tab layout controller = %q, want %q", got, "shell")
 	}
+}
+
+func TestWorkspaceAndNewTabLayoutsDiffer(t *testing.T) {
+	if reflect.DeepEqual(GetNewTabLayout(), GetWorkspaceLayout()) {
+		t.Fatal("a new workspace must not open with the single-terminal New Tab layout")
+	}
+}
+
+// TestWorkspaceTabAndNewTabUseDifferentLayouts pins the call sites: only the first tab of a new
+// workspace goes through the workspace layout, while a plain New Tab keeps the single terminal.
+func TestWorkspaceTabAndNewTabUseDifferentLayouts(t *testing.T) {
+	layoutSource, err := os.ReadFile("layout.go")
+	if err != nil {
+		t.Fatalf("read layout.go: %v", err)
+	}
+	layoutFile, err := parser.ParseFile(token.NewFileSet(), "layout.go", layoutSource, 0)
+	if err != nil {
+		t.Fatalf("parse layout.go: %v", err)
+	}
+	workspaceLayout := functionBodyText(t, layoutFile, "GetWorkspaceLayout")
+	if strings.Count(workspaceLayout, "termBlockDef()") != 2 {
+		t.Error("GetWorkspaceLayout must place exactly two local terminals")
+	}
+	if strings.Contains(workspaceLayout, "Size:") {
+		t.Error("GetWorkspaceLayout must not set explicit sizes: they would make the split uneven")
+	}
+
+	workspaceSource, err := os.ReadFile("workspace.go")
+	if err != nil {
+		t.Fatalf("read workspace.go: %v", err)
+	}
+	workspaceFile, err := parser.ParseFile(token.NewFileSet(), "workspace.go", workspaceSource, 0)
+	if err != nil {
+		t.Fatalf("parse workspace.go: %v", err)
+	}
+
+	createWorkspace := functionBodyText(t, workspaceFile, "CreateWorkspace")
+	if !strings.Contains(createWorkspace, "CreateWorkspaceTab(") {
+		t.Error("CreateWorkspace does not create its first tab through CreateWorkspaceTab")
+	}
+	if strings.Contains(createWorkspace, "CreateTab(") {
+		t.Error("CreateWorkspace must not fall back to the single-terminal CreateTab")
+	}
+
+	createTab := functionBodyText(t, workspaceFile, "CreateTab")
+	if !strings.Contains(createTab, "GetNewTabLayout()") {
+		t.Error("CreateTab no longer uses the single-terminal new tab layout")
+	}
+	createWorkspaceTab := functionBodyText(t, workspaceFile, "CreateWorkspaceTab")
+	if !strings.Contains(createWorkspaceTab, "GetWorkspaceLayout()") {
+		t.Error("CreateWorkspaceTab no longer uses the workspace layout")
+	}
+}
+
+func functionBodyText(t *testing.T, file *ast.File, name string) string {
+	t.Helper()
+	for _, declaration := range file.Decls {
+		function, ok := declaration.(*ast.FuncDecl)
+		if ok && function.Name.Name == name {
+			return exprText(function)
+		}
+	}
+	t.Fatalf("%s declaration not found", name)
+	return ""
 }
 
 func TestCreateWorkspaceHidesWidgetsOnlyOnInitialLaunch(t *testing.T) {

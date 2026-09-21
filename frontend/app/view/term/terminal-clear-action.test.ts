@@ -25,8 +25,10 @@ describe("terminal-native clear action", () => {
         );
 
         expect(markup).toContain("terminal-clear-action");
-        expect(markup).toContain('aria-label="Clear visual history"');
-        expect(markup).toContain(">Clear</button>");
+        expect(markup).toContain('aria-label="清除可视历史"');
+        expect(markup).not.toContain(">清除</button>");
+        expect(markup).toContain('aria-hidden="true"');
+        expect(markup).toContain('viewBox="0 0 24 24"');
         expect(markup).toContain('role="status"');
         expect(markup).toContain('aria-live="polite"');
         expect(actionSource).toContain("clearProductHistoryForModel(model)");
@@ -57,9 +59,10 @@ describe("terminal-native clear action", () => {
     });
 
     it("keeps success and failure status copy explicit", () => {
-        expect(TERMINAL_CLEAR_SUCCESS_MESSAGE).toContain("PowerShell session preserved");
+        expect(TERMINAL_CLEAR_SUCCESS_MESSAGE).toContain("PowerShell");
+        expect(TERMINAL_CLEAR_SUCCESS_MESSAGE).toContain("会话已保留");
         expect(formatTerminalClearError(new Error("journal unavailable"))).toBe(
-            "Clear failed; terminal was not cleared: journal unavailable"
+            "清除失败；终端未被清除: journal unavailable"
         );
         expect(actionSource).toContain("TERMINAL_CLEAR_PENDING_MESSAGE");
         expect(actionSource).toContain("TERMINAL_CLEAR_SUCCESS_MESSAGE");
@@ -67,8 +70,8 @@ describe("terminal-native clear action", () => {
     });
 
     it("mounts the action only in ordinary term mode", () => {
-        expect(termSource).toContain("termMode == \"term\" && termWrapInst != null && (");
-        expect(termSource).toContain("<TerminalClearAction model={model} />");
+        expect(termSource).toContain('termWrap={termMode == "term" ? termWrapInst : null}');
+        expect(termSource).toContain("<TerminalContentFrame");
         expect(termSource).not.toContain("termMode == \"vdom\" && <TerminalClearAction");
         expect(termStyles).toContain(".terminal-clear-action");
         expect(termStyles).toContain("position: absolute");
@@ -77,7 +80,7 @@ describe("terminal-native clear action", () => {
     });
 
     it("routes the context menu through the same fire-and-forget product operation", () => {
-        expect(termModelSource).toContain('label: "Clear visual history"');
+        expect(termModelSource).toContain('uiText("terminal.clearVisualHistory")');
         expect(termModelSource).toContain(
             "click: () => fireAndForget(() => clearProductHistoryForModel(this))"
         );

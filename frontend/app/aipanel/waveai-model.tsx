@@ -7,14 +7,12 @@ import {
     WaveUIMessage,
     WaveUIMessagePart,
 } from "@/app/aipanel/aitypes";
-import { FocusManager } from "@/app/store/focusManager";
 import { atoms, createBlock, getOrefMetaKeyAtom, getSettingsKeyAtom } from "@/app/store/global";
 import { globalStore } from "@/app/store/jotaiStore";
 import { isBuilderWindow } from "@/app/store/windowtype";
 import * as WOS from "@/app/store/wos";
 import { RpcApi } from "@/app/store/wshclientapi";
 import { TabRpcClient } from "@/app/store/wshrpcutil";
-import { WorkspaceLayoutModel } from "@/app/workspace/workspace-layout-model";
 import { BuilderFocusManager } from "@/builder/store/builder-focusmanager";
 import { getWebServerEndpoint } from "@/util/endpoints";
 import { base64ToArrayBuffer } from "@/util/util";
@@ -130,14 +128,14 @@ export class WaveAIModel {
             if (this.inBuilder) {
                 return get(BuilderFocusManager.getInstance().focusType) === "waveai";
             }
-            return get(FocusManager.getInstance().focusType) === "waveai";
+            return false;
         });
 
         this.panelVisibleAtom = jotai.atom((get) => {
             if (this.inBuilder) {
                 return true;
             }
-            return get(WorkspaceLayoutModel.getInstance().panelVisibleAtom);
+            return false;
         });
 
         this.defaultModeAtom = jotai.atom((get) => {
@@ -340,9 +338,6 @@ export class WaveAIModel {
     }
 
     focusInput() {
-        if (!this.inBuilder && !WorkspaceLayoutModel.getInstance().getAIPanelVisible()) {
-            WorkspaceLayoutModel.getInstance().setAIPanelVisible(true);
-        }
         if (this.inputRef?.current) {
             this.inputRef.current.focus();
         }
@@ -613,16 +608,12 @@ export class WaveAIModel {
     requestWaveAIFocus() {
         if (this.inBuilder) {
             BuilderFocusManager.getInstance().setWaveAIFocused();
-        } else {
-            FocusManager.getInstance().requestWaveAIFocus();
         }
     }
 
     requestNodeFocus() {
         if (this.inBuilder) {
             BuilderFocusManager.getInstance().setAppFocused();
-        } else {
-            FocusManager.getInstance().requestNodeFocus();
         }
     }
 
@@ -705,6 +696,5 @@ export class WaveAIModel {
         if (this.inBuilder) {
             return;
         }
-        WorkspaceLayoutModel.getInstance().setAIPanelVisible(false);
     }
 }

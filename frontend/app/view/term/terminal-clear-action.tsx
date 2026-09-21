@@ -2,13 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import * as React from "react";
+import { uiText } from "@/util/ui-locale";
 import type { TermViewModel } from "./term-model";
 import { clearProductHistoryForModel } from "./clear-product-history";
 
-export const TERMINAL_CLEAR_PENDING_MESSAGE = "Clearing visual history…";
-export const TERMINAL_CLEAR_SUCCESS_MESSAGE = "Visual history cleared; PowerShell session preserved.";
+export const TERMINAL_CLEAR_PENDING_MESSAGE = uiText("terminal.clearing");
+export const TERMINAL_CLEAR_SUCCESS_MESSAGE = uiText("terminal.clearSuccess");
 
-const TERMINAL_CLEAR_ERROR_PREFIX = "Clear failed; terminal was not cleared";
+const TERMINAL_CLEAR_ERROR_PREFIX = uiText("command.clearFailedPrefix");
 
 export type TerminalClearActionRunResult = "started" | "ignored";
 
@@ -51,6 +52,18 @@ type TerminalClearActionProps = {
 export const TerminalClearAction = ({ model }: TerminalClearActionProps) => {
     const [pending, setPending] = React.useState(false);
     const [status, setStatus] = React.useState("");
+    const [failed, setFailed] = React.useState(false);
+    const generation = React.useRef(0);
+    React.useEffect(() => {
+        generation.current++;
+        setStatus(""); setFailed(false); setPending(false);
+        return () => { generation.current++; };
+    }, [model]);
+    React.useEffect(() => {
+        if (status !== TERMINAL_CLEAR_SUCCESS_MESSAGE) return;
+        const timer = setTimeout(() => setStatus(""), 3000);
+        return () => clearTimeout(timer);
+    }, [status]);
     const runner = React.useMemo(
         () => createTerminalClearActionRunner(() => clearProductHistoryForModel(model)),
         [model]
@@ -61,35 +74,40 @@ export const TerminalClearAction = ({ model }: TerminalClearActionProps) => {
             return;
         }
         setPending(true);
+        setFailed(false);
+        const epoch = generation.current;
         setStatus(TERMINAL_CLEAR_PENDING_MESSAGE);
         try {
             const result = await runner.run();
-            if (result === "started") {
+            if (result === "started" && epoch === generation.current) {
                 setStatus(TERMINAL_CLEAR_SUCCESS_MESSAGE);
             }
         } catch (error) {
-            setStatus(formatTerminalClearError(error));
+            if (epoch === generation.current) { setStatus(formatTerminalClearError(error)); setFailed(true); }
         } finally {
-            setPending(false);
+            if (epoch === generation.current) setPending(false);
         }
     }, [runner]);
 
     return (
-        <div className="terminal-clear-action" aria-label="Terminal actions">
+        <div className="terminal-clear-action" aria-label={uiText("terminal.actions")}>
             <button
                 className="terminal-clear-action-button"
                 type="button"
-                aria-label="Clear visual history"
-                title="Clear visual history"
+                aria-label={uiText("terminal.clearVisualHistory")}
+                title={uiText("terminal.clearVisualHistory")}
                 aria-busy={pending}
                 disabled={pending}
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={clear}
             >
-                {pending ? "Clearing…" : "Clear"}
+                <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6">
+                    <path d="M15 3 22 10 11 21H7L2 16Z M8 10 16 18 M11 21H22" />
+                </svg>
             </button>
             <span className="terminal-clear-action-status" role="status" aria-live="polite">
                 {status}
+                {failed && <button type="button" aria-label={uiText("command.dismissNotice")} onClick={() => { setStatus(""); setFailed(false); }}>×</button>}
             </span>
         </div>
     );

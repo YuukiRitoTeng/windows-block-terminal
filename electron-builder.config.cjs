@@ -22,7 +22,18 @@ const config = {
         {
             from: "./dist",
             to: "./dist",
-            filter: ["**/*", "!bin/*", "bin/wavesrv.${arch}*", "bin/wsh*", "!tsunamiscaffold/**/*"],
+            filter: [
+                "**/*",
+                "!bin/*",
+                "bin/wavesrv.${arch}*",
+                "bin/wsh*",
+                "!tsunamiscaffold/**/*",
+                "!bin/wsh-*-linux.mips", // not in wavebase.SupportedWshBinaries: unreachable dead weight
+                "!bin/wsh-*-linux.mips64",
+                "!win-unpacked/**/*", // packaging output from a previous run; must never be packed into app.asar
+                "!hostedpwsh/**/*", // shipped as an extraResource; the in-asar copy is never read
+                "!frontend/assets/*.map", // source maps are not needed in a production package
+            ],
         },
         {
             from: ".",
@@ -35,6 +46,15 @@ const config = {
         {
             from: "dist/tsunamiscaffold",
             to: "tsunamiscaffold",
+        },
+        // The x64 build must still ship the Windows ARM64 wsh so this client can deploy wsh to a
+        // remote Windows-ARM64 host over SSH (pkg/remote/connutil.go resolves it via
+        // GetLocalWshBinaryPath -> GetWaveAppBinPath). A real NSIS install filters this .exe out of
+        // both app.asar.unpacked/dist/bin and resources/wsh-bin, so it ships as a .dat placeholder
+        // and shellutil materializes a runnable copy into the data dir on first use.
+        {
+            from: "dist/bin/wsh-${version}-windows.arm64.exe",
+            to: "wsh-bin/wsh-${version}-windows.arm64.exe.dat",
         },
         ...(process.platform === "win32"
             ? [
