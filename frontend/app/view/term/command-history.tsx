@@ -3,9 +3,11 @@
 
 import * as services from "@/store/services";
 import { base64ToArray } from "@/util/util";
+import { uiText } from "@/util/ui-locale";
 import * as React from "react";
 import type { TermViewModel } from "./term-model";
 import { clearProductHistory } from "./clear-product-history";
+import { copyCommandAndOutput } from "./command-copy-all";
 
 export { clearProductHistory } from "./clear-product-history";
 
@@ -84,23 +86,23 @@ export function limitVisibleRecords(records: RecordView[]): RecordView[] {
 export function projectOutput(record: RecordView, data64: string): OutputProjection {
     if (!canCopyOutput(record)) {
         if (record.execution_mode === "interactive") {
-            return { kind: "unsafe", reason: "Interactive output remains in the terminal." };
+            return { kind: "unsafe", reason: uiText("command.interactiveOutput") };
         }
-        return { kind: "unsafe", reason: "Output is not complete, text-safe, and authoritatively attributed." };
+        return { kind: "unsafe", reason: uiText("command.unsafeOutput") };
     }
     if (record.output_stored_bytes > MAX_PRESENTATION_BYTES) {
-        return { kind: "unsafe", reason: "Output is larger than the bounded card preview." };
+        return { kind: "unsafe", reason: uiText("command.largeOutput") };
     }
     try {
         const bytes = base64ToArray(data64 ?? "");
         const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
         const sanitized = sanitizeTerminalText(text);
         if (sanitized == null) {
-            return { kind: "unsafe", reason: "Output contains terminal control or binary data." };
+            return { kind: "unsafe", reason: uiText("command.controlOutput") };
         }
         return { kind: "safe", text: sanitized };
     } catch {
-        return { kind: "unsafe", reason: "Output is not valid UTF-8 text." };
+        return { kind: "unsafe", reason: uiText("command.invalidUtf8") };
     }
 }
 
@@ -138,6 +140,13 @@ const statusLabel = (record: RecordView) => {
     return "unknown";
 };
 
+const statusText = (record: RecordView) => {
+    if (record.state === "running") return uiText("command.running");
+    if (record.success === true) return uiText("command.success");
+    if (record.success === false) return uiText("command.failed");
+    return uiText("command.unknown");
+};
+
 const CommandCard = ({
     record,
     output,
@@ -160,31 +169,31 @@ const CommandCard = ({
             <div className="command-card-header">
                 <code className="command-card-command">{record.command}</code>
                 <span className={`command-card-status command-card-status-${statusLabel(record)}`}>
-                    {statusLabel(record)}
+                    {statusText(record)}
                 </span>
             </div>
             <div className="command-card-meta">
-                <span className="command-card-meta-primary">exit {record.exit_code ?? "—"}</span>
+                <span className="command-card-meta-primary">{uiText("command.exit", { code: record.exit_code ?? "—" })}</span>
                 <span>{record.execution_mode || "unknown"}</span>
                 <span>{formatDuration(record)}</span>
                 {record.cwd && <span className="command-card-meta-cwd" title={record.cwd}>{record.cwd}</span>}
-                <span>{record.output_stored_bytes}/{record.output_total_bytes} bytes{record.output_truncated ? " · truncated" : ""}</span>
+                <span>{record.output_stored_bytes}/{record.output_total_bytes} {uiText("command.bytes")}{record.output_truncated ? ` · ${uiText("command.truncated")}` : ""}</span>
             </div>
             <div className="command-card-actions">
-                <button {...copyButtonProps} aria-label="Copy command" title="Copy command" onClick={() => onCopy("command")}>
-                    <i className="fa-sharp fa-light fa-copy" aria-hidden="true" /> <span>Command</span>
+                <button {...copyButtonProps} aria-label={uiText("command.copy")} title={uiText("command.copy")} onClick={() => onCopy("command")}>
+                    <i className="fa-sharp fa-light fa-copy" aria-hidden="true" /> <span>{uiText("command.command")}</span>
                 </button>
-                <button {...copyButtonProps} aria-label="Copy output" title="Copy output" disabled={!canCopyOutput(record)} onClick={() => onCopy("output")}>
-                    <i className="fa-sharp fa-light fa-file-lines" aria-hidden="true" /> <span>Output</span>
+                <button {...copyButtonProps} aria-label={uiText("command.output")} title={uiText("command.output")} disabled={!canCopyOutput(record)} onClick={() => onCopy("output")}>
+                    <i className="fa-sharp fa-light fa-file-lines" aria-hidden="true" /> <span>{uiText("command.outputLabel")}</span>
                 </button>
-                <button {...copyButtonProps} aria-label="Copy command and output" title="Copy command and output" disabled={!canCopyOutput(record)} onClick={onCopyAll}>
-                    <i className="fa-sharp fa-light fa-clipboard" aria-hidden="true" /> <span>All</span>
+                <button {...copyButtonProps} aria-label={uiText("command.copyAndOutput")} title={uiText("command.copyAndOutput")} disabled={!canCopyOutput(record)} onClick={onCopyAll}>
+                    <i className="fa-sharp fa-light fa-clipboard" aria-hidden="true" /> <span>{uiText("command.all")}</span>
                 </button>
-                <button {...copyButtonProps} aria-label={output?.projection ? "Hide output" : "Show output"} title={output?.projection ? "Hide output" : "Show output"} onClick={onLoadOutput}>
-                    <i className={`fa-sharp fa-light ${output?.projection ? "fa-eye-slash" : "fa-eye"}`} aria-hidden="true" /> <span>{output?.projection ? "Hide" : "Show"}</span>
+                <button {...copyButtonProps} aria-label={output?.projection ? uiText("command.hideOutput") : uiText("command.showOutput")} title={output?.projection ? uiText("command.hideOutput") : uiText("command.showOutput")} onClick={onLoadOutput}>
+                    <i className={`fa-sharp fa-light ${output?.projection ? "fa-eye-slash" : "fa-eye"}`} aria-hidden="true" /> <span>{output?.projection ? uiText("command.hide") : uiText("command.show")}</span>
                 </button>
             </div>
-            {output?.loading && <div className="command-card-output-note">Loading bounded output projection…</div>}
+            {output?.loading && <div className="command-card-output-note">{uiText("command.loadingOutput")}</div>}
             {output?.projection?.kind === "safe" && <pre className="command-card-output">{output.projection.text}</pre>}
             {output?.projection?.kind === "unsafe" && <div className="command-card-output-note">{output.projection.reason}</div>}
         </article>
@@ -210,7 +219,7 @@ export const CommandHistory = ({ blockId, model }: CommandHistoryProps) => {
             const next = await services.CommandJournalService.ListVisibleRecords(blockId);
             if (mounted.current && requestEpoch.current.isCurrent(capturedEpoch)) setRecords(limitVisibleRecords(next ?? []));
         } catch (error) {
-            if (mounted.current && requestEpoch.current.isCurrent(capturedEpoch)) setMessage(`History unavailable: ${String(error)}`);
+            if (mounted.current && requestEpoch.current.isCurrent(capturedEpoch)) setMessage(uiText("command.historyUnavailable", { detail: String(error) }));
         } finally {
             refreshGate.current.release(requestToken);
         }
@@ -221,7 +230,7 @@ export const CommandHistory = ({ blockId, model }: CommandHistoryProps) => {
             const next = await services.CommandJournalService.GetHealth();
             if (mounted.current) setHealth(next);
         } catch (error) {
-            if (mounted.current) setMessage(`Persistence health unavailable: ${String(error)}`);
+            if (mounted.current) setMessage(uiText("command.persistenceUnavailable", { detail: String(error) }));
         }
     }, []);
 
@@ -259,7 +268,7 @@ export const CommandHistory = ({ blockId, model }: CommandHistoryProps) => {
             return;
         }
         if (!canCopyOutput(record)) {
-            setOutputs((old) => ({ ...old, [record.id]: { loading: false, projection: { kind: "unsafe", reason: "Output is not complete, text-safe, and bounded." } } }));
+            setOutputs((old) => ({ ...old, [record.id]: { loading: false, projection: { kind: "unsafe", reason: uiText("command.unsafeOutput") } } }));
             return;
         }
         setOutputs((old) => ({ ...old, [record.id]: { loading: true } }));
@@ -268,15 +277,20 @@ export const CommandHistory = ({ blockId, model }: CommandHistoryProps) => {
             const projection = projectOutput(record, output?.data ?? "");
             if (mounted.current) setOutputs((old) => ({ ...old, [record.id]: { loading: false, projection, data64: output?.data } }));
         } catch (error) {
-            if (mounted.current) setOutputs((old) => ({ ...old, [record.id]: { loading: false, projection: { kind: "unsafe", reason: `Output unavailable: ${String(error)}` } } }));
+            if (mounted.current) setOutputs((old) => ({ ...old, [record.id]: { loading: false, projection: { kind: "unsafe", reason: uiText("command.outputUnavailable", { detail: String(error) }) } } }));
         }
     }, [outputs]);
 
     const copyRecord = React.useCallback(async (record: RecordView, kind: "command" | "output" | "all") => {
+        if (kind === "all") {
+            const result = await copyCommandAndOutput(record);
+            setMessage("reason" in result ? result.reason : uiText("command.copiedAndOutput"));
+            return;
+        }
         let text = record.command;
         if (kind !== "command") {
             if (!canCopyOutput(record)) {
-                setMessage("Output copy disabled because the product data is incomplete, unsafe, or truncated.");
+            setMessage(uiText("command.copyDisabled"));
                 return;
             }
             const output = await services.CommandJournalService.GetOutput(record.id);
@@ -285,13 +299,13 @@ export const CommandHistory = ({ blockId, model }: CommandHistoryProps) => {
                 setMessage(projection.reason);
                 return;
             }
-            text = kind === "all" ? `${record.command}\n${projection.text}` : projection.text;
+            text = projection.text;
         }
         try {
             await navigator.clipboard.writeText(text);
-            setMessage(`Copied ${kind === "all" ? "command and output" : kind}.`);
+            setMessage(uiText("command.copied", { kind }));
         } catch (error) {
-            setMessage(`Clipboard unavailable: ${String(error)}`);
+            setMessage(uiText("command.clipboardUnavailable", { detail: String(error) }));
         }
     }, []);
 
@@ -302,24 +316,24 @@ export const CommandHistory = ({ blockId, model }: CommandHistoryProps) => {
             setOutputs({});
             refreshGate.current.invalidate();
             await refresh();
-            setMessage("Visual history cleared; PowerShell session preserved.");
+            setMessage(uiText("command.cleared"));
         } catch (error) {
-            setMessage(`Clear failed; terminal was not cleared: ${String(error)}`);
+            setMessage(uiText("command.clearFailed", { detail: String(error) }));
         }
     }, [blockId, model, refresh]);
 
     return (
-        <section className={historyInspectorClass(historyOpen)} aria-label="Command history" data-history-open={historyOpen}>
+        <section className={historyInspectorClass(historyOpen)} aria-label={uiText("command.history")} data-history-open={historyOpen}>
             <div className="command-history-toolbar">
-                <span className="command-history-title"><i className="command-history-title-icon fa-sharp fa-light fa-terminal" aria-hidden="true" />Command History</span>
+                <span className="command-history-title"><i className="command-history-title-icon fa-sharp fa-light fa-terminal" aria-hidden="true" />{uiText("command.history")}</span>
                 {health && <span className={`command-history-health command-history-health-${health.status}`}>
-                    <i className="fa-sharp fa-light fa-database" aria-hidden="true" />{health.status}{health.output_complete === false ? " · output may be incomplete" : ""}
+                    <i className="fa-sharp fa-light fa-database" aria-hidden="true" />{health.status}{health.output_complete === false ? ` · ${uiText("command.outputIncomplete")}` : ""}
                 </span>}
-                <button className="command-history-toggle" type="button" aria-expanded={historyOpen} aria-label={historyOpen ? "Close history inspector" : "Open history inspector"} title={historyOpen ? "Close history inspector" : "Open history inspector"} onMouseDown={(event) => event.preventDefault()} onClick={() => setHistoryOpen((open) => !open)}>
-                    <i className={historyOpen ? "fa-sharp fa-light fa-eye-slash" : "fa-sharp fa-light fa-clock-rotate-left"} aria-hidden="true" /> <span>{historyOpen ? "Close" : "History"}</span>
+                <button className="command-history-toggle" type="button" aria-expanded={historyOpen} aria-label={historyOpen ? uiText("command.closeHistory") : uiText("command.openHistory")} title={historyOpen ? uiText("command.closeHistory") : uiText("command.openHistory")} onMouseDown={(event) => event.preventDefault()} onClick={() => setHistoryOpen((open) => !open)}>
+                    <i className={historyOpen ? "fa-sharp fa-light fa-eye-slash" : "fa-sharp fa-light fa-clock-rotate-left"} aria-hidden="true" /> <span>{historyOpen ? uiText("command.close") : uiText("command.historyShort")}</span>
                 </button>
-                <button className="command-history-clear" type="button" aria-label="Clear visual history" title="Clear visual history" onMouseDown={(event) => event.preventDefault()} onClick={clear}>
-                    <i className="fa-sharp fa-light fa-broom" aria-hidden="true" /> <span>Clear</span>
+                <button className="command-history-clear" type="button" aria-label={uiText("terminal.clearVisualHistory")} title={uiText("terminal.clearVisualHistory")} onMouseDown={(event) => event.preventDefault()} onClick={clear}>
+                    <i className="fa-sharp fa-light fa-broom" aria-hidden="true" /> <span>{uiText("command.clear")}</span>
                 </button>
             </div>
             {message && <div className="command-history-message" role="status" hidden={!historyOpen}>{message}</div>}
@@ -334,7 +348,7 @@ export const CommandHistory = ({ blockId, model }: CommandHistoryProps) => {
                         onCopyAll={() => void copyRecord(record, "all")}
                     />
                 ))}
-                {records.length === 0 && <div className="command-history-empty">No completed commands in the current visible generation.</div>}
+                {records.length === 0 && <div className="command-history-empty">{uiText("command.empty")}</div>}
             </div>
         </section>
     );

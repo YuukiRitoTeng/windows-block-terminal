@@ -36,6 +36,12 @@ describe("command history product seam", () => {
         expect(source).toContain('className="command-history-clear"');
     });
 
+    it("routes the retained All action through the shared Copy All operation", () => {
+        const source = readFileSync(new URL("./command-history.tsx", import.meta.url), "utf8");
+        expect(source).toContain('import { copyCommandAndOutput } from "./command-copy-all"');
+        expect(source).toContain("const result = await copyCommandAndOutput(record);");
+    });
+
     it("only starts history and health polling while the inspector is open", () => {
         const source = readFileSync(new URL("./command-history.tsx", import.meta.url), "utf8");
         expect(source).toContain("if (!historyOpen)");

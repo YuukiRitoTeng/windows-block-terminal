@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { getSettingsKeyAtom } from "@/app/store/global";
+import { createTabSnapLayoutHost } from "@/app/workspace/snapLayoutHost";
+import { applySnapPreset } from "@/app/workspace/snapApply";
+import * as services from "@/app/store/services";
 import clsx from "clsx";
 import { toPng } from "html-to-image";
 import { Atom, useAtomValue, useSetAtom } from "jotai";
@@ -13,6 +16,7 @@ import React, {
     useCallback,
     useEffect,
     useMemo,
+    useReducer,
     useRef,
     useState,
 } from "react";
@@ -21,6 +25,21 @@ import { debounce, throttle } from "throttle-debounce";
 import { useDevicePixelRatio } from "use-device-pixel-ratio";
 import { LayoutModel } from "./layoutModel";
 import { useNodeModel, useTileLayout } from "./layoutModelHooks";
+import { SnapBar, SnapTrigger, useReclaimablePaneCount } from "./snapbar";
+import {
+    SNAP_DRAG_CLOSED,
+    SnapDragGeometry,
+    SnapRect,
+    SnapTriggerSize,
+    TILE_DRAG_ITEM_TYPE,
+    isPaneDrag,
+    isPointInRect,
+    isSnapBarMounted,
+    paneBlockIdOfDragItem,
+    reduceSnapDrag,
+    triggerSizeFor,
+} from "./snapDrag";
+import { collectReclaimablePaneIds, isPaneInTab } from "@/app/workspace/snapLayoutHost";
 import "./tilelayout.scss";
 import {
     LayoutNode,
@@ -31,7 +50,12 @@ import {
 } from "./types";
 import { determineDropDirection } from "./utils";
 
-const tileItemType = "TILE_ITEM";
+const tileItemType = TILE_DRAG_ITEM_TYPE;
+
+/** Distance from the top of the workspace to the activation strip, matching `snapbar.scss`. */
+const SNAP_TRIGGER_TOP_PX = 6;
+/** Gap between the strip and the chooser panel below it. */
+const SNAP_CHOOSER_GAP_PX = 6;
 
 export interface TileLayoutProps {
     /**
@@ -60,17 +84,101 @@ function TileLayoutComponent({ tabAtom, contents, getCursorPoint }: TileLayoutPr
     const setActiveDrag = useSetAtom(layoutModel.activeDrag);
     const setReady = useSetAtom(layoutModel.ready);
     const isResizing = useAtomValue(layoutModel.isResizing);
+    const leafs = useAtomValue(layoutModel.leafs);
 
-    const { activeDrag, dragClientOffset, dragItemType } = useDragLayer((monitor) => ({
+    const { activeDrag, dragClientOffset, dragItemType, dragItem } = useDragLayer((monitor) => ({
         activeDrag: monitor.isDragging(),
         dragClientOffset: monitor.getClientOffset(),
         dragItemType: monitor.getItemType(),
+        dragItem: monitor.getItem(),
     }));
 
     useEffect(() => {
         const activeTileDrag = activeDrag && dragItemType == tileItemType;
         setActiveDrag(activeTileDrag);
     }, [activeDrag, dragItemType]);
+
+    /**
+     * Snap Bar state. It follows the Windows 11 shape: a visible strip sits at the top centre of the
+     * workspace for the whole pane drag, touching it arms the bar, and only then does the chooser drop
+     * down from it. Both regions are measured from the real elements - the strip's rendered rectangle
+     * *is* the hit region - so the chooser stays open while the pointer is anywhere inside it,
+     * including the second row, and closes only when the pointer genuinely leaves.
+     */
+    const [snapDrag, dispatchSnapDrag] = useReducer(reduceSnapDrag, SNAP_DRAG_CLOSED);
+    const snapTriggerRef = useRef<HTMLDivElement>(null);
+    const snapChooserRef = useRef<HTMLDivElement>(null);
+    const [snapTriggerSize, setSnapTriggerSize] = useState<SnapTriggerSize>(() => triggerSizeFor(null));
+    const [snapTriggerHot, setSnapTriggerHot] = useState(false);
+
+    const measureSnapGeometry = useCallback((): SnapDragGeometry => {
+        const rectOf = (element: HTMLElement | null): SnapRect | null => {
+            const rect = element?.getBoundingClientRect();
+            if (rect == null || (rect.width === 0 && rect.height === 0)) {
+                return null;
+            }
+            return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom };
+        };
+        return { trigger: rectOf(snapTriggerRef.current), chooser: rectOf(snapChooserRef.current) };
+    }, []);
+
+    useEffect(() => {
+        if (!activeDrag) {
+            dispatchSnapDrag({ kind: "drag-ended" });
+            setSnapTriggerHot(false);
+            // A cancelled drag must leave no pending move behind, or the layout keeps showing a
+            // placeholder for an operation the user abandoned.
+            layoutModel.treeReducer({ type: LayoutTreeActionType.ClearPendingAction });
+            return;
+        }
+        // The strip follows the workspace it sits in, and the rectangle measured below is the one that
+        // was rendered, so aiming at the visible strip is exactly what arms the bar.
+        const containerRect = layoutModel.displayContainerRef.current?.getBoundingClientRect();
+        if (containerRect != null) {
+            setSnapTriggerSize(triggerSizeFor({ width: containerRect.width, height: containerRect.height }));
+        }
+        const geometry = measureSnapGeometry();
+        const pointer = dragClientOffset == null ? null : { x: dragClientOffset.x, y: dragClientOffset.y };
+        setSnapTriggerHot(isPointInRect(geometry.trigger, pointer));
+        dispatchSnapDrag({
+            kind: "drag-moved",
+            itemType: dragItemType,
+            stickyBlockId: paneBlockIdOfDragItem(dragItem),
+            paneInTab: isPaneInTab(layoutModel, paneBlockIdOfDragItem(dragItem)),
+            pointer,
+            geometry,
+        });
+    }, [activeDrag, dragItemType, dragItem, dragClientOffset]);
+
+    // While the bar is open the pane below it must not compute a move preview: the drop the user is
+    // aiming at is a snap slot, not an edge of the pane underneath.
+    useEffect(() => {
+        if (isSnapBarMounted(snapDrag)) {
+            layoutModel.treeReducer({ type: LayoutTreeActionType.ClearPendingAction });
+        }
+    }, [snapDrag.phase]);
+
+    /** Panes in this tab; a preset that cannot be applied to them is offered disabled. */
+    const leafBlockIds = useMemo(
+        () => leafs.map((leaf) => leaf.data?.blockId).filter((blockId) => blockId != null),
+        [leafs]
+    );
+
+    const snapDropDeps = useMemo(
+        () => ({
+            getPaneBlockIds: () => layoutModel.getLeafBlockIds(),
+            applySnapPreset: (request) => applySnapPreset(createTabSnapLayoutHost({ layoutModel, services }), request),
+            getReclaimablePaneIds: () => collectReclaimablePaneIds(layoutModel),
+        }),
+        [layoutModel]
+    );
+
+    const handleSnapDropHandled = useCallback(() => {
+        dispatchSnapDrag({ kind: "slot-dropped" });
+    }, []);
+
+    /** How many panes a shrink could reclaim; decides whether a smaller preset is offered at all. */
+    const reclaimablePaneCount = useReclaimablePaneCount(snapDropDeps, leafBlockIds);
 
     const checkForCursorBounds = useCallback(
         debounce(100, (dragClientOffset: XYCoord) => {
@@ -129,7 +237,26 @@ function TileLayoutComponent({ tabAtom, contents, getCursorPoint }: TileLayoutPr
                     <NodeBackdrops layoutModel={layoutModel} />
                 </div>
                 <Placeholder key="placeholder" layoutModel={layoutModel} style={{ top: 10000, ...overlayTransform }} />
-                <OverlayNodeWrapper layoutModel={layoutModel} />
+                <OverlayNodeWrapper layoutModel={layoutModel} snapBarOpen={isSnapBarMounted(snapDrag)} />
+                {isPaneDrag(dragItemType) && (
+                    <SnapTrigger
+                        key="snaptrigger"
+                        triggerRef={snapTriggerRef}
+                        size={snapTriggerSize}
+                        hot={snapTriggerHot}
+                    />
+                )}
+                {isSnapBarMounted(snapDrag) && (
+                    <SnapBar
+                        key="snapbar"
+                        paneBlockIds={leafBlockIds}
+                        reclaimablePaneCount={reclaimablePaneCount}
+                        dropDeps={snapDropDeps}
+                        onDropHandled={handleSnapDropHandled}
+                        panelRef={snapChooserRef}
+                        topOffsetPx={snapTriggerSize.height + SNAP_TRIGGER_TOP_PX + SNAP_CHOOSER_GAP_PX}
+                    />
+                )}
             </div>
         </Suspense>
     );
@@ -320,18 +447,20 @@ const DisplayNode = ({ layoutModel, node }: DisplayNodeProps) => {
 
 interface OverlayNodeWrapperProps {
     layoutModel: LayoutModel;
+    /** True while the Snap Bar is open: the panes below it must not preview a move. */
+    snapBarOpen: boolean;
 }
 
-const OverlayNodeWrapper = memo(({ layoutModel }: OverlayNodeWrapperProps) => {
+const OverlayNodeWrapper = memo(({ layoutModel, snapBarOpen }: OverlayNodeWrapperProps) => {
     const leafs = useAtomValue(layoutModel.leafs);
     const overlayTransform = useAtomValue(layoutModel.overlayTransform);
 
     const overlayNodes = useMemo(
         () =>
             leafs.map((node) => {
-                return <OverlayNode key={node.id} layoutModel={layoutModel} node={node} />;
+                return <OverlayNode key={node.id} layoutModel={layoutModel} node={node} snapBarOpen={snapBarOpen} />;
             }),
-        [leafs]
+        [leafs, snapBarOpen]
     );
 
     return (
@@ -347,16 +476,20 @@ interface OverlayNodeProps {
      */
     layoutModel: LayoutModel;
     node: LayoutNode;
+    /** True while the Snap Bar is open: the panes below it must not preview a move. */
+    snapBarOpen: boolean;
 }
 
 /**
  * An overlay representing the true flexbox layout of the LayoutTreeState. This holds the drop targets for moving around nodes and is used to calculate the
  * dimensions of the corresponding DisplayNode for each LayoutTreeState leaf.
  */
-const OverlayNode = memo(({ node, layoutModel }: OverlayNodeProps) => {
+const OverlayNode = memo(({ node, layoutModel, snapBarOpen }: OverlayNodeProps) => {
     const nodeModel = useNodeModel(layoutModel, node);
     const additionalProps = useAtomValue(nodeModel.additionalProps);
     const overlayRef = useRef<HTMLDivElement>(null);
+    const snapBarOpenRef = useRef(snapBarOpen);
+    snapBarOpenRef.current = snapBarOpen;
 
     const [, drop] = useDrop(
         () => ({
@@ -375,7 +508,12 @@ const OverlayNode = memo(({ node, layoutModel }: OverlayNodeProps) => {
             },
             hover: throttle(50, (_, monitor: DropTargetMonitor<unknown, unknown>) => {
                 if (monitor.isOver({ shallow: true })) {
-                    if (monitor.canDrop() && layoutModel.displayContainerRef?.current && additionalProps?.rect) {
+                    if (snapBarOpenRef.current) {
+                        // The pointer is aiming at a snap slot, not at this pane's edge.
+                        layoutModel.treeReducer({
+                            type: LayoutTreeActionType.ClearPendingAction,
+                        });
+                    } else if (monitor.canDrop() && layoutModel.displayContainerRef?.current && additionalProps?.rect) {
                         const dragItem = monitor.getItem<LayoutNode>();
                         // console.log("computing operation", layoutNode, dragItem, additionalProps.rect);
                         const offset = monitor.getClientOffset();

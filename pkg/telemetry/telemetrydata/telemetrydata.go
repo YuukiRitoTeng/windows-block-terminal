@@ -105,8 +105,6 @@ type TEventProps struct {
 	ActiveMinutes       int `json:"activity:activeminutes,omitempty"`
 	FgMinutes           int `json:"activity:fgminutes,omitempty"`
 	OpenMinutes         int `json:"activity:openminutes,omitempty"`
-	WaveAIActiveMinutes int `json:"activity:waveaiactiveminutes,omitempty"`
-	WaveAIFgMinutes     int `json:"activity:waveaifgminutes,omitempty"`
 	TermCommandsRun     int `json:"activity:termcommandsrun,omitempty"`
 	TermCommandsRemote  int `json:"activity:termcommands:remote,omitempty"`
 	TermCommandsDurable int `json:"activity:termcommands:durable,omitempty"`

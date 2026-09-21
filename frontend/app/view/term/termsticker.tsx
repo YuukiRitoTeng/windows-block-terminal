@@ -3,6 +3,7 @@
 
 import { RpcApi } from "@/app/store/wshclientapi";
 import { TabRpcClient } from "@/app/store/wshrpcutil";
+import { markSnapTerminalTouched } from "./snap-touch";
 import { createBlock } from "@/store/global";
 import { getWebServerEndpoint } from "@/util/endpoints";
 import { stringToBase64 } from "@/util/util";
@@ -84,6 +85,8 @@ function TermSticker({ sticker, config }: { sticker: StickerType; config: Sticke
         clickHandler = () => {
             console.log("clickHandler", sticker.clickcmd, sticker.clickblockdef);
             if (sticker.clickcmd) {
+                // A click that types a command into the terminal is the user using that pane.
+                markSnapTerminalTouched(config.blockId);
                 const b64data = stringToBase64(sticker.clickcmd);
                 RpcApi.ControllerInputCommand(TabRpcClient, { blockid: config.blockId, inputdata64: b64data });
             }

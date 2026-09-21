@@ -18,7 +18,6 @@ import {
     getAndClearTermCommandsWsl,
     getForceQuit,
     getGlobalIsRelaunching,
-    getUserConfirmedQuit,
     setForceQuit,
     setGlobalIsQuitting,
     setGlobalIsStarting,
@@ -27,6 +26,7 @@ import {
     setWasInFg,
 } from "./emain-activity";
 import { initIpcHandlers } from "./emain-ipc";
+import { confirmApplicationQuit } from "./emain-quit";
 import { log } from "./emain-log";
 import { initMenuEventSubscriptions, makeAndSetAppMenu, makeDockTaskbar } from "./emain-menu";
 import {
@@ -172,8 +172,6 @@ function logActiveState() {
         const astate = getActivityState();
         const activity: ActivityUpdate = { openminutes: 1 };
         const ww = focusedWaveWindow;
-        const activeTabView = ww?.activeTabView;
-        const isWaveAIOpen = activeTabView?.isWaveAIOpen ?? false;
 
         if (astate.wasInFg) {
             activity.fgminutes = 1;
@@ -208,13 +206,6 @@ function logActiveState() {
         if (termCmdDurableCount > 0) {
             props["activity:termcommands:durable"] = termCmdDurableCount;
         }
-        if (astate.wasActive && isWaveAIOpen) {
-            props["activity:waveaiactiveminutes"] = 1;
-        }
-        if (astate.wasInFg && isWaveAIOpen) {
-            props["activity:waveaifgminutes"] = 1;
-        }
-
         try {
             await RpcApi.ActivityCommand(ElectronWshClient, activity, { noresponse: true });
             await RpcApi.RecordTEventCommand(
@@ -267,27 +258,10 @@ electronApp.on("before-quit", (e) => {
     const allWindows = getAllWaveWindows();
     const allBuilders = getAllBuilderWindows();
     if (
-        confirmQuit &&
-        !getForceQuit() &&
-        !getUserConfirmedQuit() &&
         (allWindows.length > 0 || allBuilders.length > 0) &&
-        !getIsWaveSrvDead() &&
-        !process.env.WAVETERM_NOCONFIRMQUIT
+        !confirmApplicationQuit(confirmQuit)
     ) {
         e.preventDefault();
-        const choice = electron.dialog.showMessageBoxSync(null, {
-            type: "question",
-            buttons: ["Cancel", "Quit"],
-            title: "Confirm Quit",
-            message: "Are you sure you want to quit Windows Block Terminal?",
-            defaultId: 0,
-            cancelId: 0,
-        });
-        if (choice === 0) {
-            return;
-        }
-        setUserConfirmedQuit(true);
-        electronApp.quit();
         return;
     }
     setGlobalIsQuitting(true);

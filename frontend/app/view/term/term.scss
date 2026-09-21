@@ -1,6 +1,20 @@
 // Copyright 2024, Command Line Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+.term-content-frame {
+    flex: 1 1 auto; min-height: 0; min-width: 0;
+    flex-direction: row !important;
+    > .term-connectelem { min-width: 0; }
+    .xterm { padding-left: 8px; }
+    .command-region-cue {
+        pointer-events: none; background: transparent !important;
+        &::before { content: ""; position: absolute; left: -7px; top: 1px; bottom: 1px;
+            width: 3px; border-radius: 2px; background: var(--wbt-text-secondary, #8a96a5); opacity: 0.6; }
+        &.is-selected::before { width: 5px; opacity: 1; border-radius: 0 3px 3px 0; background: var(--wbt-focus-ring, #72a9ea); }
+    }
+}
+.terminal-action-gutter { position: relative; flex: 0 0 40px; width: 40px; min-height: 0; }
+
 .connection-btn {
     min-height: 0;
     overflow: hidden;
@@ -11,7 +25,7 @@
     width: 200px;
 }
 
-.view-term {
+.view-term, .term-content-frame {
     display: flex;
     flex-direction: column;
     width: 100%;
@@ -61,6 +75,42 @@
         overflow: hidden;
         line-height: 1;
         margin: 5px 1px 5px 4px;
+    }
+
+    .terminal-clear-action {
+        position: absolute; top: 8px; right: 6px; z-index: 3; display: flex;
+        .terminal-clear-action-status {
+            position: absolute; top: 32px; right: 0; width: max-content;
+            max-width: min(260px, 65vw); white-space: normal;
+            background: var(--wbt-surface-elevated, #262a30); color: var(--wbt-text-primary, #eee);
+            border-radius: 4px; font-size: 12px; line-height: 1.4;
+            &:not(:empty) { padding: 6px; border: 1px solid var(--wbt-border-subtle, #626873); }
+            &:empty { display: none; }
+        }
+    }
+    .command-navigation-rail {
+        position: absolute; inset: 0; pointer-events: none;
+        .command-navigation-rail-controls {
+            position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+            display: flex; flex-direction: column; align-items: center; gap: 2px;
+        }
+        .command-selection-position { font-size: 9px; line-height: 12px; color: var(--wbt-text-secondary, #b7bdc7); }
+        .command-navigation-rail-copy { position: absolute; right: 6px; bottom: 8px; }
+        .command-navigation-rail-message {
+            position: absolute; bottom: 40px; right: 0; width: max-content; max-width: 200px;
+            padding: 6px; border-radius: 4px; font-size: 12px;
+            background: var(--wbt-surface-elevated, #262a30); color: var(--wbt-text-primary, #eee);
+        }
+    }
+    .terminal-action-gutter button {
+        box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center;
+        width: 28px; height: 28px; padding: 0; margin: 0;
+        border: 1px solid var(--wbt-border-subtle, #626873); border-radius: 4px;
+        color: var(--wbt-text-primary, #eee); background: var(--wbt-surface, #191c21);
+        font: 16px/1 sans-serif; pointer-events: auto; cursor: pointer;
+        &:hover:not(:disabled) { background: var(--wbt-surface-elevated, #303640); border-color: var(--wbt-focus-ring, #72a9ea); }
+        &:focus-visible { outline: 2px solid var(--wbt-focus-ring, #72a9ea); outline-offset: 1px; }
+        &:disabled { opacity: 0.4; cursor: not-allowed; }
     }
 
     .command-history {
@@ -265,7 +315,7 @@
         position: absolute;
         top: 0;
         left: 0;
-        width: 100%;
+        width: calc(100% - 40px);
         height: 100%;
         z-index: var(--zindex-termstickers);
         pointer-events: none;
@@ -291,7 +341,8 @@
         width: 100%;
 
         .xterm-decoration-overview-ruler {
-            display: none !important;
+            display: block !important;
+            opacity: 0.72;
         }
 
         .xterm-viewport {

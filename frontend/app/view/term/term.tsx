@@ -5,7 +5,7 @@ import ClaudeColorSvg from "@/app/asset/claude-color.svg";
 import { SubBlock } from "@/app/block/block";
 import type { BlockNodeModel } from "@/app/block/blocktypes";
 import { NullErrorBoundary } from "@/app/element/errorboundary";
-import { Search, useSearch } from "@/app/element/search";
+import { useSearch } from "@/app/element/search";
 import { ContextMenuModel } from "@/app/store/contextmenu";
 import { globalStore } from "@/app/store/jotaiStore";
 import { useTabModel } from "@/app/store/tab-model";
@@ -21,9 +21,9 @@ import clsx from "clsx";
 import debug from "debug";
 import * as jotai from "jotai";
 import * as React from "react";
+import { TerminalContentFrame } from "./command-navigation-rail";
+import { armMultiInputBroadcast } from "./multi-input";
 import { TermLinkTooltip } from "./term-tooltip";
-import { CommandHistory } from "./command-history";
-import { TermStickers } from "./termsticker";
 import { TermThemeUpdater } from "./termtheme";
 import { computeTheme, normalizeCursorStyle } from "./termutil";
 import { TermWrap } from "./termwrap";
@@ -197,12 +197,10 @@ const TerminalView = ({ blockId, model }: ViewComponentProps<TermViewModel>) => 
     const fullConfig = globalStore.get(atoms.fullConfigAtom);
     const connFontFamily = fullConfig.connections?.[blockData?.meta?.connection]?.["term:fontfamily"];
     const isFocused = jotai.useAtomValue(model.nodeModel.isFocused);
-    const isMI = jotai.useAtomValue(tabModel.isTermMultiInput);
-    const isBasicTerm = termMode != "vdom" && blockData?.meta?.controller != "cmd"; // needs to match isBasicTerm
 
     // search
     const searchProps = useSearch({
-        anchorRef: viewRef,
+        anchorRef: connectElemRef,
         viewModel: model,
         caseSensitive: false,
         wholeWord: false,
@@ -318,6 +316,7 @@ const TerminalView = ({ blockId, model }: ViewComponentProps<TermViewModel>) => 
                 keydownHandler: model.handleTerminalKeydown.bind(model),
                 useWebGl: !termSettings?.["term:disablewebgl"],
                 sendDataHandler: model.sendDataToController.bind(model),
+                userInputHandler: model.markSnapTerminalTouched.bind(model),
                 nodeModel: model.nodeModel,
             }
         );
@@ -354,16 +353,21 @@ const TerminalView = ({ blockId, model }: ViewComponentProps<TermViewModel>) => 
     }, [termMode]);
 
     React.useEffect(() => {
-        if (isMI && isBasicTerm && isFocused && model.termRef.current != null) {
-            model.termRef.current.multiInputCallback = (data: string) => {
-                model.multiInputHandler(data);
-            };
-        } else {
-            if (model.termRef.current != null) {
-                model.termRef.current.multiInputCallback = null;
-            }
+        // Multi-input is armed on the wrapper this effect's sibling created, and the switch is read
+        // when the user types. Keying this on the wrapper means a wrapper created later - after a
+        // settings, font-size or connection change - is armed too, instead of staying silent while the
+        // switch still reads on.
+        const wrap = termWrapInst;
+        if (wrap == null) {
+            return;
         }
-    }, [isMI, isBasicTerm, isFocused]);
+        return armMultiInputBroadcast({
+            terminal: wrap,
+            isOn: () => globalStore.get(tabModel.isTermMultiInput),
+            isBasicTerm: () => model.isBasicTerm((atom) => globalStore.get(atom)),
+            broadcast: (data) => model.multiInputHandler(data),
+        });
+    }, [termWrapInst, model, tabModel]);
 
     const stickerConfig = {
         charWidth: 8,
@@ -390,15 +394,12 @@ const TerminalView = ({ blockId, model }: ViewComponentProps<TermViewModel>) => 
             {termBg && <div key="term-bg" className="absolute inset-0 z-0 pointer-events-none" style={termBg} />}
             <TermResyncHandler blockId={blockId} model={model} />
             <TermThemeUpdater blockId={blockId} model={model} termRef={model.termRef} />
-            <TermStickers config={stickerConfig} />
             <TermToolbarVDomNode key="vdom-toolbar" blockId={blockId} model={model} />
             <TermVDomNode key="vdom" blockId={blockId} model={model} />
-            <div key="connect-elem" className="term-connectelem" ref={connectElemRef} />
-            {termMode == "term" && <CommandHistory blockId={blockId} model={model} />}
+            <TerminalContentFrame blockId={blockId} model={model} termWrap={termMode == "term" ? termWrapInst : null} connectElemRef={connectElemRef} searchProps={searchProps} stickerConfig={stickerConfig} />
             <NullErrorBoundary debugName="TermLinkTooltip">
                 <TermLinkTooltip termWrap={termWrapInst} />
             </NullErrorBoundary>
-            <Search {...searchProps} />
         </div>
     );
 };

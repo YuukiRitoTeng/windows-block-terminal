@@ -40,22 +40,9 @@ export function addOpenMenuItems(menu: ContextMenuItem[], conn: string, finfo: F
     menu.push({
         type: "separator",
     });
-    if (!finfo.isdir) {
-        menu.push({
-            label: "Open Preview in New Block",
-            click: () =>
-                fireAndForget(async () => {
-                    const blockDef: BlockDef = {
-                        meta: {
-                            view: "preview",
-                            file: finfo.path,
-                            connection: conn,
-                        },
-                    };
-                    await createBlock(blockDef);
-                }),
-        });
-    }
+    menu.push({
+        type: "separator",
+    });
     menu.push({
         label: "Open Terminal Here",
         click: () => {

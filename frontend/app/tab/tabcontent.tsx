@@ -6,6 +6,7 @@ import { CenteredDiv } from "@/element/quickelems";
 import { ContentRenderer, NodeModel, PreviewRenderer, TileLayout } from "@/layout/index";
 import { TileLayoutContents } from "@/layout/lib/types";
 import { atoms, getApi } from "@/store/global";
+import { uiText } from "@/util/ui-locale";
 import * as services from "@/store/services";
 import * as WOS from "@/store/wos";
 import { atom, useAtomValue } from "jotai";
@@ -50,9 +51,9 @@ const TabContent = React.memo(({ tabId, noTopPadding }: { tabId: string; noTopPa
     let innerContent;
 
     if (tabLoading) {
-        innerContent = <CenteredDiv>Tab Loading</CenteredDiv>;
+        innerContent = <CenteredDiv>{uiText("tab.loading")}</CenteredDiv>;
     } else if (!tabData) {
-        innerContent = <CenteredDiv>Tab Not Found</CenteredDiv>;
+        innerContent = <CenteredDiv>{uiText("tab.notFound")}</CenteredDiv>;
     } else if (tabData?.blockids?.length == 0) {
         innerContent = null;
     } else {
@@ -67,7 +68,7 @@ const TabContent = React.memo(({ tabId, noTopPadding }: { tabId: string; noTopPa
     }
 
     return (
-        <div className={`flex flex-row flex-grow min-h-0 w-full items-center justify-center overflow-hidden relative ${noTopPadding ? "" : "pt-[3px]"} pr-[3px]`}>
+        <div className={`flex flex-row flex-grow h-full min-h-0 w-full items-center justify-center overflow-hidden relative ${noTopPadding ? "" : "pt-[3px]"} pr-[3px]`}>
             {innerContent}
         </div>
     );

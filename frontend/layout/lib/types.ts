@@ -285,9 +285,16 @@ export interface LayoutTreeMagnifyNodeToggleAction extends LayoutTreeAction {
 
 /**
  * Action for clearing all nodes from the layout tree.
+ *
+ * When `rootNode` is supplied the tree is replaced by that node in the same action, which is how an
+ * atomic preset application commits a fully materialized tree: one action, one state update, no
+ * intermediate tree. A bare ClearTree still just empties the tree.
  */
 export interface LayoutTreeClearTreeAction extends LayoutTreeAction {
     type: LayoutTreeActionType.ClearTree;
+    rootNode?: LayoutNode;
+    /** Focus target for the replacement tree. Ignored by a bare clear, which drops focus. */
+    focusedNodeId?: string;
 }
 
 /**

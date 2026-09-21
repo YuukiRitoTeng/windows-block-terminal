@@ -30,7 +30,12 @@ import {
 } from "./types";
 
 import { newLayoutNode } from "./layoutNode";
-import { LayoutTreeReplaceNodeAction, LayoutTreeSplitHorizontalAction, LayoutTreeSplitVerticalAction } from "./types";
+import {
+    LayoutNode,
+    LayoutTreeReplaceNodeAction,
+    LayoutTreeSplitHorizontalAction,
+    LayoutTreeSplitVerticalAction,
+} from "./types";
 
 export const DEFAULT_MAX_CHILDREN = 5;
 
@@ -416,9 +421,11 @@ export function magnifyNodeToggle(layoutState: LayoutTreeState, action: LayoutTr
     }
 }
 
-export function clearTree(layoutState: LayoutTreeState) {
-    layoutState.rootNode = undefined;
+export function clearTree(layoutState: LayoutTreeState, rootNode?: LayoutNode) {
+    layoutState.rootNode = rootNode;
     layoutState.leafOrder = undefined;
+    // A replacement tree brings its own focus. Clearing the fields first means a replacement that
+    // deliberately has no focus does not inherit the previous tree's focus or magnification.
     layoutState.focusedNodeId = undefined;
     layoutState.magnifiedNodeId = undefined;
 }

@@ -8,7 +8,6 @@ import {
     getBlockBadgeAtom,
 } from "@/app/store/badge";
 import { ClientModel } from "@/app/store/client-model";
-import { FocusManager } from "@/app/store/focusManager";
 import { GlobalModel } from "@/app/store/global-model";
 import { globalStore } from "@/app/store/jotaiStore";
 import { getTabModelByTabId, TabModelContext } from "@/app/store/tab-model";
@@ -17,11 +16,12 @@ import { makeWaveEnvImpl } from "@/app/waveenv/waveenvimpl";
 import { Workspace } from "@/app/workspace/workspace";
 import { getLayoutModelForStaticTab } from "@/layout/index";
 import { ContextMenuModel } from "@/store/contextmenu";
-import { atoms, createBlock, getSettingsPrefixAtom, refocusNode } from "@/store/global";
+import { atoms, getApi, getSettingsPrefixAtom, refocusNode } from "@/store/global";
 import { appHandleKeyDown, keyboardMouseDownHandler } from "@/store/keymodel";
 import { getElemAsStr } from "@/util/focusutil";
 import * as keyutil from "@/util/keyutil";
 import { PLATFORM } from "@/util/platformutil";
+import { uiText } from "@/util/ui-locale";
 import * as util from "@/util/util";
 import clsx from "clsx";
 import debug from "debug";
@@ -112,25 +112,20 @@ async function handleContextMenu(e: React.MouseEvent<HTMLDivElement>) {
     }
     const menu: ContextMenuItem[] = [];
     if (canCut) {
-        menu.push({ label: "Cut", role: "cut" });
+        menu.push({ label: uiText("app.cut"), role: "cut" });
     }
     if (canCopy) {
-        menu.push({ label: "Copy", role: "copy" });
+        menu.push({ label: uiText("app.copy"), role: "copy" });
     }
     if (canPaste) {
-        menu.push({ label: "Paste", role: "paste" });
+        menu.push({ label: uiText("app.paste"), role: "paste" });
     }
     if (clipboardURL) {
         menu.push({ type: "separator" });
         menu.push({
-            label: "Open Clipboard URL (" + clipboardURL.hostname + ")",
+            label: uiText("app.openClipboardUrl", { hostname: clipboardURL.hostname }),
             click: () => {
-                createBlock({
-                    meta: {
-                        view: "web",
-                        url: clipboardURL.toString(),
-                    },
-                });
+                getApi().openExternal(clipboardURL.toString());
             },
         });
     }
@@ -225,16 +220,6 @@ const MacOSFirstClickHandler = () => {
             }
             return null;
         };
-        const isAIPanelTarget = (target: EventTarget): boolean => {
-            let elem = target as HTMLElement;
-            while (elem != null) {
-                if (elem.dataset?.aipanel) {
-                    return true;
-                }
-                elem = elem.parentElement;
-            }
-            return false;
-        };
         const handleMouseDown = (e: MouseEvent) => {
             const timeDiff = Date.now() - windowFocusTime;
             if (windowFocusTime != null && timeDiff < 50) {
@@ -247,11 +232,6 @@ const MacOSFirstClickHandler = () => {
                     setTimeout(() => {
                         console.log("macos first-click, focusing block", blockId);
                         refocusNode(blockId);
-                    }, 10);
-                } else if (isAIPanelTarget(e.target)) {
-                    setTimeout(() => {
-                        console.log("macos first-click, focusing AI panel");
-                        FocusManager.getInstance().setWaveAIFocused(true);
                     }, 10);
                 }
                 console.log("macos first-click detected, canceled", timeDiff + "ms");
@@ -364,7 +344,7 @@ const AppInner = () => {
         return (
             <div className="flex flex-col w-full h-full">
                 <AppBackground />
-                <CenteredDiv>invalid configuration, client or window was not loaded</CenteredDiv>
+                <CenteredDiv>{uiText("app.invalidConfiguration")}</CenteredDiv>
             </div>
         );
     }

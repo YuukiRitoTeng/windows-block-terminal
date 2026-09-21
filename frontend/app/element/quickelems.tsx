@@ -2,10 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import React from "react";
+import { uiText } from "@/util/ui-locale";
 import "./quickelems.scss";
 
 function CenteredLoadingDiv() {
-    return <CenteredDiv>loading...</CenteredDiv>;
+    return <CenteredDiv>{uiText("quick.loading")}</CenteredDiv>;
 }
 
 function CenteredDiv({ children }: { children: React.ReactNode }) {

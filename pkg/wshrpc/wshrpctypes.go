@@ -158,7 +158,6 @@ type WshRpcInterface interface {
 	GetWaveAIChatCommand(ctx context.Context, data CommandGetWaveAIChatData) (*uctypes.UIChat, error)
 	GetWaveAIRateLimitCommand(ctx context.Context) (*uctypes.RateLimitInfo, error)
 	WaveAIToolApproveCommand(ctx context.Context, data CommandWaveAIToolApproveData) error
-	WaveAIAddContextCommand(ctx context.Context, data CommandWaveAIAddContextData) error
 	WaveAIGetToolDiffCommand(ctx context.Context, data CommandWaveAIGetToolDiffData) (*CommandWaveAIGetToolDiffRtnData, error)
 
 	// screenshot
@@ -341,7 +340,6 @@ type CommandEventReadHistoryData struct {
 	MaxItems int    `json:"maxitems"`
 }
 
-
 type CpuDataRequest struct {
 	Id    string `json:"id"`
 	Count int    `json:"count"`
@@ -508,20 +506,6 @@ type CommandWaveAIToolApproveData struct {
 	Approval   string `json:"approval,omitempty"`
 }
 
-type AIAttachedFile struct {
-	Name   string `json:"name"`
-	Type   string `json:"type"`
-	Size   int    `json:"size"`
-	Data64 string `json:"data64"`
-}
-
-type CommandWaveAIAddContextData struct {
-	Files   []AIAttachedFile `json:"files,omitempty"`
-	Text    string           `json:"text,omitempty"`
-	Submit  bool             `json:"submit,omitempty"`
-	NewChat bool             `json:"newchat,omitempty"`
-}
-
 type CommandWaveAIGetToolDiffData struct {
 	ChatId     string `json:"chatid"`
 	ToolCallId string `json:"toolcallid"`
@@ -562,6 +546,7 @@ type CommandDebugTermRtnData struct {
 
 type PathCommandData struct {
 	PathType     string `json:"pathtype"`
+	Path         string `json:"path,omitempty"`
 	Open         bool   `json:"open"`
 	OpenExternal bool   `json:"openexternal"`
 	TabId        string `json:"tabid"`
@@ -575,32 +560,30 @@ type ActivityDisplayType struct {
 }
 
 type ActivityUpdate struct {
-	FgMinutes           int                   `json:"fgminutes,omitempty"`
-	ActiveMinutes       int                   `json:"activeminutes,omitempty"`
-	OpenMinutes         int                   `json:"openminutes,omitempty"`
-	WaveAIFgMinutes     int                   `json:"waveaifgminutes,omitempty"`
-	WaveAIActiveMinutes int                   `json:"waveaiactiveminutes,omitempty"`
-	NumTabs             int                   `json:"numtabs,omitempty"`
-	NewTab              int                   `json:"newtab,omitempty"`
-	NumBlocks           int                   `json:"numblocks,omitempty"`
-	NumWindows          int                   `json:"numwindows,omitempty"`
-	NumWS               int                   `json:"numws,omitempty"`
-	NumWSNamed          int                   `json:"numwsnamed,omitempty"`
-	NumSSHConn          int                   `json:"numsshconn,omitempty"`
-	NumWSLConn          int                   `json:"numwslconn,omitempty"`
-	NumMagnify          int                   `json:"nummagnify,omitempty"`
-	TermCommandsRun     int                   `json:"termcommandsrun,omitempty"`
-	NumPanics           int                   `json:"numpanics,omitempty"`
-	NumAIReqs           int                   `json:"numaireqs,omitempty"`
-	Startup             int                   `json:"startup,omitempty"`
-	Shutdown            int                   `json:"shutdown,omitempty"`
-	SetTabTheme         int                   `json:"settabtheme,omitempty"`
-	BuildTime           string                `json:"buildtime,omitempty"`
-	Displays            []ActivityDisplayType `json:"displays,omitempty"`
-	Renderers           map[string]int        `json:"renderers,omitempty"`
-	Blocks              map[string]int        `json:"blocks,omitempty"`
-	WshCmds             map[string]int        `json:"wshcmds,omitempty"`
-	Conn                map[string]int        `json:"conn,omitempty"`
+	FgMinutes       int                   `json:"fgminutes,omitempty"`
+	ActiveMinutes   int                   `json:"activeminutes,omitempty"`
+	OpenMinutes     int                   `json:"openminutes,omitempty"`
+	NumTabs         int                   `json:"numtabs,omitempty"`
+	NewTab          int                   `json:"newtab,omitempty"`
+	NumBlocks       int                   `json:"numblocks,omitempty"`
+	NumWindows      int                   `json:"numwindows,omitempty"`
+	NumWS           int                   `json:"numws,omitempty"`
+	NumWSNamed      int                   `json:"numwsnamed,omitempty"`
+	NumSSHConn      int                   `json:"numsshconn,omitempty"`
+	NumWSLConn      int                   `json:"numwslconn,omitempty"`
+	NumMagnify      int                   `json:"nummagnify,omitempty"`
+	TermCommandsRun int                   `json:"termcommandsrun,omitempty"`
+	NumPanics       int                   `json:"numpanics,omitempty"`
+	NumAIReqs       int                   `json:"numaireqs,omitempty"`
+	Startup         int                   `json:"startup,omitempty"`
+	Shutdown        int                   `json:"shutdown,omitempty"`
+	SetTabTheme     int                   `json:"settabtheme,omitempty"`
+	BuildTime       string                `json:"buildtime,omitempty"`
+	Displays        []ActivityDisplayType `json:"displays,omitempty"`
+	Renderers       map[string]int        `json:"renderers,omitempty"`
+	Blocks          map[string]int        `json:"blocks,omitempty"`
+	WshCmds         map[string]int        `json:"wshcmds,omitempty"`
+	Conn            map[string]int        `json:"conn,omitempty"`
 }
 
 type ConnExtData struct {

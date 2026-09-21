@@ -8,6 +8,7 @@ import { TabRpcClient } from "@/app/store/wshrpcutil";
 import { WaveEnv, WaveEnvSubset, useWaveEnv } from "@/app/waveenv/waveenv";
 import { Button } from "@/element/button";
 import { validateCssColor } from "@/util/color-validator";
+import { uiText } from "@/util/ui-locale";
 import { fireAndForget } from "@/util/util";
 import clsx from "clsx";
 import { useAtomValue } from "jotai";
@@ -209,7 +210,7 @@ const TabV = forwardRef<HTMLDivElement, TabVProps>((props, ref) => {
                     className="ghost grey close"
                     onClick={onClose}
                     onMouseDown={handleMouseDownOnClose}
-                    title="Close Tab"
+                    title={uiText("tab.close")}
                 >
                     <i className="fa fa-solid fa-xmark" />
                 </Button>

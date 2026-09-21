@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { PLATFORM, PlatformMacOS } from "@/util/platformutil";
+import { uiText } from "@/util/ui-locale";
 import { FloatingPortal, VirtualElement, flip, offset, shift, useFloating } from "@floating-ui/react";
 import * as React from "react";
 import type { TermWrap } from "./termwrap";
@@ -130,5 +131,5 @@ export const TermLinkTooltip = React.memo(function TermLinkTooltip({ termWrap }:
         };
     }, [termWrap]);
 
-    return <TermTooltip mousePos={mousePos} content={<span>{modKey}-click to open link</span>} />;
+    return <TermTooltip mousePos={mousePos} content={<span>{uiText("terminal.linkTooltip", { modKey })}</span>} />;
 });

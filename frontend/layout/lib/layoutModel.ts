@@ -190,6 +190,14 @@ export class LayoutModel {
      * The currently focused node.
      */
     private focusedNodeIdStack: string[];
+
+    /**
+     * How many Snap Layout applications are currently mutating this model.
+     *
+     * While this is non-zero the tree is knowingly stale: blocks created for the application are
+     * already owned by the tab but are not in the tree yet, so orphan cleanup has to stand down.
+     */
+    private snapApplyDepth: number = 0;
     /**
      * Atom pointing to the currently focused node.
      */
@@ -413,6 +421,15 @@ export class LayoutModel {
         const layoutBlockIds = new Set<string>();
 
         if (this.treeState.rootNode == null) {
+            return;
+        }
+
+        // While a Snap Layout application is in flight the tree is stale on purpose: the tab already
+        // owns the terminals that were just created, but the model still holds the old tree until the
+        // replacement is committed. Deleting on "in the tab but not in the tree" here would destroy
+        // exactly the panes the application is about to place, so cleanup waits for the next event.
+        if (this.snapApplyDepth > 0) {
+            console.log("Skipping orphaned block cleanup: a Snap Layout application is in flight");
             return;
         }
 
@@ -674,9 +691,17 @@ export class LayoutModel {
                 magnifyNodeToggle(this.treeState, action as LayoutTreeMagnifyNodeToggleAction);
                 FocusManager.getInstance().requestNodeFocus();
                 break;
-            case LayoutTreeActionType.ClearTree:
-                clearTree(this.treeState);
+            case LayoutTreeActionType.ClearTree: {
+                const clearAction = action as LayoutTreeClearTreeAction;
+                clearTree(this.treeState, clearAction.rootNode);
+                // clearTree drops focus with the old tree; a replacement supplies its own. Assigning
+                // it here keeps the whole application inside this single reducer call, so the tree,
+                // its focus, the store write and the persist all happen once.
+                if (clearAction.focusedNodeId != null) {
+                    this.treeState.focusedNodeId = clearAction.focusedNodeId;
+                }
                 break;
+            }
             case LayoutTreeActionType.ReplaceNode:
                 replaceNode(this.treeState, action as LayoutTreeReplaceNodeAction);
                 break;
@@ -695,7 +720,9 @@ export class LayoutModel {
             this.magnifiedNodeId = this.treeState.magnifiedNodeId;
         }
         if (setState) {
-            this.updateTree();
+            // A whole-tree replacement arrives already in its final shape, so it must skip
+            // balanceNode: rebalancing would flatten nested stacks and rewrite the preset's weights.
+            this.updateTree(!isTreeReplacement(action));
             this.setter(this.localTreeStateAtom, { ...this.treeState });
             this.persistToBackend();
         }
@@ -1391,6 +1418,161 @@ export class LayoutModel {
     }
 
     /**
+     * Atomically replaces the entire layout tree with an already materialized one.
+     *
+     * This is the commit half of Snap Layout application. It exists because the ordinary reducer
+     * paths cannot express "replace everything at once": inserting pane by pane would expose
+     * intermediate trees to persistence and orphan cleanup, and the default update path runs
+     * balanceNode, which would rewrite a preset that is already in its final shape.
+     *
+     * The replacement is submitted as a single ClearTree action carrying the new root, which means
+     * one reducer call, one updateTree(false), one store write and one debounced persist - so no
+     * observer can see a partially applied layout.
+     *
+     * The call is transactional: the reducer mutates the tree and only afterwards renders, writes the
+     * store and persists, so a failure in any of those steps would otherwise leave the model holding
+     * a tree the store never accepted and the user never saw. If anything throws, the previous root,
+     * focus, magnification and leaf order are put back before the error is rethrown, which is what
+     * lets the caller roll its created blocks back against the layout that is actually still there.
+     */
+    commitSnapRoot(rootNode: LayoutNode, focusedNodeId?: string): void {
+        // Focus is resolved before the reducer runs so it travels inside the same action. Defaulting
+        // to the first pane of the replacement (rather than the previous focus) matters because a
+        // materialized preset never reuses the previous node ids: keeping the old id would leave
+        // focus pointing at a node that no longer exists.
+        const targetFocusedNodeId = focusedNodeId ?? firstLeafNodeId(rootNode);
+        const snapshot = this.captureCommitSnapshot();
+        try {
+            this.treeReducer({
+                type: LayoutTreeActionType.ClearTree,
+                rootNode,
+                focusedNodeId: targetFocusedNodeId,
+            } as LayoutTreeClearTreeAction);
+        } catch (error) {
+            this.restoreCommitSnapshot(snapshot);
+            throw error;
+        }
+    }
+
+    /**
+     * Marks the start of a Snap Layout application against this model.
+     *
+     * Between the first created terminal and the tree replacement the tab owns blocks the tree does
+     * not contain yet, so orphan cleanup must not run. The bracket is exception safe only if the
+     * caller pairs it with `endSnapApply` in a `finally`, which `applySnapPreset` does.
+     */
+    beginSnapApply(): void {
+        this.snapApplyDepth += 1;
+    }
+
+    /**
+     * Marks the end of a Snap Layout application, whatever its outcome. Safe to call unbalanced.
+     */
+    endSnapApply(): void {
+        this.snapApplyDepth = Math.max(0, this.snapApplyDepth - 1);
+    }
+
+    /** Whether a Snap Layout application is currently mutating this model. */
+    isSnapApplyInFlight(): boolean {
+        return this.snapApplyDepth > 0;
+    }
+
+    /**
+     * The layout as it is right now, so a caller can put it back after a failed change.
+     *
+     * The root node is captured by reference: the model never mutates a committed tree in place, it
+     * replaces it, so the captured root stays the tree that was on screen.
+     */
+    captureTreeSnapshot(): { rootNode: LayoutNode; focusedNodeId?: string } {
+        return { rootNode: this.treeState.rootNode, focusedNodeId: this.treeState.focusedNodeId };
+    }
+
+    /** The block id of the focused pane, or undefined when focus is not on a pane. */
+    getFocusedBlockId(): string | undefined {
+        const focusedNodeId = this.treeState.focusedNodeId;
+        if (focusedNodeId == null || this.treeState.rootNode == null) {
+            return undefined;
+        }
+        let blockId: string | undefined;
+        walkNodes(this.treeState.rootNode, (node) => {
+            if (node.id === focusedNodeId && node.data != null) {
+                blockId = node.data.blockId;
+            }
+        });
+        return blockId;
+    }
+
+    /**
+     * Block ids the current tab owns, from the tab record itself.
+     *
+     * This - not the layout tree - is the authority for ownership: a block can be owned by the tab
+     * while it is not placed in the tree (still being created, or restored), and a stale tree can
+     * name a block the tab no longer owns. It reads the same source `cleanupOrphanedBlocks` uses.
+     */
+    getTabBlockIds(): string[] {
+        const tab = this.getter(this.tabAtom);
+        return [...(tab?.blockids ?? [])];
+    }
+
+    /**
+     * The state a Snap commit must be able to put back if it fails part way through.
+     */
+    private captureCommitSnapshot(): CommitSnapshot {
+        return {
+            rootNode: this.treeState.rootNode,
+            leafOrder: this.treeState.leafOrder,
+            focusedNodeId: this.treeState.focusedNodeId,
+            magnifiedNodeId: this.treeState.magnifiedNodeId,
+            modelMagnifiedNodeId: this.magnifiedNodeId,
+            lastMagnifiedNodeId: this.lastMagnifiedNodeId,
+            lastEphemeralNodeId: this.lastEphemeralNodeId,
+            focusedNodeIdStack: [...this.focusedNodeIdStack],
+        };
+    }
+
+    /**
+     * Puts a failed commit's snapshot back and re-derives the render state.
+     *
+     * The repair pass is best effort on purpose: it must not replace the error that caused the
+     * rollback, which is the only error the caller can act on.
+     */
+    private restoreCommitSnapshot(snapshot: CommitSnapshot): void {
+        this.treeState.rootNode = snapshot.rootNode;
+        this.treeState.leafOrder = snapshot.leafOrder;
+        this.treeState.focusedNodeId = snapshot.focusedNodeId;
+        this.treeState.magnifiedNodeId = snapshot.magnifiedNodeId;
+        this.magnifiedNodeId = snapshot.modelMagnifiedNodeId;
+        this.lastMagnifiedNodeId = snapshot.lastMagnifiedNodeId;
+        this.lastEphemeralNodeId = snapshot.lastEphemeralNodeId;
+        this.focusedNodeIdStack = [...snapshot.focusedNodeIdStack];
+        try {
+            this.updateTree(false);
+            this.setter(this.localTreeStateAtom, { ...this.treeState });
+        } catch (repairError) {
+            console.error("failed to re-derive the layout after a rolled back Snap commit", repairError);
+        }
+    }
+
+    /**
+     * Every block id currently placed in the tree, in leaf order.
+     *
+     * This is the on-screen pane set. It is deliberately not used for ownership: use
+     * `getTabBlockIds` for "does this tab own this block".
+     */
+    getLeafBlockIds(): string[] {
+        const blockIds: string[] = [];
+        if (this.treeState.rootNode == null) {
+            return blockIds;
+        }
+        walkNodes(this.treeState.rootNode, (node) => {
+            if (node.data != null) {
+                blockIds.push(node.data.blockId);
+            }
+        });
+        return blockIds;
+    }
+
+    /**
      * Callback that is invoked when the TileLayout container is being resized.
      */
     onContainerResize = () => {
@@ -1567,6 +1749,45 @@ export class LayoutModel {
     getNodeRect(node: LayoutNode): Dimensions {
         return this.getNodeRectById(node.id);
     }
+}
+
+/**
+ * Everything a Snap commit can change, captured so a failure part way through the commit can be undone.
+ */
+interface CommitSnapshot {
+    rootNode: LayoutNode;
+    leafOrder?: LeafOrderEntry[];
+    focusedNodeId?: string;
+    magnifiedNodeId?: string;
+    modelMagnifiedNodeId: string;
+    lastMagnifiedNodeId: string;
+    lastEphemeralNodeId: string;
+    focusedNodeIdStack: string[];
+}
+
+/**
+ * Whether this action replaces the entire tree with a caller-supplied root.
+ *
+ * Such a tree is materialized in its final shape, so the render pass must not run balanceNode on it.
+ */
+function isTreeReplacement(action: LayoutTreeAction): boolean {
+    return (
+        action.type === LayoutTreeActionType.ClearTree &&
+        (action as LayoutTreeClearTreeAction).rootNode != null
+    );
+}
+
+/**
+ * The id of the first leaf reachable from `node`, in reading order.
+ *
+ * Used as the default focus target when a whole tree is replaced and the caller did not name a pane.
+ */
+function firstLeafNodeId(node: LayoutNode): string | undefined {
+    let current: LayoutNode | undefined = node;
+    while (current != null && current.children != null && current.children.length > 0) {
+        current = current.children[0];
+    }
+    return current?.id;
 }
 
 function getLeafOrder(

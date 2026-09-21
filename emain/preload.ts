@@ -62,7 +62,6 @@ contextBridge.exposeInMainWorld("api", {
     captureScreenshot: (rect: Rectangle) => ipcRenderer.invoke("capture-screenshot", rect),
     setKeyboardChordMode: () => ipcRenderer.send("set-keyboard-chord-mode"),
     clearWebviewStorage: (webContentsId: number) => ipcRenderer.invoke("clear-webview-storage", webContentsId),
-    setWaveAIOpen: (isOpen: boolean) => ipcRenderer.send("set-waveai-open", isOpen),
     closeBuilderWindow: () => ipcRenderer.send("close-builder-window"),
     incrementTermCommands: (opts?: { isRemote?: boolean; isWsl?: boolean; isDurable?: boolean }) =>
         ipcRenderer.send("increment-term-commands", opts),

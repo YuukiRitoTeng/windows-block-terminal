@@ -5,6 +5,7 @@ import Logo from "@/app/asset/logo.svg";
 import { EmojiButton } from "@/app/element/emojibutton";
 import { RpcApi } from "@/app/store/wshclientapi";
 import { TabRpcClient } from "@/app/store/wshrpcutil";
+import { uiText } from "@/util/ui-locale";
 import { useState } from "react";
 import { CurrentOnboardingVersion } from "./onboarding-common";
 import { OnboardingFooter } from "./onboarding-features-footer";
@@ -40,37 +41,36 @@ export const DurableSessionPage = ({
                 <div>
                     <Logo />
                 </div>
-                <div className="text-[25px] font-normal text-foreground">Durable SSH Sessions</div>
+                <div className="text-[25px] font-normal text-foreground">{uiText("onboarding.durableSshSessions")}</div>
             </header>
             <div className="flex-1 flex flex-row gap-0 min-h-0">
                 <div className="flex-1 flex flex-col items-center justify-center gap-8 pr-3 unselectable">
                     <div className="flex flex-col items-start gap-3 max-w-md">
                         <div className="flex h-[52px] ml-[-4px] pl-3 pr-3 items-center rounded-lg bg-hover text-[15px]">
                             <i className="fa-sharp fa-solid fa-shield text-sky-500" />
-                            <span className="font-bold ml-2 text-primary">SSH Sessions, Protected</span>
+                            <span className="font-bold ml-2 text-primary">{uiText("onboarding.sshProtected")}</span>
                         </div>
 
                         <div className="flex flex-col items-start gap-4 text-secondary">
-                            <p>Close your laptop, switch networks, restart Wave — your remote sessions keep running.</p>
+                            <p>{uiText("onboarding.closeLaptop")}</p>
 
                             <div className="flex items-start gap-3 w-full">
                                 <i className="fa-sharp fa-solid fa-link text-accent text-lg mt-1 flex-shrink-0" />
-                                <p>Shell state, running programs, and terminal history are all preserved</p>
+                                <p>{uiText("onboarding.shellState")}</p>
                             </div>
 
                             <div className="flex items-start gap-3 w-full">
                                 <i className="fa-sharp fa-solid fa-rotate text-accent text-lg mt-1 flex-shrink-0" />
-                                <p>Sessions automatically reconnect when your connection is restored</p>
+                                <p>{uiText("onboarding.reconnect")}</p>
                             </div>
 
                             <div className="flex items-start gap-3 w-full">
                                 <i className="fa-sharp fa-solid fa-box text-accent text-lg mt-1 flex-shrink-0" />
-                                <p>Buffered output streams back in, never miss a line</p>
+                                <p>{uiText("onboarding.bufferedOutput")}</p>
                             </div>
 
                             <p className="italic">
-                                All the persistence of tmux, built into your terminal. Look for the shield icon to
-                                enable durability on any SSH session.
+                                {uiText("onboarding.tmuxDurability")}
                             </p>
 
                             <EmojiButton emoji="🔥" isClicked={fireClicked} onClick={handleFireClick} />
@@ -82,7 +82,7 @@ export const DurableSessionPage = ({
                     <TailDeployLogCommand />
                 </div>
             </div>
-            <OnboardingFooter currentStep={2} totalSteps={4} onNext={onNext} onPrev={onPrev} onSkip={onSkip} />
+            <OnboardingFooter currentStep={1} totalSteps={3} onNext={onNext} onPrev={onPrev} onSkip={onSkip} />
         </div>
     );
 };

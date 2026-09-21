@@ -5,14 +5,6 @@
 
 declare global {
 
-    // wshrpc.AIAttachedFile
-    type AIAttachedFile = {
-        name: string;
-        type: string;
-        size: number;
-        data64: string;
-    };
-
     // wconfig.AIModeConfigType
     type AIModeConfigType = {
         "display:name": string;
@@ -55,8 +47,6 @@ declare global {
         fgminutes?: number;
         activeminutes?: number;
         openminutes?: number;
-        waveaifgminutes?: number;
-        waveaiactiveminutes?: number;
         numtabs?: number;
         newtab?: number;
         numblocks?: number;
@@ -727,14 +717,6 @@ declare global {
         waitms: number;
     };
 
-    // wshrpc.CommandWaveAIAddContextData
-    type CommandWaveAIAddContextData = {
-        files?: AIAttachedFile[];
-        text?: string;
-        submit?: boolean;
-        newchat?: boolean;
-    };
-
     // wshrpc.CommandWaveAIGetToolDiffData
     type CommandWaveAIGetToolDiffData = {
         chatid: string;
@@ -1279,6 +1261,7 @@ declare global {
     // wshrpc.PathCommandData
     type PathCommandData = {
         pathtype: string;
+        path?: string;
         open: boolean;
         openexternal: boolean;
         tabid: string;
@@ -1438,7 +1421,6 @@ declare global {
         "app:showoverlayblocknums"?: boolean;
         "app:ctrlvpaste"?: boolean;
         "app:confirmquit"?: boolean;
-        "app:hideaibutton"?: boolean;
         "app:disablectrlshiftarrows"?: boolean;
         "app:disablectrlshiftdisplay"?: boolean;
         "app:focusfollowscursor"?: string;
@@ -1632,8 +1614,6 @@ declare global {
         "activity:activeminutes"?: number;
         "activity:fgminutes"?: number;
         "activity:openminutes"?: number;
-        "activity:waveaiactiveminutes"?: number;
-        "activity:waveaifgminutes"?: number;
         "activity:termcommandsrun"?: number;
         "activity:termcommands:remote"?: number;
         "activity:termcommands:durable"?: number;
@@ -1645,6 +1625,7 @@ declare global {
         "debug:panictype"?: string;
         "block:view"?: string;
         "block:controller"?: string;
+        "block:subblock"?: boolean;
         "ai:backendtype"?: string;
         "ai:local"?: boolean;
         "wsh:cmd"?: string;
