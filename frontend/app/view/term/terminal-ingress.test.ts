@@ -35,6 +35,8 @@ function makeTerminalSeam() {
             markerCount++;
             registry.observeAnchor({
                 blockId: "block-1",
+                // The simulated frames are the in-band integration's marks.
+                authority: "terminal-osc",
                 sessionEpoch: "e1",
                 hookSequence: 1,
                 commandId: undefined,
@@ -93,15 +95,16 @@ describe("terminal ingress initialization", () => {
         seam.setParserLoaded(true);
         const queue = [{ sequence: 1, data: live }];
         await drain(queue, [new Uint8Array()], seam);
+        // The simulated mark is the in-band integration's: it claims no hosted identity,
+        // so it pairs with an in-band confirmation.
         seam.registry.confirm({
             blockId: "block-1",
             sessionEpoch: "e1",
             hookSequence: 1,
             commandId: "command-covered",
             anchorNonce: "covered",
-            hostId: "host-1",
-            runspaceId: "runspace-1",
-            mode: "structured",
+            authority: "terminal-osc",
+            mode: "unknown",
         });
         expect(seam.markerCount).toBe(1);
         expect(seam.registry.get("covered")?.commandId).toBe("command-covered");
@@ -142,9 +145,8 @@ describe("terminal ingress initialization", () => {
             hookSequence: 1,
             commandId: "command-after",
             anchorNonce: "after-snapshot",
-            hostId: "host-1",
-            runspaceId: "runspace-1",
-            mode: "structured",
+            authority: "terminal-osc",
+            mode: "unknown",
         });
         expect(seam.markerCount).toBe(1);
         expect(seam.registry.get("after-snapshot")?.commandId).toBe("command-after");

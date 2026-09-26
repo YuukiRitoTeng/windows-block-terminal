@@ -152,18 +152,20 @@ RC. A user may launch other shells or programs as child workloads, but that is
 not a support claim for those shells as the primary Windows Block Terminal
 runtime.
 
-### Hosted runtime startup contract
+### PowerShell startup contract
 
-On supported packaged Windows builds, an unset `WBT_HOSTED_PWSH` selects the
-bundled hosted runtime when `WbtHostedPowerShell.exe` is present. Setting
-`WBT_HOSTED_PWSH=0` opts out to the existing external `pwsh` discovery path;
-this does not create a second authoritative session. Explicit hosted mode uses
-`WBT_HOSTED_PWSH_EXE` and fails finitely with a startup error when the required
-executable is unavailable or cannot start. A bundled-runtime startup failure
-settles readiness once and fails closed; it does not wait indefinitely or
-silently retry into another authoritative shell. If the bundled runtime is
-absent without an explicit hosted override, the supported external `pwsh`
-fallback remains available when present; otherwise startup fails finitely.
+On supported packaged Windows builds, an unset `WBT_HOSTED_PWSH` runs the
+external `pwsh` discovery path with the shell integration (the native prompt,
+`terminal-osc` command authority); this does not create a second authoritative
+session. Setting `WBT_HOSTED_PWSH=1` opts in to the bundled hosted runtime when
+`WbtHostedPowerShell.exe` is present, which uses the authenticated sidechannel as
+its command authority instead. Explicit hosted mode uses `WBT_HOSTED_PWSH_EXE`
+(provided by the application when the environment does not name one) and fails
+finitely with a startup error when the required executable is unavailable or
+cannot start. A bundled-runtime startup failure settles readiness once and fails
+closed; it does not wait indefinitely or silently retry into another
+authoritative shell. Without the opt-in the external `pwsh` path is used when
+present; otherwise startup fails finitely.
 
 ### Support and evidence matrix
 
@@ -173,8 +175,8 @@ fallback remains available when present; otherwise startup fails finitely.
 | Windows 10 x64                                              | `NOT_SUPPORTED`             | `EXPLICITLY UNSUPPORTED`                | None for this RC                                             | NO                    | Outside the declared RC target; not a claim that it cannot run                           |
 | Windows ARM64                                               | `NOT_SUPPORTED`             | `EXPLICITLY UNSUPPORTED`                | None for this RC                                             | NO                    | No ARM64 artifact or evidence                                                            |
 | macOS / Linux                                               | `NOT_SUPPORTED`             | `EXPLICITLY UNSUPPORTED`                | None for this RC                                             | NO                    | Windows-only RC target                                                                   |
-| Packaged Hosted PowerShell runtime (SDK 7.4.12)             | `SUPPORTED`                 | `PASS`                                  | Automated lifecycle checks plus packaged manual evidence     | YES                   | One hosted process and one persistent Runspace; embedded engine version is source-pinned |
-| External `pwsh` fallback when hosted runtime is unavailable | `SUPPORTED_WITH_CONDITIONS` | `PASS`                                  | Packaged/manual fallback validation                          | YES                   | Validated with `WBT_HOSTED_PWSH=0`; external PowerShell 7.6.5 remains a child runtime    |
+| Packaged Hosted PowerShell runtime (SDK 7.4.12)             | `SUPPORTED`                 | `PASS`                                  | Automated lifecycle checks plus packaged manual evidence     | YES                   | Opt-in via `WBT_HOSTED_PWSH=1`; one hosted process and one persistent Runspace; embedded engine version is source-pinned |
+| External `pwsh` as the default local shell                  | `SUPPORTED_WITH_CONDITIONS` | `PASS`                                  | Packaged/manual validation                                   | YES                   | Default path (unset `WBT_HOSTED_PWSH`); external PowerShell 7.6.5 remains a child runtime with the shell integration |
 | Windows PowerShell 5.1 as primary shell                     | `NOT_SUPPORTED`             | `EXPLICITLY UNSUPPORTED`                | None for this RC                                             | NO                    | Not the declared PowerShell 7 baseline                                                   |
 | `cmd` as primary shell                                      | `NOT_SUPPORTED`             | `EXPLICITLY UNSUPPORTED`                | None for this RC                                             | NO                    | Direct native commands inside hosted PowerShell are a separate case                      |
 | WSL as primary shell                                        | `NOT_SUPPORTED`             | `EXPLICITLY UNSUPPORTED`                | None for this RC                                             | NO                    | Outside the Windows hosted-PowerShell RC contract                                        |

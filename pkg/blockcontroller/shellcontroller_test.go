@@ -60,6 +60,7 @@ func TestCommandJournalAttachmentPublishesOnlyWinnerRegistry(t *testing.T) {
 	winner.ObserveAnchor(event)
 	winner.ObserveConfirmation(commandjournal.VisualAnchorConfirmation{
 		BlockID:      "block-1",
+		Authority:    terminalruntime.AuthorityHostedSidechannel,
 		SessionEpoch: "epoch-1",
 		HookSequence: 1,
 		CommandID:    "command-1",

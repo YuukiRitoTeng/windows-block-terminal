@@ -88,6 +88,7 @@ func (c *HostedRuntimeConsumer) ObserveHostedRuntimeEvent(event shellexec.Hosted
 			Kind: terminalruntime.StreamIntegrationEvent,
 			Event: terminalruntime.IntegrationEvent{
 				Kind:                   terminalruntime.EventCommandStarted,
+				Authority:              terminalruntime.AuthorityHostedSidechannel,
 				SessionEpoch:           c.runspaceID,
 				HookSequence:           sequence,
 				CommandID:              event.CommandID,
@@ -130,6 +131,7 @@ func (c *HostedRuntimeConsumer) ObserveHostedRuntimeEvent(event shellexec.Hosted
 			Kind: terminalruntime.StreamIntegrationEvent,
 			Event: terminalruntime.IntegrationEvent{
 				Kind:                   terminalruntime.EventCommandFinished,
+				Authority:              terminalruntime.AuthorityHostedSidechannel,
 				SessionEpoch:           c.runspaceID,
 				HookSequence:           sequence,
 				CommandID:              event.CommandID,
@@ -180,6 +182,7 @@ func (c *HostedRuntimeConsumer) ObserveHostedRuntimeDisconnect() {
 		Kind: terminalruntime.StreamIntegrationEvent,
 		Event: terminalruntime.IntegrationEvent{
 			Kind:             terminalruntime.EventCommandAborted,
+			Authority:        terminalruntime.AuthorityHostedSidechannel,
 			SessionEpoch:     runspaceID,
 			CommandID:        commandID,
 			CompletionReason: string(CompletionSidechannelDisconnected),

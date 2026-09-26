@@ -1326,6 +1326,7 @@ declare global {
         id: string;
         wave_block_id: string;
         session_epoch: string;
+        authority: string;
         start_hook_sequence: number;
         finish_hook_sequence: number;
         command: string;

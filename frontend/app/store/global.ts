@@ -35,7 +35,7 @@ import { modalsModel } from "./modalmodel";
 import { ClientService, ObjectService } from "./services";
 import { isPreviewWindow } from "./windowtype";
 import * as WOS from "./wos";
-import { getFileSubject, waveEventSubscribeSingle } from "./wps";
+import { publishFileSubject, waveEventSubscribeSingle } from "./wps";
 
 let globalPrimaryTabStartup: boolean = false;
 
@@ -85,10 +85,7 @@ function initGlobalWaveEventSubs(initOpts: WaveInitOpts) {
         eventType: "blockfile",
         handler: (event) => {
             // console.log("blockfile event update", event);
-            const fileSubject = getFileSubject(event.data.zoneid, event.data.filename);
-            if (fileSubject != null) {
-                fileSubject.next(event.data);
-            }
+            publishFileSubject(event.data.zoneid, event.data.filename, event.data);
         },
     });
     waveEventSubscribeSingle({

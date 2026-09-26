@@ -17,11 +17,23 @@ func TestPowerShellIntegrationContainsVersionedLifecycleHooks(t *testing.T) {
 	}
 }
 
-func TestPowerShellIntegrationEmitsPromptReadyAfterFinish(t *testing.T) {
-	finish := strings.Index(pwshWaveIntegration, `_waveterm_si_emit "D"`)
-	prompt := strings.Index(pwshWaveIntegration, `_waveterm_si_emit "P"`)
+// The finish and prompt-ready frames are built in that order and returned with
+// the prompt text, so the host renders them once the command's output is in the
+// stream. Nothing in this path waits on a timer.
+func TestPowerShellIntegrationOrdersFinishBeforePromptReady(t *testing.T) {
+	body := pwshWaveIntegration[strings.Index(pwshWaveIntegration, "function Global:_waveterm_si_prompt {"):]
+	finish := strings.Index(body, "_waveterm_si_command_finished $lastSuccess $nativeExitCode")
+	prompt := strings.Index(body, "$frames += _waveterm_si_prompt_ready")
 	if finish < 0 || prompt < 0 || finish > prompt {
-		t.Fatalf("PromptReady must be emitted after command finish: finish=%d prompt=%d", finish, prompt)
+		t.Fatalf("PromptReady must be built after the command finish: finish=%d prompt=%d", finish, prompt)
+	}
+	if !strings.Contains(body, "return $frames") {
+		t.Fatal("the prompt frames must be returned so the host renders them with the prompt")
+	}
+	for _, forbidden := range []string{"Start-Sleep", "[Console]::Out.Flush", "[Console]::Error.Flush", "CursorPosition", "Out-Default"} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("the prompt path must not use %q: ordering cannot depend on a wait", forbidden)
+		}
 	}
 }
 

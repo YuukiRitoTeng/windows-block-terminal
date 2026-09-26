@@ -7,6 +7,8 @@ const termwrapSource = readFileSync(new URL("./termwrap.ts", import.meta.url), "
 function anchor(nonce = "nonce-1"): VisualAnchorContext {
     return {
         blockId: "block-1",
+        // A mark that names a hosted process and runspace is the hosted runtime's mark.
+        authority: "hosted-sidechannel",
         sessionEpoch: "epoch-1",
         hookSequence: 1,
         commandId: "command-1",
@@ -16,8 +18,20 @@ function anchor(nonce = "nonce-1"): VisualAnchorContext {
     };
 }
 
+function terminalAnchor(nonce = "nonce-terminal"): VisualAnchorContext {
+    return {
+        blockId: "block-1",
+        // The in-band integration's mark carries no hosted identity.
+        authority: "terminal-osc",
+        sessionEpoch: "epoch-1",
+        hookSequence: 1,
+        commandId: "command-1",
+        anchorNonce: nonce,
+    };
+}
+
 function confirmation(nonce = "nonce-1") {
-    return { ...anchor(nonce), mode: "structured" };
+    return { ...anchor(nonce), authority: "hosted-sidechannel", mode: "structured" };
 }
 
 describe("VisualAnchorRegistry", () => {
@@ -146,7 +160,10 @@ describe("VisualAnchorRegistry", () => {
     it("notifies the rail when confirmed markers are created, removed, cleared, or disposed", () => {
         expect(termwrapSource).toContain("this.notifyCommandAnchorSubscribers()");
         expect(termwrapSource).toContain("marker.onDispose(() => {");
-        expect(termwrapSource).toContain("clearVisualBuffer()");
+        expect(termwrapSource).toContain("resetTerminalFileOrigin()");
+        expect(termwrapSource).toContain("releasePresentationState()");
+        expect(termwrapSource).toContain("canClearProductBuffer(): boolean");
+        expect(termwrapSource).toContain("applyProductClear(): Promise<void>");
         expect(termwrapSource).toContain("dispose()");
     });
 });

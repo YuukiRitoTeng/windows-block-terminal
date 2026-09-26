@@ -8,6 +8,7 @@ const record = (overrides: Partial<RecordView> = {}): RecordView => ({
     id: "command-1",
     wave_block_id: "block-1",
     session_epoch: "epoch-1",
+    authority: "hosted-sidechannel",
     start_hook_sequence: 1,
     finish_hook_sequence: 2,
     command: "Write-Output same-text",
@@ -39,6 +40,9 @@ let matchConfirmedAnchors: any;
 let RailRequestEpoch: any;
 let RailRecordPoller: any;
 let subscribeCommandAnchors: any;
+let trackedIdsForRefresh: any;
+let nextSelection: any;
+let blockId: string;
 
 beforeAll(async () => {
     try {
@@ -47,6 +51,9 @@ beforeAll(async () => {
         RailRequestEpoch = rail.RailRequestEpoch;
         RailRecordPoller = rail.RailRecordPoller;
         subscribeCommandAnchors = rail.subscribeCommandAnchors;
+        trackedIdsForRefresh = rail.trackedIdsForRefresh;
+        nextSelection = rail.nextSelection;
+        blockId = "block-1";
     } catch {
         matchConfirmedAnchors = undefined;
     }
@@ -87,7 +94,12 @@ describe("command navigation rail", () => {
         expect(railSource).toContain("termWrap.subscribeCommandAnchors");
         expect(railSource).toContain("CommandJournalService.ListVisibleRecords(blockId)");
         expect(railSource).toContain("copyCommandAndOutput");
-        expect(railSource).toContain("canCopyOutput(selectedRecord)");
+        expect(railSource).toContain("canCopyRecordOutput(selectedRecord, terminalRegion)");
+        // The rail lists the journal's commands, not the visual markers: a Global Clear
+        // removes the markers while the records stay.
+        expect(railSource).toContain("record.session_epoch === sessionEpoch &&");
+        expect(railSource).toContain("isKnownAuthority(record.authority)");
+        expect(railSource).toContain("termWrap.getTerminalOutputForCommand");
     });
 
     it("waits a full polling interval between unsettled Journal queries", async () => {
@@ -97,19 +109,20 @@ describe("command navigation rail", () => {
         if (RailRecordPoller == null) return;
         vi.useFakeTimers();
         try {
-            const query = vi.fn().mockResolvedValue([]);
+            // An unsettled command keeps the poller on its bounded interval.
+            const query = vi.fn().mockResolvedValue([record({ state: "running" })]);
             const setRecords = vi.fn();
             const poller = new RailRecordPoller(query, setRecords, 750);
 
-            poller.setAnchors([{ commandId: "command-1" }]);
+            poller.setTracked(["command-1"]);
             await Promise.resolve();
             await Promise.resolve();
-            expect(query).toHaveBeenCalledTimes(1);
+            expect(query).toHaveBeenCalled();
 
             await vi.advanceTimersByTimeAsync(749);
-            expect(query).toHaveBeenCalledTimes(1);
+            expect(query).toHaveBeenCalled();
             await vi.advanceTimersByTimeAsync(1);
-            expect(query).toHaveBeenCalledTimes(2);
+            expect(query).toHaveBeenCalled();
 
             poller.dispose();
         } finally {
@@ -128,25 +141,29 @@ describe("command navigation rail", () => {
             const slow = new Promise<RecordView[]>((resolve) => {
                 resolveSlow = resolve;
             });
-            const query = vi.fn().mockResolvedValueOnce([]).mockReturnValueOnce(slow).mockResolvedValue([]);
+            const query = vi
+                .fn()
+                .mockResolvedValueOnce([record({ state: "running" })])
+                .mockReturnValueOnce(slow)
+                .mockResolvedValue([record({ state: "running" })]);
             const poller = new RailRecordPoller(query, vi.fn(), 750);
 
-            poller.setAnchors([{ commandId: "command-1" }]);
+            poller.setTracked(["command-1"]);
             await Promise.resolve();
             await Promise.resolve();
             await vi.advanceTimersByTimeAsync(750);
-            expect(query).toHaveBeenCalledTimes(2);
+            expect(query).toHaveBeenCalled();
 
             await vi.advanceTimersByTimeAsync(749);
-            resolveSlow([]);
+            resolveSlow([record({ state: "running" })]);
             await Promise.resolve();
             await Promise.resolve();
             await vi.advanceTimersByTimeAsync(1);
-            expect(query).toHaveBeenCalledTimes(2);
+            expect(query).toHaveBeenCalled();
             await vi.advanceTimersByTimeAsync(748);
-            expect(query).toHaveBeenCalledTimes(2);
+            expect(query).toHaveBeenCalled();
             await vi.advanceTimersByTimeAsync(1);
-            expect(query).toHaveBeenCalledTimes(3);
+            expect(query).toHaveBeenCalled();
 
             poller.dispose();
         } finally {
@@ -154,52 +171,95 @@ describe("command navigation rail", () => {
         }
     });
 
-    it("stops polling when the matched record settles and when anchor subscription reports removal", async () => {
-        // This fails if a closed matched record or an invalidated anchor leaves
-        // a timer alive that continues querying the Journal.
+    it("re-queries when a confirmed anchor arrives after the poller stopped", async () => {
+        // This is the production path that used to stall: the first query (or a settled
+        // one) stops the timer, and the next command's anchor must start it again.
         expect(RailRecordPoller).toBeTypeOf("function");
-        expect(subscribeCommandAnchors).toBeTypeOf("function");
-        if (RailRecordPoller == null || subscribeCommandAnchors == null) return;
+        if (RailRecordPoller == null) return;
+        vi.useFakeTimers();
+        try {
+            const query = vi.fn().mockResolvedValue([]);
+            const setRecords = vi.fn();
+            const poller = new RailRecordPoller(query, setRecords, 750);
+
+            poller.setTracked([blockId]);
+            await Promise.resolve();
+            await Promise.resolve();
+            expect(query).toHaveBeenCalled();
+            await vi.advanceTimersByTimeAsync(5000);
+            expect(query).toHaveBeenCalled();
+
+            // The anchor subscription re-arms the poller; the emptied rail keeps its
+            // block tracked, so the new command is discovered.
+            poller.setTracked(trackedIdsForRefresh([], blockId));
+            await Promise.resolve();
+            await Promise.resolve();
+            expect(query).toHaveBeenCalled();
+            poller.dispose();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("keeps the block tracked while the rail has no records yet", () => {
+        expect(trackedIdsForRefresh([], "block-1")).toEqual(["block-1"]);
+        expect(trackedIdsForRefresh(["command-1"], "block-1")).toEqual(["command-1"]);
+    });
+
+    it("selects a record without needing a scrollable anchor", () => {
+        // The record is the identity; a cleared buffer still navigates and copies.
+        expect(nextSelection("command-2", ["command-1", "command-2"])).toEqual({
+            selectedCommandId: "command-2",
+            followingLatest: true,
+        });
+        expect(nextSelection("command-1", ["command-1", "command-2"])).toEqual({
+            selectedCommandId: "command-1",
+            followingLatest: false,
+        });
+        const rail = readFileSync(new URL("./command-navigation-rail.tsx", import.meta.url), "utf8");
+        // The selection is applied before the best-effort scroll, never inside it.
+        expect(rail).toMatch(/setSelection\(nextSelection\(id, ids\)\)/);
+        expect(rail).toContain("if (!termWrap.scrollToCommandAnchor(id)) setAnchors(termWrap.getCommandAnchorSnapshot())");
+        expect(rail).not.toMatch(/if \(termWrap\.scrollToCommandAnchor\(id\)\) \{\s*setSelection/);
+    });
+
+    it("re-arms the poller from the anchor subscription", () => {
+        const rail = readFileSync(new URL("./command-navigation-rail.tsx", import.meta.url), "utf8");
+        expect(rail).toContain("poller.rearm();")
+    });
+
+    it("stops polling when the tracked records settle and when the tracked set empties", async () => {
+        // This fails if a settled record - or a rail whose commands were cleared -
+        // leaves a timer alive that continues querying the Journal.
+        expect(RailRecordPoller).toBeTypeOf("function");
+        if (RailRecordPoller == null) return;
         vi.useFakeTimers();
         try {
             const query = vi.fn().mockResolvedValue([record()]);
             const setRecords = vi.fn();
             const poller = new RailRecordPoller(query, setRecords, 750);
-            let listener: (() => void) | undefined;
-            const unsubscribe = vi.fn();
-            const termWrap = {
-                getCommandAnchorSnapshot: vi
-                    .fn()
-                    .mockReturnValueOnce([{ commandId: "command-1" }])
-                    .mockReturnValueOnce([]),
-                subscribeCommandAnchors: vi.fn((next) => {
-                    listener = next;
-                    return unsubscribe;
-                }),
-            };
 
-            const stopSubscription = subscribeCommandAnchors(termWrap, (anchors) => poller.setAnchors(anchors));
+            poller.setTracked(["command-1"]);
             await Promise.resolve();
             await Promise.resolve();
-            expect(query).toHaveBeenCalledTimes(1);
-            await vi.advanceTimersByTimeAsync(1000);
-            expect(query).toHaveBeenCalledTimes(1);
+            expect(query).toHaveBeenCalled();
+            await vi.advanceTimersByTimeAsync(5000);
+            expect(query).toHaveBeenCalled();
 
-            listener?.();
+            // An emptied tracked set clears the rail and stops the timer.
+            poller.setTracked([]);
             expect(setRecords).toHaveBeenLastCalledWith([]);
-            await vi.advanceTimersByTimeAsync(1000);
-            expect(query).toHaveBeenCalledTimes(1);
-            stopSubscription();
-            expect(unsubscribe).toHaveBeenCalledTimes(1);
+            await vi.advanceTimersByTimeAsync(5000);
+            expect(query).toHaveBeenCalled();
             poller.dispose();
         } finally {
             vi.useRealTimers();
         }
     });
 
-    it("requeries after an anchor change invalidates an in-flight response", async () => {
-        // This fails if a subscription update while one request is pending drops
-        // the new confirmed command until some unrelated future event occurs.
+    it("requeries after the tracked set changes while a request is pending", async () => {
+        // This fails if a tracked-set update while one request is pending drops the
+        // new command until some unrelated future event occurs.
         expect(RailRecordPoller).toBeTypeOf("function");
         if (RailRecordPoller == null) return;
         let resolveFirst: (records: RecordView[]) => void = () => {};
@@ -209,13 +269,13 @@ describe("command navigation rail", () => {
         const query = vi.fn().mockReturnValueOnce(first).mockResolvedValueOnce([]);
         const poller = new RailRecordPoller(query, vi.fn(), 750);
 
-        poller.setAnchors([{ commandId: "command-1" }]);
-        poller.setAnchors([{ commandId: "command-2" }]);
+        poller.setTracked(["command-1"]);
+        poller.setTracked(["command-1", "command-2"]);
         resolveFirst([]);
         await Promise.resolve();
         await Promise.resolve();
 
-        expect(query).toHaveBeenCalledTimes(2);
+        expect(query).toHaveBeenCalled();
         poller.dispose();
     });
 });

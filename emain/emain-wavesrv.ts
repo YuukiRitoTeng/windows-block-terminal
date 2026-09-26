@@ -70,15 +70,18 @@ export function runWaveSrv(handleWSEvent: (evtMsg: WSEventType) => void): Promis
     envCopy[WaveAuthKeyEnv] = AuthKey;
     envCopy[WaveDataHomeVarName] = getWaveDataDir();
     envCopy[WaveConfigHomeVarName] = getWaveConfigDir();
-    if (process.platform === "win32" && !process.env.WBT_HOSTED_PWSH) {
+    if (process.platform === "win32") {
+        // Local PowerShell runs as a native pwsh with the shell integration by default, so the pane
+        // shows the shell's own prompt. The bundled hosted runtime is an explicit opt-in: setting
+        // WBT_HOSTED_PWSH=1 selects it, and the app only supplies the executable path when the
+        // environment does not name one of its own. WBT_HOSTED_PWSH is never set here.
         const hostedPowerShell = path.join(
             getElectronAppResourcesPath(),
             "hostedpwsh",
             "win-x64",
             "WbtHostedPowerShell.exe"
         );
-        if (existsSync(hostedPowerShell)) {
-            envCopy.WBT_HOSTED_PWSH = "1";
+        if (!envCopy.WBT_HOSTED_PWSH_EXE && existsSync(hostedPowerShell)) {
             envCopy.WBT_HOSTED_PWSH_EXE = hostedPowerShell;
         }
     }

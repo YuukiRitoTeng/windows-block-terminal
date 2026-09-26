@@ -34,8 +34,57 @@ const (
 	OutputSourceHostStructured OutputSource = "hostStructured"
 )
 
+// Authority identifies which producer owns command lifecycle for a block
+// session. Exactly one authority is in effect at a time: the in-band shell
+// integration emitted by the shell itself (terminal-osc), or the authenticated
+// hosted sidechannel. It is an explicit claim made by the producer - never
+// inferred from ExecutionMode - and a session that accepted one authority
+// refuses the other.
+type Authority string
+
+const (
+	AuthorityUnknown           Authority = ""
+	AuthorityTerminalOSC       Authority = "terminal-osc"
+	AuthorityHostedSidechannel Authority = "hosted-sidechannel"
+)
+
+// Valid reports whether the value is one of the two supported authorities.
+func (a Authority) Valid() bool {
+	return a == AuthorityTerminalOSC || a == AuthorityHostedSidechannel
+}
+
+// DefaultOutputSource is the source a record uses when the producer does not
+// claim one.
+func (a Authority) DefaultOutputSource() OutputSource {
+	switch a {
+	case AuthorityTerminalOSC:
+		return OutputSourcePTY
+	case AuthorityHostedSidechannel:
+		return OutputSourceHostStructured
+	default:
+		return OutputSourceUnknown
+	}
+}
+
+// AllowsOutputSource reports whether an authority may own bytes from source.
+// The in-band integration can only ever own PTY bytes, so it can never present
+// sidechannel output as its own. The hosted authority owns structured output
+// through the sidechannel, and PTY output for an interactive program it handed
+// to the live terminal.
+func (a Authority) AllowsOutputSource(source OutputSource) bool {
+	switch a {
+	case AuthorityTerminalOSC:
+		return source == OutputSourcePTY
+	case AuthorityHostedSidechannel:
+		return source == OutputSourceHostStructured || source == OutputSourcePTY
+	default:
+		return false
+	}
+}
+
 type IntegrationEvent struct {
 	Kind                   EventKind
+	Authority              Authority
 	ProtocolVersion        int
 	SessionEpoch           string
 	HookSequence           uint64
@@ -55,6 +104,15 @@ type IntegrationEvent struct {
 	CaptureContractVersion int
 	AnchorNonce            string
 	AnchorPhase            string
+
+	// AnchorHostID/AnchorRunspaceID are the identity an anchor mark claims for
+	// itself. The claim is untrusted: it is not command provenance (that stays in
+	// RuntimeHostID/RuntimeRunspaceID, which in-band frames never fill) and it
+	// authorizes nothing - the anchor registry uses it only to tell the two
+	// producers' marks apart, and still requires the authenticated confirmation of
+	// that authority, naming the same identity, before a mark becomes a binding.
+	AnchorHostID     string
+	AnchorRunspaceID string
 }
 
 type StreamItemKind string
