@@ -22,10 +22,14 @@ const (
 )
 
 // VisualAnchor is an untrusted presentation hint observed on the PTY stream.
-// It becomes actionable only after a matching authenticated hosted-runtime
-// confirmation is observed.
+// It becomes actionable only after a matching confirmation of the same authority
+// is observed. Authority records which producer's mark this is, and it is what
+// keeps the two producers apart: an in-band terminal mark can never be bound by a
+// hosted confirmation, and the hosted runtime's own mark can never be bound by an
+// in-band confirmation.
 type VisualAnchor struct {
 	BlockID      string
+	Authority    terminalruntime.Authority
 	SessionEpoch string
 	HookSequence uint64
 	CommandID    string
@@ -35,10 +39,35 @@ type VisualAnchor struct {
 	RunspaceID   string
 }
 
-// VisualAnchorConfirmation is derived from the authenticated hosted
-// sidechannel and is the authority for the CommandRecord identity.
+// anchorProvenance classifies an observed mark. Both producers write marks into
+// the same PTY stream, so the mark's own identity claim - not the authority field
+// of the frame - decides which producer it came from: a mark that names a hosted
+// process and runspace is the hosted runtime's anchor (hosted authority), and a
+// mark that names nothing belongs to the terminal integration. The identity stays
+// an untrusted claim: it is stored with the anchor and must agree with the
+// authenticated confirmation of the same authority before the mark becomes a
+// binding.
+func anchorProvenance(event terminalruntime.IntegrationEvent) (terminalruntime.Authority, string, string) {
+	hostID, runspaceID := event.AnchorHostID, event.AnchorRunspaceID
+	if hostID == "" {
+		hostID = event.RuntimeHostID
+	}
+	if runspaceID == "" {
+		runspaceID = event.RuntimeRunspaceID
+	}
+	if hostID != "" && runspaceID != "" {
+		return terminalruntime.AuthorityHostedSidechannel, hostID, runspaceID
+	}
+	return terminalruntime.AuthorityTerminalOSC, "", ""
+}
+
+// VisualAnchorConfirmation is the authority for the CommandRecord identity of
+// an anchor. It carries the explicit command authority that produced the
+// command; Mode describes the execution lifecycle and is never used to decide
+// authority.
 type VisualAnchorConfirmation struct {
 	BlockID      string
+	Authority    terminalruntime.Authority
 	SessionEpoch string
 	HookSequence uint64
 	CommandID    string
@@ -53,6 +82,7 @@ type VisualAnchorConfirmation struct {
 // from the authenticated confirmation.
 type VisualAnchorBinding struct {
 	BlockID      string
+	Authority    terminalruntime.Authority
 	SessionEpoch string
 	HookSequence uint64
 	CommandID    string
@@ -104,15 +134,17 @@ func (r *VisualAnchorRegistry) ObserveAnchor(event terminalruntime.IntegrationEv
 	if r == nil || event.Kind != terminalruntime.EventVisualAnchor || event.AnchorNonce == "" || event.AnchorPhase != "start" || event.SessionEpoch == "" || event.HookSequence == 0 {
 		return
 	}
+	authority, hostID, runspaceID := anchorProvenance(event)
 	anchor := VisualAnchor{
 		BlockID:      r.blockID,
+		Authority:    authority,
 		SessionEpoch: event.SessionEpoch,
 		HookSequence: event.HookSequence,
 		CommandID:    event.CommandID,
 		AnchorNonce:  event.AnchorNonce,
 		AnchorPhase:  event.AnchorPhase,
-		HostID:       event.RuntimeHostID,
-		RunspaceID:   event.RuntimeRunspaceID,
+		HostID:       hostID,
+		RunspaceID:   runspaceID,
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -149,7 +181,7 @@ func (r *VisualAnchorRegistry) ObserveAnchor(event terminalruntime.IntegrationEv
 // ObserveConfirmation records an authenticated hosted command start. It is
 // the only path that can provide a CommandRecord identity to a visual anchor.
 func (r *VisualAnchorRegistry) ObserveConfirmation(confirmation VisualAnchorConfirmation) {
-	if r == nil || confirmation.BlockID == "" || confirmation.BlockID != r.blockID || confirmation.SessionEpoch == "" || confirmation.HookSequence == 0 || confirmation.CommandID == "" || confirmation.AnchorNonce == "" || confirmation.HostID == "" || confirmation.RunspaceID == "" || confirmation.Mode != terminalruntime.ExecutionModeStructured {
+	if r == nil || confirmation.BlockID == "" || confirmation.BlockID != r.blockID || !confirmation.Authority.Valid() || confirmation.SessionEpoch == "" || confirmation.HookSequence == 0 || confirmation.CommandID == "" || confirmation.AnchorNonce == "" {
 		return
 	}
 	r.mu.Lock()
@@ -180,22 +212,41 @@ func (r *VisualAnchorRegistry) ObserveConfirmation(confirmation VisualAnchorConf
 		return
 	}
 	r.confirmations[confirmation.AnchorNonce] = visualConfirmationEntry{confirmation: confirmation, at: now}
+	r.confirmations[confirmation.AnchorNonce] = visualConfirmationEntry{confirmation: confirmation, at: now}
 	r.evictPendingLocked(now)
 	r.evictTombstonesLocked(now)
 }
 
+// visualAnchorContextsMatch decides whether a confirmation may bind an anchor.
+// Authority is checked explicitly and in both directions: an in-band terminal
+// mark can never be bound by a hosted confirmation, and the hosted runtime's own
+// mark can never be bound by an in-band confirmation. The hosted authority must
+// also agree on the identity it named; the terminal authority never carries
+// hosted identity at all.
 func visualAnchorContextsMatch(anchor VisualAnchor, confirmation VisualAnchorConfirmation) bool {
-	return anchor.BlockID == confirmation.BlockID &&
-		anchor.SessionEpoch == confirmation.SessionEpoch &&
-		anchor.HookSequence == confirmation.HookSequence &&
-		(anchor.CommandID == "" || anchor.CommandID == confirmation.CommandID) &&
-		(anchor.HostID == "" || anchor.HostID == confirmation.HostID) &&
-		(anchor.RunspaceID == "" || anchor.RunspaceID == confirmation.RunspaceID)
+	if !anchor.Authority.Valid() || anchor.Authority != confirmation.Authority {
+		return false
+	}
+	if anchor.BlockID != confirmation.BlockID ||
+		anchor.SessionEpoch != confirmation.SessionEpoch ||
+		anchor.HookSequence != confirmation.HookSequence ||
+		(anchor.CommandID != "" && anchor.CommandID != confirmation.CommandID) {
+		return false
+	}
+	if anchor.Authority == terminalruntime.AuthorityHostedSidechannel {
+		return anchor.HostID != "" &&
+			anchor.RunspaceID != "" &&
+			anchor.HostID == confirmation.HostID &&
+			anchor.RunspaceID == confirmation.RunspaceID
+	}
+	return anchor.HostID == "" && anchor.RunspaceID == "" &&
+		confirmation.HostID == "" && confirmation.RunspaceID == ""
 }
 
 func (r *VisualAnchorRegistry) bindLocked(anchor VisualAnchor, confirmation VisualAnchorConfirmation) {
 	binding := VisualAnchorBinding{
 		BlockID:      confirmation.BlockID,
+		Authority:    confirmation.Authority,
 		SessionEpoch: confirmation.SessionEpoch,
 		HookSequence: confirmation.HookSequence,
 		CommandID:    confirmation.CommandID,
@@ -213,6 +264,7 @@ func (r *VisualAnchorRegistry) bindLocked(anchor VisualAnchor, confirmation Visu
 		Persist: 1,
 		Data: map[string]any{
 			"blockId":      binding.BlockID,
+			"authority":    string(binding.Authority),
 			"sessionEpoch": binding.SessionEpoch,
 			"hookSequence": binding.HookSequence,
 			"commandId":    binding.CommandID,
@@ -389,6 +441,7 @@ func (r *VisualAnchorRegistry) ObserveHostedStart(event shellexec.HostedRuntimeE
 	}
 	r.ObserveConfirmation(VisualAnchorConfirmation{
 		BlockID:      blockID,
+		Authority:    terminalruntime.AuthorityHostedSidechannel,
 		SessionEpoch: sessionEpoch,
 		HookSequence: hookSequence,
 		CommandID:    event.CommandID,

@@ -29,7 +29,8 @@ const ClaudeCodeRegex = /^claude\b/;
 
 type Osc16162Command =
     | { command: "A"; data: Record<string, never> }
-    | { command: "C"; data: { cmd64?: string } }
+    | { command: "C"; data: { cmd64?: string; epoch?: string; seq?: number } }
+    | { command: "P"; data: { cwd64?: string; epoch?: string; seq?: number } }
     | {
           command: "B";
           data: {
@@ -53,7 +54,7 @@ type Osc16162Command =
               comp?: string;
           };
       }
-    | { command: "D"; data: { exitcode?: number } }
+    | { command: "D"; data: { exitcode?: number; epoch?: string; seq?: number } }
     | { command: "I"; data: { inputempty?: boolean } }
     | { command: "R"; data: Record<string, never> };
 
@@ -315,6 +316,16 @@ export function handleOsc16162Command(data: string, blockId: string, loaded: boo
     }
 
     const cmd: Osc16162Command = { command: commandStr, data: parsedData } as Osc16162Command;
+    const lifecycleData = (cmd.data ?? {}) as { epoch?: unknown; seq?: unknown };
+    const lifecycleEpoch = typeof lifecycleData.epoch === "string" ? lifecycleData.epoch : "";
+    const lifecycleSequence = typeof lifecycleData.seq === "number" ? lifecycleData.seq : 0;
+    if (
+        lifecycleEpoch !== "" &&
+        lifecycleSequence > 0 &&
+        (cmd.command === "M" || cmd.command === "P" || cmd.command === "C" || cmd.command === "D")
+    ) {
+
+    }
     const rtInfo: ObjRTInfo = {};
     switch (cmd.command) {
         case "A": {
@@ -340,7 +351,18 @@ export function handleOsc16162Command(data: string, blockId: string, loaded: boo
         case "B":
             termWrap.registerVisualAnchor(cmd.data);
             break;
+        // The shell states when it is sitting at a prompt; a Global Clear relies on
+        // that statement to ask the shell to redraw instead of drawing anything here.
+        case "P":
+            // Prompt-ready needs no renderer-side state: the backend applies the same frame
+            // to the command journal (closing a command whose finish frame was lost).
+            break;
         case "M":
+            if (cmd.data.integration != null) {
+                // The claim is recorded only when the frame carried the integration's own
+                // lifecycle identity, the same evidence the live marker requires.
+                rtInfo["shell:integration"] = Boolean(cmd.data.integration && lifecycleEpoch !== "" && lifecycleSequence > 0);
+            }
             if (cmd.data.shell) {
                 rtInfo["shell:type"] = cmd.data.shell;
             }
@@ -350,9 +372,7 @@ export function handleOsc16162Command(data: string, blockId: string, loaded: boo
             if (cmd.data.uname) {
                 rtInfo["shell:uname"] = cmd.data.uname;
             }
-            if (cmd.data.integration != null) {
-                rtInfo["shell:integration"] = cmd.data.integration;
-            }
+
             if (cmd.data.omz != null) {
                 rtInfo["shell:omz"] = cmd.data.omz;
             }
@@ -376,6 +396,10 @@ export function handleOsc16162Command(data: string, blockId: string, loaded: boo
         case "R":
             globalStore.set(termWrap.shellIntegrationStatusAtom, null);
             globalStore.set(termWrap.claudeCodeActiveAtom, false);
+            // Baseline behaviour, restored: the shell controller emits this reset frame when it
+            // recovers the terminal, and the consumer leaves the alternate buffer. The known
+            // same-chunk ordering limitation of doing that from inside a parser hook is deferred to
+            // a separate terminal-recovery task, not solved here.
             if (terminal.buffer.active.type === "alternate") {
                 terminal.write("\x1b[?1049l");
             }

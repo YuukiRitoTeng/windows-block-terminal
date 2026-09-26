@@ -44,6 +44,13 @@ import {
     type TerminalIngressChunk,
 } from "./terminal-ingress";
 import {
+    commandRegionBoundary,
+    commandRegionRange,
+    commandRegionReadable,
+    commandRegionText,
+    type CommandRegionMark,
+} from "./command-output-region";
+import {
     bufferLinesToText,
     createTempFileFromBlob,
     extractAllClipboardData,
@@ -51,7 +58,7 @@ import {
     quoteForPosixShell,
     trimTerminalSelection,
 } from "./termutil";
-import { VisualAnchorRegistry } from "./visual-anchor";
+import { authorityForMark, isKnownAuthority, VisualAnchorRegistry } from "./visual-anchor";
 
 const dlog = debug("wave:termwrap");
 
@@ -59,7 +66,7 @@ const TermFileName = "term";
 const TermCacheFileName = "cache:term:full";
 const MinDataProcessedForCache = 100 * 1024;
 export const SupportsImageInput = true;
-const MaxRepaintTransactionMs = 2000;
+
 
 // detect webgl support
 function detectWebGLSupport(): boolean {
@@ -89,7 +96,15 @@ type TermWrapOptions = {
     nodeModel?: BlockNodeModel;
 };
 
-export type CommandAnchorSnapshot = Readonly<{ commandId: string }>;
+export type CommandAnchorSnapshot = Readonly<{
+    commandId: string;
+    /**
+     * The session epoch the anchor was confirmed in. Rail navigation is scoped to the current live
+     * session: a durable record from an earlier epoch is history, not a region of this terminal.
+     */
+    sessionEpoch: string;
+}>;
+
 
 export class TermWrap {
     tabId: string;
@@ -102,27 +117,204 @@ export class TermWrap {
     searchAddon: SearchAddon;
     serializeAddon: SerializeAddon;
     mainFileSubject: SubjectWithRef<WSFileEventData>;
+    /**
+     * The TermWrap-owned subscription to the block file subject. Kept so dispose can unsubscribe:
+     * releasing the subject reference alone does not stop this subscriber from being called.
+     */
+    private mainFileSubscription: { unsubscribe: () => void } | null = null;
+    private disposedOnce = false;
+    private idleTimeoutHandle: ReturnType<typeof setTimeout> | null = null;
+    private idleCallbackHandle: number | null = null;
+
+    /** Writes started from inside a parser handler, counted against the current lane slot. */
     loaded: boolean;
     heldData: TerminalIngressChunk[];
     private heldDataSequence: number;
     private ingressGeneration: number;
     private ingressState: "loading" | "draining" | "live" | "disposed";
+    /**
+     * Non-null while a product clear is running: display writes submitted during the boundary
+     * wait for it instead of racing it, so the clear can never erase fresh output.
+     */
+    /**
+     * The presentation lane: one FIFO for every operation that changes this pane's xterm buffer,
+     * cursor or viewport. Producers enqueue through runInPresentationLane, so the order they are
+     * issued in is the order they complete in - PTY writes (each one resolves on xterm's own write
+     * callback), the product clear transaction, resize/reflow, the file-origin reset and the
+     * restore-time resizes. No sleeps, no fence bytes, no private xterm access.
+     */
+    private presentationTail: Promise<void> = Promise.resolve();
     private ingressDrainPromise: Promise<void> | null;
 
-    /** Clear only rendered terminal state; the underlying shell session is untouched. */
-    clearVisualBuffer() {
-        // Feed display-only controls through xterm's parser. This clears both the
-        // visible screen (ED 2J) and scrollback (ED 3J), then leaves the cursor at
-        // the home position without sending anything to the shell or resetting
-        // terminal modes/session state.
-        this.terminal.write("\x1b[2J\x1b[3J\x1b[H");
-        this.ingressGeneration++;
-        this.heldData = [];
-        if (this.ingressState !== "disposed" && !this.loaded) {
-            this.loaded = true;
-            this.ingressState = "live";
+    /**
+     * Product Global Clear: a terminal-owned buffer operation.
+     *
+     * xterm's public clear() empties the buffer and keeps the current prompt/cursor line as
+     * the new first line, so the shell never has to draw its prompt again. Nothing is sent to
+     * the PTY: no CR/Enter, no Ctrl+L, no Clear-Host, no shell command of any kind. The shell,
+     * its cwd/environment/functions and any interactive process keep running untouched.
+     */
+    /**
+     * Product Global Clear: a terminal-owned, display-only transaction.
+     *
+     * The mutation is xterm's own public `Terminal.clear()`. It is a core buffer operation -
+     * it never goes through the parser and never reaches the PTY - which is exactly what makes
+     * it safe: application terminal modes (DECSTBM, DECOM, alternate buffer) cannot influence
+     * it, and it cannot truncate, terminate or fabricate an application frame that happens to
+     * be mid-parse. It keeps the line the cursor is in, which is where the shell leaves its
+     * prompt, so the prompt survives the clear without any shell-side repaint.
+     *
+     * The only refusal is the upstream xterm.js#5992 state: with the cursor on the first row and
+     * no scrollback while the screen still has content, `clear()` returns without doing
+     * anything. The column is irrelevant. That is detected through the public buffer API
+     * *before* the backend visibility transaction is submitted, so such a clear is refused as a
+     * whole instead of silently doing nothing or truncating anything.
+     */
+    async withProductClearBoundary<T>(
+        run: (session: { prepare(): boolean; apply(): Promise<void> }) => Promise<T>
+    ): Promise<T | null> {
+        if (!this.isLive()) {
+            return null;
         }
+        // One lane slot for the whole transaction (preflight -> backend -> clear -> presentation
+        // reset). A second clear therefore queues behind the first instead of overwriting it, and
+        // everything enqueued before it has already reached the buffer.
+        return this.runInPresentationLane(async () => {
+            if (!this.isLive()) {
+                return null;
+            }
+            return run({
+                prepare: () => this.canClearProductBuffer(),
+                apply: async () => {
+                    // The backend transaction may have completed while this pane was disposed. The
+                    // durable commit stands; there is simply no renderer left to mutate.
+                    if (!this.isLive()) {
+                        return;
+                    }
+                    await this.applyProductClear();
+                },
+            });
+        });
+    }
+
+    /**
+     * Whether the public clear can run for the current buffer state. The one state that cannot
+     * is xterm.js#5992 (cursor on the first row with content and no scrollback), where `clear()`
+     * would return without doing anything.
+     */
+    canClearProductBuffer(): boolean {
+        if (this.ingressState === "disposed") {
+            return false;
+        }
+        const buffer = this.terminal.buffer.active;
+        if (buffer == null) {
+            return false;
+        }
+        if (buffer.type === "alternate") {
+            // Global Clear only promises the normal buffer's visual history. In the alternate buffer
+            // the public clear would empty a screen that is not the one the user returns to, leaving
+            // visual truth and the durable visibility generation disagreeing once the application
+            // leaves the alternate buffer. Fail safe: no backend commit, no clear, and no attempt to
+            // exit the alternate buffer (that recovery path is a separate, deferred task).
+            return false;
+        }
+        // The real xterm 6.0.0 early return is a cursor row of 0 with no scrollback - the column
+        // does not matter (upstream xterm.js#5992). Checking only column 0 missed the no-op and
+        // committed a backend transaction whose screen never changed.
+        const cursorOnFirstRow = buffer.cursorY === 0 && buffer.baseY === 0;
+        if (!cursorOnFirstRow) {
+            return true;
+        }
+        // On the first row the public clear does nothing. That is only a problem when there is
+        // something else to remove: a screen that holds nothing but the cursor's own line is
+        // already in the state a clear would produce.
+        return !this.bufferHasContentOutsideCursorRow(buffer, buffer.cursorY);
+    }
+
+    /** Whether any row other than the cursor's own line holds content. */
+    private bufferHasContentOutsideCursorRow(buffer: TermTypes.IBuffer, cursorRow: number): boolean {
+        for (let row = 0; row < buffer.length; row++) {
+            if (row === cursorRow) {
+                continue;
+            }
+            if ((buffer.getLine(row)?.translateToString(true) ?? "").length > 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Applies the clear through xterm's own buffer operation and rebuilds WBT's presentation
+     * state around it. No parser bytes, no PTY input, no shell interaction.
+     */
+    async applyProductClear(): Promise<void> {
+        if (!this.isLive()) {
+            return;
+        }
+        this.terminal.clear();
+        this.visualBufferGeneration += 1;
+        this.releasePresentationState();
+    }
+    /**
+     * Hard reset of the rendered view for a new file origin (truncate / resync). This is not
+     * the product Clear: it also restarts the ingress stream and is the only path allowed to
+     * discard held data and reset the read cursor.
+     */
+    /**
+     * Hard reset of the rendered view for a new file origin. It is not the product clear (the VT
+     * reset sequence stays here), but it is a presentation mutation: it runs as one lane slot and
+     * only completes once xterm has actually parsed its reset sequence.
+     */
+    resetTerminalFileOrigin(): Promise<void> {
+        if (!this.isLive()) {
+            return Promise.resolve();
+        }
+        return this.runInPresentationLane(async () => {
+            if (!this.isLive()) {
+                return;
+            }
+            await this.writeParsed("\x1b[2J\x1b[3J\x1b[H");
+            // The callback may resume after the pane was disposed: disposed is terminal, so the
+            // ingress lifecycle is never moved back to live and no state is touched.
+            if (!this.isLive()) {
+                return;
+            }
+            this.visualBufferGeneration += 1;
+            this.ingressGeneration++;
+            this.heldData = [];
+            if (!this.loaded) {
+                this.loaded = true;
+                this.ingressState = "live";
+            }
+            this.releasePresentationState();
+        });
+    }
+
+
+    /**
+     * Invalidates every presentation-only binding the clear has to drop: WBT visual anchors,
+     * their cues/decorations and the prompt markers, then tells the Rail to re-read.
+     */
+    private releasePresentationState() {
         this.visualAnchorRegistry.invalidate();
+        for (const [, cue] of this.visualAnchorCues) {
+            try {
+                cue.marker.dispose();
+                cue.decoration?.dispose();
+            } catch (_) {
+                /* nothing */
+            }
+        }
+        this.visualAnchorCues.clear();
+        this.promptMarkers.forEach((marker) => {
+            try {
+                marker.dispose();
+            } catch (_) {
+                /* nothing */
+            }
+        });
+        this.promptMarkers = [];
         this.notifyCommandAnchorSubscribers();
     }
     handleResize_debounced: () => void;
@@ -145,7 +337,11 @@ export class TermWrap {
     lastUpdated: number;
     promptMarkers: TermTypes.IMarker[] = [];
     visualAnchorRegistry = new VisualAnchorRegistry();
-    private visualAnchorCues = new Map<string, { marker: TermTypes.IMarker; decoration?: TermTypes.IDecoration; inlineDecoration?: TermTypes.IDecoration; inlineRender?: TermTypes.IDisposable; announced?: boolean }>();
+    private visualAnchorCues = new Map<string, { marker: TermTypes.IMarker; generation: number; decoration?: TermTypes.IDecoration; inlineDecoration?: TermTypes.IDecoration; inlineRender?: TermTypes.IDisposable; announced?: boolean }>();
+    // Bumped whenever the visual buffer is reset: a marker from an older generation
+    // can no longer be read as output, it is reported as unavailable instead.
+    private visualBufferGeneration = 0;
+
     private selectedCommandAnchor: string | null = null;
     private commandAnchorSubscribers = new Set<() => void>();
     visualAnchorEventUnsub: (() => void) | null = null;
@@ -160,7 +356,16 @@ export class TermWrap {
         const anchors: CommandAnchorSnapshot[] = [];
         for (const [nonce, cue] of this.visualAnchorCues) {
             const confirmed = this.visualAnchorRegistry.get(nonce);
-            if (confirmed?.mode === "structured" && !cue.marker.isDisposed) anchors.push(Object.freeze({ commandId: confirmed.commandId }));
+            // Only the current shell session's bindings are navigable. A stale binding from the
+            // session this pane replaced must never reappear as a live anchor.
+            const currentEpoch = this.visualAnchorRegistry.sessionEpoch;
+            if (
+                isKnownAuthority(confirmed?.authority) &&
+                !cue.marker.isDisposed &&
+                (currentEpoch === "" || confirmed.sessionEpoch === currentEpoch)
+            ) {
+                anchors.push(Object.freeze({ commandId: confirmed.commandId, sessionEpoch: confirmed.sessionEpoch ?? "" }));
+            }
         }
         return Object.freeze(anchors);
     }
@@ -170,10 +375,83 @@ export class TermWrap {
         return () => this.commandAnchorSubscribers.delete(listener);
     }
 
+
+    /**
+     * Replaces the visual buffer without pretending to be the shell. After the buffer
+     * is cleared the real prompt is gone, so the shell is asked to draw it again: a
+     * bare line feed makes the shell print its own prompt (the user's prompt, its cwd
+     * and its customisations), and it is only sent while the shell itself reported an
+     * idle prompt - a running interactive program never receives it.
+     */
+
+    /**
+     * Applies the integration facts a previous wrapper already recorded for this pane.
+     * "shell:integration" is written only for a lifecycle frame that carried the
+     * integration's own identity (see osc-handlers); it describes the pane, nothing else.
+     */
+    applyRestoredShellIntegration(rtInfo: Record<string, unknown> | null | undefined): ShellIntegrationStatus {
+        if (rtInfo == null || !rtInfo["shell:integration"]) return null;
+        return (rtInfo["shell:state"] as ShellIntegrationStatus) ?? null;
+    }
+
+    /**
+     * The command's user-visible output on the terminal authority, read from the
+     * terminal buffer between this command's marker and the next command's marker
+     * (or the live cursor line for the newest command). This is the source of
+     * truth for what the user saw; the journal copy for this authority cannot
+     * prove where a command's last byte landed.
+     *
+     * Returns undefined when the command has no confirmed marker, when the region's
+     * end cannot be proven, when the region can no longer be read (evicted
+     * scrollback, cleared buffer, disposed marker), and "" when the command
+     * produced no output lines.
+     */
+    getTerminalOutputForCommand(commandId: string): string | undefined {
+        if (commandId === "") return undefined;
+        // Every mark in the buffer is reported with what is known about it. A mark is
+        // only attributed to a command when the anchor registry confirmed that identity:
+        // a raw or pending `B` mark carries no authority of its own, so it can never
+        // decide where a command's output ends.
+        const marks: CommandRegionMark[] = [];
+        let ownMarker: TermTypes.IMarker | null = null;
+        for (const [nonce, cue] of this.visualAnchorCues) {
+            if (cue.marker.isDisposed || cue.generation !== this.visualBufferGeneration) continue;
+            const confirmed = this.visualAnchorRegistry.get(nonce);
+            const trusted = isKnownAuthority(confirmed?.authority);
+            marks.push(
+                trusted
+                    ? {
+                          line: cue.marker.line,
+                          authority: confirmed.authority,
+                          sessionEpoch: confirmed.sessionEpoch,
+                          commandId: confirmed.commandId,
+                      }
+                    : { line: cue.marker.line }
+            );
+            if (trusted && confirmed.commandId === commandId && ownMarker == null) ownMarker = cue.marker;
+        }
+        const boundary = commandRegionBoundary(marks, commandId);
+        if (boundary == null || ownMarker == null) return undefined;
+        const buffer = this.terminal.buffer.active;
+        const cursorLine = buffer.baseY + buffer.cursorY;
+        const bounds = { startLine: boundary.startLine, nextLine: boundary.nextLine, cursorLine };
+        // A region is only readable while its boundary markers are alive in the buffer
+        // the terminal is showing: the answer is then "unavailable", never a clamped
+        // region that would silently copy the wrong text.
+        const readable = commandRegionReadable(bounds, {
+            markerValid: boundary.startLine < buffer.length,
+            nextValid: boundary.nextLine != null && boundary.nextLine < buffer.length,
+            bufferLength: buffer.length,
+        });
+        if (!readable) return undefined;
+        const { start, end } = commandRegionRange(bounds);
+        return commandRegionText(bufferLinesToText(buffer, start, end));
+    }
+
     scrollToCommandAnchor(commandId: string): boolean {
         for (const [nonce, cue] of this.visualAnchorCues) {
             const confirmed = this.visualAnchorRegistry.get(nonce);
-            if (confirmed?.mode !== "structured" || confirmed.commandId !== commandId || cue.marker.isDisposed) continue;
+            if (!isKnownAuthority(confirmed?.authority) || confirmed.commandId !== commandId || cue.marker.isDisposed) continue;
             this.terminal.scrollToLine(cue.marker.line);
             return true;
         }
@@ -199,7 +477,7 @@ export class TermWrap {
         cue.inlineRender = undefined;
         cue.inlineDecoration = undefined;
         const confirmed = this.visualAnchorRegistry.get(nonce);
-        if (confirmed?.mode !== "structured" || cue.marker.isDisposed) return;
+        if (!isKnownAuthority(confirmed?.authority) || cue.marker.isDisposed) return;
         try {
             const decoration = this.terminal.registerDecoration({ marker: cue.marker, width: 1, height: 1, layer: "top" });
             if (decoration != null) {
@@ -229,12 +507,7 @@ export class TermWrap {
     recentWrites: { idx: number; data: string; ts: number }[] = [];
     recentWritesCounter: number = 0;
 
-    // for repaint transaction scrolling behavior
-    lastClearScrollbackTs: number = 0;
-    lastMode2026SetTs: number = 0;
-    lastMode2026ResetTs: number = 0;
-    inSyncTransaction: boolean = false;
-    inRepaintTransaction: boolean = false;
+
 
     constructor(
         tabId: string,
@@ -325,53 +598,7 @@ export class TermWrap {
                 return false;
             }
         });
-        this.toDispose.push(
-            this.terminal.parser.registerCsiHandler({ final: "J" }, (params) => {
-                if (params == null || params.length < 1) {
-                    return false;
-                }
-                if (params[0] === 3) {
-                    this.lastClearScrollbackTs = Date.now();
-                    if (this.inSyncTransaction) {
-                        console.log("[termwrap] repaint transaction starting");
-                        this.inRepaintTransaction = true;
-                    }
-                }
-                return false;
-            })
-        );
-        this.toDispose.push(
-            this.terminal.parser.registerCsiHandler({ prefix: "?", final: "h" }, (params) => {
-                if (params == null || params.length < 1) {
-                    return false;
-                }
-                if (params[0] === 2026) {
-                    this.lastMode2026SetTs = Date.now();
-                    this.inSyncTransaction = true;
-                }
-                return false;
-            })
-        );
-        this.toDispose.push(
-            this.terminal.parser.registerCsiHandler({ prefix: "?", final: "l" }, (params) => {
-                if (params == null || params.length < 1) {
-                    return false;
-                }
-                if (params[0] === 2026) {
-                    this.lastMode2026ResetTs = Date.now();
-                    this.inSyncTransaction = false;
-                    const wasRepaint = this.inRepaintTransaction;
-                    this.inRepaintTransaction = false;
-                    if (wasRepaint && Date.now() - this.lastClearScrollbackTs <= MaxRepaintTransactionMs) {
-                        setTimeout(() => {
-                            console.log("[termwrap] repaint transaction complete, scrolling to bottom");
-                            this.terminal.scrollToBottom();
-                        }, 20);
-                    }
-                }
-                return false;
-            })
-        );
+
         this.toDispose.push(
             this.terminal.onBell(() => {
                 if (!this.loaded) {
@@ -547,7 +774,7 @@ export class TermWrap {
         }
 
         this.mainFileSubject = getFileSubject(this.getZoneId(), TermFileName);
-        this.mainFileSubject.subscribe(this.handleNewFileSubjectData.bind(this));
+        this.mainFileSubscription = this.mainFileSubject.subscribe(this.handleNewFileSubjectData.bind(this));
         this.visualAnchorEventUnsub = waveEventSubscribeSingle({
             eventType: "commandjournal:anchor",
             scope: WOS.makeORef("block", this.blockId),
@@ -559,6 +786,7 @@ export class TermWrap {
                 scope: WOS.makeORef("block", this.blockId),
                 maxitems: 64,
             });
+
             for (const event of anchorHistory ?? []) {
                 this.confirmVisualAnchor(event?.data as Record<string, unknown>);
             }
@@ -572,12 +800,8 @@ export class TermWrap {
             });
             let shellState: ShellIntegrationStatus = null;
 
-            if (rtInfo && rtInfo["shell:integration"]) {
-                shellState = rtInfo["shell:state"] as ShellIntegrationStatus;
-                globalStore.set(this.shellIntegrationStatusAtom, shellState || null);
-            } else {
-                globalStore.set(this.shellIntegrationStatusAtom, null);
-            }
+            shellState = this.applyRestoredShellIntegration(rtInfo);
+            globalStore.set(this.shellIntegrationStatusAtom, shellState || null);
 
             const lastCmd = rtInfo ? rtInfo["shell:lastcmd"] : null;
             const isCC = shellState === "running-command" && isClaudeCodeCommand(lastCmd);
@@ -619,6 +843,15 @@ export class TermWrap {
     }
 
     dispose() {
+        if (this.disposedOnce) {
+            return;
+        }
+        this.disposedOnce = true;
+        // TermWrap-owned long-lived resources are torn down here, symmetrically with their creation:
+        // the file subject subscription, the subject reference and the idle cache loop.
+        this.mainFileSubscription?.unsubscribe();
+        this.mainFileSubscription = null;
+        this.stopProcessIdleLoop();
         this.ingressGeneration++;
         this.ingressState = "disposed";
         this.heldData = [];
@@ -647,7 +880,10 @@ export class TermWrap {
                 /* nothing */
             }
         });
-        this.mainFileSubject.release();
+        if (this.mainFileSubject != null) {
+            this.mainFileSubject.release();
+            this.mainFileSubject = null;
+        }
     }
 
     handleTermData(data: string) {
@@ -678,8 +914,7 @@ export class TermWrap {
         this.userInputHandler?.();
     }
 
-    registerVisualAnchor(data: Record<string, unknown>) {
-        const nonce = typeof data?.nonce === "string" ? data.nonce : "";
+    registerVisualAnchor(data: Record<string, unknown>) {        const nonce = typeof data?.nonce === "string" ? data.nonce : "";
         const epoch = typeof data?.epoch === "string" ? data.epoch : "";
         const commandId = typeof data?.id === "string" && data.id !== "" ? data.id : undefined;
         const phase = typeof data?.phase === "string" ? data.phase : "";
@@ -687,37 +922,72 @@ export class TermWrap {
         if (!nonce || !epoch || !phase || sequence <= 0 || phase !== "start") return;
         const marker = this.terminal.registerMarker(0);
         if (marker == null) return;
+        // Which producer this mark belongs to is decided by the identity the mark claims, exactly
+        // as the Go anchor registry decides it: a mark that names a hosted process and runspace is
+        // the hosted runtime's mark, and every other mark belongs to the terminal integration.
+        const mark = authorityForMark(
+            typeof data.hostid === "string" ? data.hostid : undefined,
+            typeof data.runspaceid === "string" ? data.runspaceid : undefined
+        );
+        // A parked frame keeps the marker its cue points at: the registry holds one parked anchor per
+        // nonce, so a repeat of a nonce that is already parked has nothing of its own to park. This
+        // frame's marker would replace the cue that still owns the first one, leaving that marker
+        // alive with nothing referencing it.
+        const alreadyParked = this.visualAnchorRegistry.isQuarantined(nonce);
         const accepted = this.visualAnchorRegistry.observeAnchor({
             blockId: this.blockId,
+            authority: mark.authority,
             sessionEpoch: epoch,
             hookSequence: sequence,
             commandId,
             anchorNonce: nonce,
-            hostId: typeof data.hostid === "string" ? data.hostid : undefined,
-            runspaceId: typeof data.runspaceid === "string" ? data.runspaceid : undefined,
+            hostId: mark.hostId,
+            runspaceId: mark.runspaceId,
             handle: { dispose: () => marker.dispose() },
         });
         if (!accepted) {
-            marker.dispose();
+            // A valid anchor of a session that is not trusted yet is parked by the registry, not
+            // rejected. Keep its marker and its (silent) cue: the cue carries no authority by
+            // itself - the snapshot only exposes a cue whose registry binding exists - so the
+            // trusted transition can announce it later with the frame's own line.
+            if (alreadyParked || !this.visualAnchorRegistry.isQuarantined(nonce)) {
+                marker.dispose();
+                return;
+            }
+            // A parked anchor is bounded, not permanent: the registry drops the oldest parked
+            // anchors past its capacity and disposes their handle. The cue must follow its marker
+            // out, exactly as an accepted one does, or the map grows with every evicted frame.
+            this.registerVisualAnchorCue(nonce, marker);
             return;
         }
-        this.visualAnchorCues.set(nonce, { marker });
+        this.registerVisualAnchorCue(nonce, marker);
+        this.registerConfirmedVisualCue(nonce);
+    }
+
+    /**
+     * Records the cue for one anchor frame and ties its lifetime to the frame's marker, so the
+     * cue is released exactly when the marker dies - whether the integration disposed it, the
+     * registry evicted the parked anchor, or a trusted clear invalidated it.
+     */
+    private registerVisualAnchorCue(nonce: string, marker: TermTypes.IMarker) {
+        this.visualAnchorCues.set(nonce, { marker, generation: this.visualBufferGeneration });
         marker.onDispose(() => {
+            // Only the cue that still owns this nonce may be released: a newer frame for the same
+            // nonce has replaced it, and that newer cue is not ours to drop.
             const cue = this.visualAnchorCues.get(nonce);
-            const decoration = cue?.decoration;
-            decoration?.dispose();
-            cue?.inlineRender?.dispose();
-            cue?.inlineDecoration?.dispose();
+            if (cue?.marker !== marker) return;
+            cue.decoration?.dispose();
+            cue.inlineRender?.dispose();
+            cue.inlineDecoration?.dispose();
             this.visualAnchorCues.delete(nonce);
             this.visualAnchorRegistry.remove(nonce);
             this.notifyCommandAnchorSubscribers();
         });
-        this.registerConfirmedVisualCue(nonce);
     }
 
     private registerConfirmedVisualCue(nonce: string) {
         const cue = this.visualAnchorCues.get(nonce);
-        if (cue == null || this.visualAnchorRegistry.get(nonce)?.mode !== "structured" || cue.marker.isDisposed) return;
+        if (cue == null || !isKnownAuthority(this.visualAnchorRegistry.get(nonce)?.authority) || cue.marker.isDisposed) return;
         if (cue.inlineDecoration == null) this.renderSelectedCommandCue(nonce);
         if (!cue.announced) {
             cue.announced = true;
@@ -743,26 +1013,29 @@ export class TermWrap {
         const hostId = typeof data?.hostId === "string" ? data.hostId : "";
         const runspaceId = typeof data?.runspaceId === "string" ? data.runspaceId : "";
         const mode = typeof data?.mode === "string" ? data.mode : "";
+        const authority = typeof data?.authority === "string" ? data.authority : "";
         const hookSequence = typeof data?.hookSequence === "number" ? data.hookSequence : 0;
-        if (
-            !anchorNonce ||
-            !blockId ||
-            !sessionEpoch ||
-            !commandId ||
-            !hostId ||
-            !runspaceId ||
-            !mode ||
-            hookSequence <= 0
-        )
-            return;
+        // A confirmation names the authority that owns the command and the command identity. The
+        // hosted authority must also name the process and runspace it belongs to; the terminal
+        // authority must not carry that identity at all. Anything else fails closed.
+        // Identity is blockId + sessionEpoch + hookSequence + commandId + anchorNonce + authority.
+        // `mode` describes the execution lifecycle and is never used to decide identity: the native
+        // terminal authority legitimately carries no mode, and requiring one silently dropped every
+        // real confirmation before the registry could pair it with its anchor.
+        if (!anchorNonce || !blockId || !sessionEpoch || !commandId || !isKnownAuthority(authority) || hookSequence <= 0) return;
+        if (authority === "hosted-sidechannel" && (hostId === "" || runspaceId === "")) return;
+        // A trusted confirmation naming a new session epoch means the pane's shell session was
+        // replaced: drop the old session's lock and stale anchors before accepting the new identity.
+        this.visualAnchorRegistry.resetSessionForEpoch(sessionEpoch);
         this.visualAnchorRegistry.confirm({
             blockId,
+            authority,
             sessionEpoch,
             hookSequence,
             commandId,
             anchorNonce,
-            hostId,
-            runspaceId,
+            hostId: authority === "hosted-sidechannel" ? hostId : undefined,
+            runspaceId: authority === "hosted-sidechannel" ? runspaceId : undefined,
             mode,
         });
         this.registerConfirmedVisualCue(anchorNonce);
@@ -773,8 +1046,15 @@ export class TermWrap {
     }
 
     handleNewFileSubjectData(msg: WSFileEventData) {
+        // Defence in depth: the subscription is unsubscribed on dispose, and this keeps a callback
+        // that was already delivered from touching a disposed pane.
+        if (!this.isLive()) {
+            return;
+        }
         if (msg.fileop == "truncate") {
-            this.clearVisualBuffer();
+            void this.resetTerminalFileOrigin().catch((e) => {
+                console.debug("terminal file-origin reset failed", this.blockId, e);
+            });
             // The truncate event establishes a new file-origin boundary.
             // Product Clear does not call this branch, so it never resets the
             // cursor used for authoritative suffix reads.
@@ -796,7 +1076,52 @@ export class TermWrap {
         }
     }
 
-    doTerminalWrite(data: string | Uint8Array, setPtyOffset?: number): Promise<void> {
+    /**
+     * Runs one presentation operation after everything already enqueued, and keeps the lane alive
+     * even when that operation fails: a rejected operation never poisons the queue, and later
+     * operations still run in order.
+     */
+    runInPresentationLane<T>(operation: () => Promise<T>): Promise<T> {
+        const tail = this.presentationTail ?? (this.presentationTail = Promise.resolve());
+        const started = tail.then(operation, operation);
+        this.presentationTail = started.then(
+            () => undefined,
+            () => undefined
+        );
+        return started;
+    }
+
+    /** Writes through xterm and resolves when the parser has consumed this chunk. */
+    private writeParsed(data: string | Uint8Array): Promise<void> {
+        return new Promise((resolve) => {
+            this.terminal.write(data, () => resolve());
+        });
+    }
+
+
+    /**
+     * The single lifecycle predicate every asynchronous presentation operation re-checks after a
+     * suspension point. A disposed pane is terminal: nothing may touch the terminal, its addons or
+     * the ingress lifecycle state afterwards, and a durable backend commit that already happened is
+     * never rolled back - only the renderer-side mutation is skipped.
+     */
+    private isLive(): boolean {
+        return this.ingressState !== "disposed";
+    }
+
+    /** One sink for presentation-operation failures, so nothing becomes an unhandled rejection. */
+    private reportPresentationError(operation: string, error: unknown) {
+        console.debug("[termwrap] presentation operation failed", operation, this.blockId, error);
+    }
+
+    async doTerminalWrite(data: string | Uint8Array, setPtyOffset?: number): Promise<void> {
+        if (!this.isLive()) {
+            return;
+        }
+        return this.runInPresentationLane(async () => {
+            if (!this.isLive()) {
+                return;
+            }
         if (isDev() && this.loaded) {
             const dataStr = data instanceof Uint8Array ? new TextDecoder().decode(data) : data;
             this.recentWrites.push({ idx: this.recentWritesCounter++, ts: Date.now(), data: dataStr });
@@ -804,11 +1129,14 @@ export class TermWrap {
                 this.recentWrites.shift();
             }
         }
-        let resolve: () => void = null;
-        const prtn = new Promise<void>((presolve, _) => {
-            resolve = presolve;
-        });
-        this.terminal.write(data, () => {
+            // The lane slot ends when xterm has parsed these bytes: that callback is the real
+            // completion boundary the rest of the presentation order is built on.
+            await this.writeParsed(data);
+            if (!this.isLive()) {
+                // The pane went away while the callback was pending: the bytes are already parsed,
+                // but no lifecycle or offset bookkeeping is touched afterwards.
+                return;
+            }
             if (setPtyOffset != null) {
                 this.ptyOffset = setPtyOffset;
             } else {
@@ -816,9 +1144,7 @@ export class TermWrap {
                 this.dataBytesProcessed += data.length;
             }
             this.lastUpdated = Date.now();
-            resolve();
         });
-        return prtn;
     }
 
     private isIngressCurrent(generation: number): boolean {
@@ -838,7 +1164,8 @@ export class TermWrap {
                         return;
                     }
                     const nonces = extractVisualAnchorNonces(frame);
-                    if ([...nonces].some((nonce) => coveredAnchorNonces.has(nonce))) {
+                    const covered = [...nonces].some((nonce) => coveredAnchorNonces.has(nonce));
+                    if (covered) {
                         continue;
                     }
                     await this.doTerminalWrite(frame, null);
@@ -878,12 +1205,22 @@ export class TermWrap {
                     (fileTermSize.rows != curTermSize.rows || fileTermSize.cols != curTermSize.cols)
                 ) {
                     console.log("terminal restore size mismatch, temp resize", fileTermSize, curTermSize);
-                    this.terminal.resize(fileTermSize.cols, fileTermSize.rows);
+                    await this.runInPresentationLane(async () => {
+                        if (!this.isLive()) {
+                            return;
+                        }
+                        this.terminal.resize(fileTermSize.cols, fileTermSize.rows);
+                    });
                     didResize = true;
                 }
                 await this.doTerminalWrite(cacheData, ptyOffset);
                 if (didResize) {
-                    this.terminal.resize(curTermSize.cols, curTermSize.rows);
+                    await this.runInPresentationLane(async () => {
+                        if (!this.isLive()) {
+                            return;
+                        }
+                        this.terminal.resize(curTermSize.cols, curTermSize.rows);
+                    });
                 }
             }
         }
@@ -942,6 +1279,21 @@ export class TermWrap {
     }
 
     handleResize() {
+        if (!this.isLive()) {
+            return;
+        }
+        // A resize is a presentation mutation like any other: it takes a lane slot, so it cannot
+        // reflow the buffer in the middle of a clear transaction.
+        void this.runInPresentationLane(async () => {
+            if (!this.isLive()) {
+                return;
+            }
+            this.handleResizeInLane();
+        }).catch((e) => this.reportPresentationError("resize", e));
+    }
+
+    /** The reflow itself; callers inside the lane use this directly. */
+    private handleResizeInLane() {
         const oldRows = this.terminal.rows;
         const oldCols = this.terminal.cols;
         this.fitAddon.fit();
@@ -963,6 +1315,11 @@ export class TermWrap {
     }
 
     processAndCacheData() {
+        // Second line of defence: the loop is cancelled on dispose, and this guard keeps a callback
+        // that was already queued from touching the terminal, its addons or the cache.
+        if (!this.isLive()) {
+            return;
+        }
         if (this.dataBytesProcessed < MinDataProcessedForCache) {
             return;
         }
@@ -975,13 +1332,40 @@ export class TermWrap {
         this.dataBytesProcessed = 0;
     }
 
+    /** Starts (or restarts) the 5s idle cache loop. Idempotent while one is already pending. */
     runProcessIdleTimeout() {
-        setTimeout(() => {
-            window.requestIdleCallback(() => {
+        if (!this.isLive() || this.idleTimeoutHandle != null || this.idleCallbackHandle != null) {
+            return;
+        }
+        this.idleTimeoutHandle = setTimeout(() => {
+            this.idleTimeoutHandle = null;
+            if (!this.isLive()) {
+                return;
+            }
+            this.idleCallbackHandle = window.requestIdleCallback(() => {
+                this.idleCallbackHandle = null;
+                if (!this.isLive()) {
+                    return;
+                }
                 this.processAndCacheData();
+                if (!this.isLive()) {
+                    return;
+                }
                 this.runProcessIdleTimeout();
             });
         }, 5000);
+    }
+
+    /** Cancels both halves of the idle cache loop; dispose calls this so no timer survives it. */
+    private stopProcessIdleLoop() {
+        if (this.idleTimeoutHandle != null) {
+            clearTimeout(this.idleTimeoutHandle);
+            this.idleTimeoutHandle = null;
+        }
+        if (this.idleCallbackHandle != null) {
+            window.cancelIdleCallback?.(this.idleCallbackHandle);
+            this.idleCallbackHandle = null;
+        }
     }
 
     async pasteHandler(e?: ClipboardEvent): Promise<void> {
@@ -991,17 +1375,32 @@ export class TermWrap {
 
         try {
             const clipboardData = await extractAllClipboardData(e);
+            // A paste may resume long after it started (clipboard read, blob extraction, temp file,
+            // the 150ms gap between images): every resumption re-checks the lifecycle before it
+            // touches the terminal again.
+            if (!this.isLive()) {
+                return;
+            }
             let firstImage = true;
             for (const data of clipboardData) {
                 if (data.image && SupportsImageInput) {
                     if (!firstImage) {
                         await new Promise((r) => setTimeout(r, 150));
+                        if (!this.isLive()) {
+                            return;
+                        }
                     }
                     const tempPath = await createTempFileFromBlob(data.image);
+                    if (!this.isLive()) {
+                        return;
+                    }
                     this.terminal.paste(tempPath + " ");
                     firstImage = false;
                 }
                 if (data.text) {
+                    if (!this.isLive()) {
+                        return;
+                    }
                     this.terminal.paste(data.text);
                 }
             }

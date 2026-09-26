@@ -15,6 +15,20 @@ type Decoder struct {
 	sessionEpoch     string
 	lastHookSequence uint64
 	activeCommandID  string
+	// pendingAnchor is the one anchor that was accepted for the next command of
+	// this session and has not been consumed yet. Anchors are not lifecycle
+	// steps: they carry the sequence of the command they mark, so they are
+	// tracked here instead of in lastHookSequence, and only the matching command
+	// start may consume one.
+	pendingAnchor *pendingAnchor
+}
+
+// pendingAnchor is an accepted, unconsumed visual anchor.
+type pendingAnchor struct {
+	sessionEpoch string
+	sequence     uint64
+	commandID    string
+	nonce        string
 }
 
 func NewDecoder() *Decoder { return &Decoder{} }
@@ -78,6 +92,7 @@ func (d *Decoder) FeedOrdered(raw []byte) []StreamItem {
 			items = append(items, StreamItem{Kind: StreamOutputSegment, Output: append([]byte(nil), d.buffer[:start]...)})
 			d.buffer = d.buffer[start:]
 		}
+
 		end, termLen := frameEnd(d.buffer[2:])
 		if end < 0 {
 			if len(d.buffer) > maxIntegrationFrame {
@@ -182,37 +197,70 @@ func (d *Decoder) decodeFrame(frame string) ([]IntegrationEvent, bool) {
 		}
 		if d.activeCommandID != "" {
 			events = append(events, IntegrationEvent{
-				Kind: EventCommandAborted, SessionEpoch: d.sessionEpoch,
+				Kind: EventCommandAborted, Authority: AuthorityTerminalOSC, SessionEpoch: d.sessionEpoch,
 				CommandID: d.activeCommandID, CompletionReason: "epoch_changed",
 			})
 			d.activeCommandID = ""
 		}
 		d.sessionEpoch = p.Epoch
 		d.lastHookSequence = 0
+		d.pendingAnchor = nil
 	}
 	epoch := d.sessionEpoch
 	if p.Epoch != "" {
 		epoch = p.Epoch
 	}
 	sequence := d.lastHookSequence
-	if p.Sequence != 0 {
+	if kind == "B" {
+		// An anchor is not a lifecycle step, but it is still strictly ordered:
+		// it carries the sequence the command it marks will use, which is the
+		// next sequence in this session. Exactly one anchor may wait for its
+		// command, and the anchor never advances lastHookSequence - the command
+		// start consumes the sequence instead.
+		if p.Sequence == 0 || d.pendingAnchor != nil {
+			return nil, false
+		}
+		if p.Sequence <= d.lastHookSequence || p.Sequence != d.lastHookSequence+1 {
+			return nil, false
+		}
+	} else if p.Sequence != 0 {
 		if p.Sequence <= sequence {
 			return nil, false
 		}
 		sequence = p.Sequence
 	}
-	e := IntegrationEvent{ProtocolVersion: p.Version, SessionEpoch: epoch, HookSequence: p.Sequence, CommandID: p.ID, Command: command, Cwd: cwd, ExitCode: p.ExitCode, Success: p.Success, Shell: p.Shell, ShellVersion: p.ShellVersion, AnchorNonce: p.AnchorNonce, AnchorPhase: p.AnchorPhase, RuntimeHostID: p.HostID, RuntimeRunspaceID: p.RunspaceID}
+	// Every frame that arrives on the PTY stream belongs to the in-band
+	// authority. Identity is SessionEpoch + HookSequence + CommandID; the
+	// hostId/runspaceId fields exist for the hosted producer and are never
+	// taken from an in-band frame, so the terminal integration cannot claim
+	// hosted identity.
+	e := IntegrationEvent{Authority: AuthorityTerminalOSC, ProtocolVersion: p.Version, SessionEpoch: epoch, HookSequence: p.Sequence, CommandID: p.ID, Command: command, Cwd: cwd, ExitCode: p.ExitCode, Success: p.Success, Shell: p.Shell, ShellVersion: p.ShellVersion, AnchorNonce: p.AnchorNonce, AnchorPhase: p.AnchorPhase}
 	switch kind {
 	case "C":
 		if d.activeCommandID != "" {
 			// A newer C in the same epoch is a deterministic recovery fence.
-			events = append(events, IntegrationEvent{Kind: EventCommandAborted, SessionEpoch: d.sessionEpoch, CommandID: d.activeCommandID, CompletionReason: "superseded"})
+			events = append(events, IntegrationEvent{Kind: EventCommandAborted, Authority: AuthorityTerminalOSC, SessionEpoch: d.sessionEpoch, CommandID: d.activeCommandID, CompletionReason: "superseded"})
 			d.activeCommandID = ""
 		}
 		if e.CommandID == "" {
 			e.CommandID = generatedCommandID(epoch, p.Sequence)
 		}
 		e.Kind = EventCommandStarted
+		// Only a matching pending anchor belongs to this command, and it is
+		// consumed exactly here - a command start is the one frame that may take
+		// an anchor. A command that carries a nonce without a matching pending
+		// anchor does not keep it: an anchor must have been observed first, and
+		// it can never be confirmed twice.
+		if anchor := d.pendingAnchor; anchor != nil &&
+			anchor.sessionEpoch == epoch &&
+			anchor.sequence == p.Sequence &&
+			(anchor.commandID == "" || anchor.commandID == e.CommandID) &&
+			(anchor.nonce == p.AnchorNonce || p.AnchorNonce == "") {
+			e.AnchorNonce = anchor.nonce
+		} else {
+			e.AnchorNonce = ""
+		}
+		d.pendingAnchor = nil
 	case "D":
 		if d.activeCommandID == "" {
 			return nil, false
@@ -226,7 +274,7 @@ func (d *Decoder) decodeFrame(frame string) ([]IntegrationEvent, bool) {
 		e.Kind = EventCommandFinished
 	case "P":
 		if d.activeCommandID != "" {
-			events = append(events, IntegrationEvent{Kind: EventCommandAborted, SessionEpoch: d.sessionEpoch, CommandID: d.activeCommandID, CompletionReason: "missing_finish"})
+			events = append(events, IntegrationEvent{Kind: EventCommandAborted, Authority: AuthorityTerminalOSC, SessionEpoch: d.sessionEpoch, CommandID: d.activeCommandID, CompletionReason: "missing_finish"})
 			d.activeCommandID = ""
 		}
 		e.Kind = EventPromptReady
@@ -234,6 +282,23 @@ func (d *Decoder) decodeFrame(frame string) ([]IntegrationEvent, bool) {
 		e.Kind = EventShellMetadata
 	case "B":
 		e.Kind = EventVisualAnchor
+		// A mark that names a hosted process and runspace is the hosted runtime's
+		// own anchor. The claim is recorded as an anchor claim only - it is not
+		// command provenance and it authorizes nothing by itself: the anchor
+		// registry still requires the authenticated confirmation of the same
+		// authority, naming the same identity, to bind this mark.
+		if p.HostID != "" && p.RunspaceID != "" {
+			e.AnchorHostID = p.HostID
+			e.AnchorRunspaceID = p.RunspaceID
+		}
+		// The anchor waits for the command start that consumes it. It carries no
+		// nonce of its own beyond the pending record, and any other lifecycle
+		// frame ends its usefulness (a start that never came means the anchor
+		// must not attach to a later command).
+		d.pendingAnchor = &pendingAnchor{sessionEpoch: epoch, sequence: p.Sequence, commandID: p.ID, nonce: p.AnchorNonce}
+	}
+	if kind != "B" && kind != "C" {
+		d.pendingAnchor = nil
 	}
 	d.sessionEpoch = epoch
 	d.lastHookSequence = sequence

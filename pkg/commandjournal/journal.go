@@ -58,6 +58,7 @@ type CommandRecord struct {
 	ID                     string
 	WaveBlockID            string
 	SessionEpoch           string
+	Authority              terminalruntime.Authority
 	StartHookSequence      uint64
 	FinishHookSequence     uint64
 	Command                string
@@ -106,6 +107,9 @@ func (j *Journal) MarkOutputIncomplete(blockID string, droppedBytes int64) {
 	if j == nil || blockID == "" {
 		return
 	}
+	gate := j.blockGate(blockID)
+	gate.Lock()
+	defer gate.Unlock()
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	active := j.active[blockID]
@@ -127,27 +131,36 @@ func (j *Journal) MarkOutputIncomplete(blockID string, droppedBytes int64) {
 	active.OutputTextSafety = OutputTextSafetyUnknown
 }
 
-type generationTransition struct {
-	token    uint64
-	activeID string
-}
-
 type Journal struct {
-	mu             sync.RWMutex
-	completed      map[string][]CommandRecord
-	active         map[string]*CommandRecord
-	pending        map[string]string
-	durable        DurableStore
-	generation     map[string]uint64
-	outputLimit    int64
-	transitions    map[string]generationTransition
+	mu          sync.RWMutex
+	completed   map[string][]CommandRecord
+	active      map[string]*CommandRecord
+	pending     map[string]string
+	durable     DurableStore
+	generation  map[string]uint64
+	outputLimit int64
+	// gates linearize lifecycle application, aborts, visibility transactions and deletes per
+	// block. They are held outside j.mu, which only protects the in-memory structures.
+	gates   map[string]*sync.Mutex
+	gatesMu sync.Mutex
+
 	nextTransition uint64
 	reconcileHook  func()
 	visualAnchors  *VisualAnchorRegistry
+	// authority latches the command authority of the current block session.
+	// One session has exactly one authority; a start event claiming the other
+	// authority for the same session is refused.
+	authority map[string]authorityLatch
+}
+
+// authorityLatch remembers which producer owns command lifecycle for a session.
+type authorityLatch struct {
+	sessionEpoch string
+	authority    terminalruntime.Authority
 }
 
 func New() *Journal {
-	return &Journal{completed: make(map[string][]CommandRecord), active: make(map[string]*CommandRecord), pending: make(map[string]string), generation: make(map[string]uint64), outputLimit: 10 * 1024 * 1024, transitions: make(map[string]generationTransition)}
+	return &Journal{completed: make(map[string][]CommandRecord), active: make(map[string]*CommandRecord), pending: make(map[string]string), generation: make(map[string]uint64), outputLimit: 10 * 1024 * 1024, gates: make(map[string]*sync.Mutex), authority: make(map[string]authorityLatch)}
 }
 
 func (j *Journal) SetOutputLimit(limit int64) {
@@ -171,6 +184,9 @@ func (j *Journal) SetVisibilityGeneration(blockID string, generation uint64) {
 	if j == nil || blockID == "" {
 		return
 	}
+	gate := j.blockGate(blockID)
+	gate.Lock()
+	defer gate.Unlock()
 	j.mu.Lock()
 	j.generation[blockID] = generation
 	j.mu.Unlock()
@@ -194,11 +210,16 @@ func (j *Journal) Apply(blockID string, item terminalruntime.StreamItem, observe
 	if j == nil || blockID == "" {
 		return false
 	}
+	// Lifecycle and output mutation linearize with visibility transactions for this block.
+	gate := j.blockGate(blockID)
+	gate.Lock()
+	defer gate.Unlock()
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	if observedAt.IsZero() {
 		observedAt = time.Now()
 	}
+
 	switch item.Kind {
 	case terminalruntime.StreamOutputSegment:
 		active := j.active[blockID]
@@ -248,6 +269,12 @@ func (j *Journal) Apply(blockID string, item terminalruntime.StreamItem, observe
 			if j.active[blockID] != nil || event.CommandID == "" || event.SessionEpoch == "" || event.HookSequence == 0 {
 				return false
 			}
+			// The authority is an explicit claim, and one session has exactly one.
+			// A start claiming the other authority for a session that already
+			// latched one is refused rather than merged.
+			if !event.Authority.Valid() || !j.acceptAuthorityLocked(blockID, event.SessionEpoch, event.Authority) {
+				return false
+			}
 			// A valid new command is a liveness fence for a previous execution
 			// whose output attribution was never proven. Malformed events must
 			// not change that pending state.
@@ -257,14 +284,22 @@ func (j *Journal) Apply(blockID string, item terminalruntime.StreamItem, observe
 			if mode == "" {
 				mode = terminalruntime.ExecutionModeUnknown
 			}
+			// The output source must be one the authority may own: an in-band
+			// integration can never own sidechannel bytes. The producer's claim
+			// wins when it makes one, otherwise the authority's default applies.
 			source := event.OutputSource
-			if source == "" {
-				source = terminalruntime.OutputSourceUnknown
+			if source == "" || source == terminalruntime.OutputSourceUnknown {
+				source = event.Authority.DefaultOutputSource()
 			}
+			if !event.Authority.AllowsOutputSource(source) {
+				return false
+			}
+
 			j.active[blockID] = &CommandRecord{
 				ID:                     event.CommandID,
 				WaveBlockID:            blockID,
 				SessionEpoch:           event.SessionEpoch,
+				Authority:              event.Authority,
 				StartHookSequence:      event.HookSequence,
 				Command:                event.Command,
 				Cwd:                    event.Cwd,
@@ -289,6 +324,10 @@ func (j *Journal) Apply(blockID string, item terminalruntime.StreamItem, observe
 		case terminalruntime.EventCommandFinished:
 			active := j.active[blockID]
 			if active == nil || event.CommandID != active.ID || event.SessionEpoch != active.SessionEpoch || event.HookSequence == 0 || event.Success == nil || event.ExitCode == nil {
+				return false
+			}
+			// Only the authority that opened the record may close it.
+			if !event.Authority.Valid() || event.Authority != active.Authority {
 				return false
 			}
 			finishedAt := observedAt
@@ -342,14 +381,59 @@ func (j *Journal) Apply(blockID string, item terminalruntime.StreamItem, observe
 			}
 			return true
 		case terminalruntime.EventCommandAborted:
+			if !event.Authority.Valid() {
+				return false
+			}
+			if active := j.active[blockID]; active != nil && active.Authority != event.Authority {
+				return false
+			}
 			return j.abortActiveLocked(blockID, CompletionReason(event.CompletionReason), observedAt, event.CommandID, event.SessionEpoch)
 		case terminalruntime.EventPromptReady:
-			// For a finished execution P is only a liveness fence; it is not
-			// proof that PTY output was drained.
-			return j.finalizePendingLocked(blockID)
+			// A prompt is proof the shell moved on. If a command is still active
+			// from the same authority - an interrupted command whose D never
+			// arrived, for instance - it closes here, once, without inventing a
+			// result. For a finished execution P is only a liveness fence; it is
+			// not proof that PTY output was drained.
+			if !event.Authority.Valid() {
+				return false
+			}
+			closedActive := false
+			if active := j.active[blockID]; active != nil && active.Authority == event.Authority && active.SessionEpoch == event.SessionEpoch && (event.HookSequence == 0 || event.HookSequence > active.StartHookSequence) {
+				closedActive = j.abortActiveLocked(blockID, CompletionMissingFinish, observedAt, active.ID, active.SessionEpoch)
+			}
+			return j.finalizePendingLocked(blockID) || closedActive
 		}
 	}
 	return false
+}
+
+// acceptAuthorityLocked latches the command authority of a block session.
+//
+// A session (identified by its SessionEpoch) has exactly one authority: the
+// first accepted start claims it, and a later start claiming the other
+// authority for the same session is refused. A new SessionEpoch is a new shell
+// session and may legitimately use a different authority, so the latch is
+// replaced rather than kept forever.
+func (j *Journal) acceptAuthorityLocked(blockID string, sessionEpoch string, authority terminalruntime.Authority) bool {
+	if !authority.Valid() || sessionEpoch == "" {
+		return false
+	}
+	latch, ok := j.authority[blockID]
+	if ok && latch.sessionEpoch == sessionEpoch {
+		return latch.authority == authority
+	}
+	j.authority[blockID] = authorityLatch{sessionEpoch: sessionEpoch, authority: authority}
+	return true
+}
+
+// Authority reports the latched authority for a block, if a session has claimed one.
+func (j *Journal) Authority(blockID string) terminalruntime.Authority {
+	if j == nil {
+		return terminalruntime.AuthorityUnknown
+	}
+	j.mu.RLock()
+	defer j.mu.RUnlock()
+	return j.authority[blockID].authority
 }
 
 func (j *Journal) appendOutputLocked(record *CommandRecord, output []byte) {
@@ -411,6 +495,9 @@ func (j *Journal) AbortActive(blockID string, reason CompletionReason, observedA
 	if j == nil || blockID == "" || !validAbortReason(reason) {
 		return false
 	}
+	gate := j.blockGate(blockID)
+	gate.Lock()
+	defer gate.Unlock()
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	return j.abortActiveLocked(blockID, reason, observedAt, "", "")
@@ -481,10 +568,19 @@ func (j *Journal) completedRecordLocked(blockID, id string) *CommandRecord {
 
 // ClearVisualHistory advances the durable visibility generation without
 // changing the shell, PTY, decoder, or command identity.
+//
+// The running snapshot and the generation advance share one critical section, so an
+// event applied afterwards belongs to the new generation and can never be reported as
+// idle by this answer. Callers that only need the generation read .Generation.
 func (j *Journal) ClearVisualHistory(blockID string) (uint64, error) {
 	if j == nil || blockID == "" {
 		return 0, nil
 	}
+	// One gate per block: a command start/finish, an abort, another Clear or a delete for the
+	// same block cannot interleave with this transaction. Other blocks are unaffected.
+	gate := j.blockGate(blockID)
+	gate.Lock()
+	defer gate.Unlock()
 	j.mu.RLock()
 	durable := j.durable
 	activeID := ""
@@ -493,63 +589,72 @@ func (j *Journal) ClearVisualHistory(blockID string) (uint64, error) {
 	}
 	j.mu.RUnlock()
 	if durable == nil {
-		j.mu.Lock()
-		generation := j.generation[blockID] + 1
-		j.generation[blockID] = generation
-		if active := j.active[blockID]; active != nil {
-			active.VisibilityGeneration = generation
-		}
-		anchors := j.visualAnchors
-		j.mu.Unlock()
-		if anchors != nil {
-			anchors.Invalidate()
-		}
-		return generation, nil
+		result := j.commitVisibility(blockID, 0, activeID)
+		j.invalidateAnchors()
+		return result, nil
 	}
-	j.mu.Lock()
-	j.nextTransition++
-	transition := generationTransition{token: j.nextTransition, activeID: activeID}
-	j.transitions[blockID] = transition
-	j.mu.Unlock()
 	generation, err := durable.AdvanceVisibilityGeneration(blockID)
 	if err != nil {
-		j.mu.Lock()
-		if j.transitions[blockID].token == transition.token {
-			delete(j.transitions, blockID)
-		}
-		j.mu.Unlock()
 		return 0, err
 	}
 	if j.reconcileHook != nil {
 		j.reconcileHook()
 	}
+	// The durable transaction is the commit point: it advanced the generation and retagged the
+	// block's running rows atomically, so the memory commit below adds no failing I/O and there
+	// is no window in which the durable side is half-committed.
+	result := j.commitVisibility(blockID, generation, activeID)
+	j.invalidateAnchors()
+	return result, nil
+}
+
+// commitVisibility advances the in-memory generation and moves the records that were live
+// when the transaction started into it. Records completed before the transaction keep their
+// old generation, which is what hides them.
+func (j *Journal) commitVisibility(blockID string, durableGeneration uint64, activeID string) uint64 {
 	j.mu.Lock()
-	if generation > j.generation[blockID] {
-		j.generation[blockID] = generation
+	defer j.mu.Unlock()
+	generation := j.generation[blockID] + 1
+	if durableGeneration > generation {
+		generation = durableGeneration
 	}
+	j.generation[blockID] = generation
 	if active := j.active[blockID]; active != nil {
-		active.VisibilityGeneration = j.generation[blockID]
+		active.VisibilityGeneration = generation
 	}
 	for i := range j.completed[blockID] {
-		if j.completed[blockID][i].ID == transition.activeID {
-			j.completed[blockID][i].VisibilityGeneration = j.generation[blockID]
+		record := &j.completed[blockID][i]
+		if activeID != "" && record.ID == activeID {
+			record.VisibilityGeneration = generation
 		}
 	}
-	if j.transitions[blockID].token == transition.token {
-		delete(j.transitions, blockID)
-	}
-	result := j.generation[blockID]
+	return generation
+}
+
+// invalidateAnchors drops the presentation-only anchors outside the journal lock.
+func (j *Journal) invalidateAnchors() {
+	j.mu.RLock()
 	anchors := j.visualAnchors
-	j.mu.Unlock()
+	j.mu.RUnlock()
 	if anchors != nil {
 		anchors.Invalidate()
 	}
-	if transition.activeID != "" {
-		if err := durable.RetagRecordGeneration(transition.activeID, result); err != nil {
-			return 0, err
-		}
+}
+
+// blockGate returns the per-block gate. Everything that changes a block's lifecycle or its
+// visibility linearizes through it, and it is always taken outside j.mu.
+func (j *Journal) blockGate(blockID string) *sync.Mutex {
+	j.gatesMu.Lock()
+	defer j.gatesMu.Unlock()
+	if j.gates == nil {
+		j.gates = make(map[string]*sync.Mutex)
 	}
-	return result, nil
+	gate := j.gates[blockID]
+	if gate == nil {
+		gate = &sync.Mutex{}
+		j.gates[blockID] = gate
+	}
+	return gate
 }
 
 // DeleteHistory physically removes completed history while preserving an
@@ -558,6 +663,9 @@ func (j *Journal) DeleteHistory(blockID string) error {
 	if j == nil || blockID == "" {
 		return nil
 	}
+	gate := j.blockGate(blockID)
+	gate.Lock()
+	defer gate.Unlock()
 	j.mu.RLock()
 	durable := j.durable
 	activeID := ""
@@ -565,20 +673,9 @@ func (j *Journal) DeleteHistory(blockID string) error {
 		activeID = active.ID
 	}
 	j.mu.RUnlock()
-	var transition generationTransition
 	if durable != nil {
-		j.mu.Lock()
-		j.nextTransition++
-		transition = generationTransition{token: j.nextTransition, activeID: activeID}
-		j.transitions[blockID] = transition
-		j.mu.Unlock()
 		generation, err := durable.DeleteHistory(blockID)
 		if err != nil {
-			j.mu.Lock()
-			if j.transitions[blockID].token == transition.token {
-				delete(j.transitions, blockID)
-			}
-			j.mu.Unlock()
 			return err
 		}
 		if j.reconcileHook != nil {
@@ -601,26 +698,16 @@ func (j *Journal) DeleteHistory(blockID string) error {
 			}
 		}
 		j.completed[blockID] = preserved
-		if j.transitions[blockID].token == transition.token {
-			delete(j.transitions, blockID)
-		}
 	} else {
 		j.completed[blockID] = nil
 	}
 	if active := j.active[blockID]; active != nil {
 		active.VisibilityGeneration = j.generation[blockID]
 	}
-	resultGeneration := j.generation[blockID]
-	anchors := j.visualAnchors
 	j.mu.Unlock()
-	if anchors != nil {
-		anchors.Invalidate()
-	}
-	if durable != nil && activeID != "" {
-		if err := durable.RetagRecordGeneration(activeID, resultGeneration); err != nil {
-			return err
-		}
-	}
+	j.invalidateAnchors()
+	// The durable delete already retagged the running rows inside its own transaction, so there
+	// is no second durable call here: a failure after the commit point cannot exist.
 	return nil
 }
 

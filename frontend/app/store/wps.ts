@@ -127,6 +127,16 @@ function getFileSubject(zoneId: string, fileName: string): SubjectWithRef<WSFile
     return subject;
 }
 
+/**
+ * Publishes to the file subject of a zone/file pair without taking a reference. Publishing is a
+ * delivery, not ownership: creating or refCounting a subject just to send it one event leaks the
+ * reference count and keeps the subject (and its file) alive forever.
+ */
+function publishFileSubject(zoneId: string, fileName: string, data: WSFileEventData) {
+    const subject = fileSubjects.get(zoneId + "|" + fileName);
+    subject?.next(data);
+}
+
 function handleWaveEvent(event: WaveEvent) {
     // console.log("handleWaveEvent", event);
     const subjects = waveEventSubjects.get(event.event);
@@ -149,6 +159,7 @@ function handleWaveEvent(event: WaveEvent) {
 
 export {
     getFileSubject,
+    publishFileSubject,
     handleWaveEvent,
     setWpsRpcClient,
     waveEventSubscribeSingle,

@@ -25,6 +25,7 @@ func testAnchorEvent(nonce string, sequence uint64) terminalruntime.IntegrationE
 func testConfirmation(nonce string, sequence uint64) VisualAnchorConfirmation {
 	return VisualAnchorConfirmation{
 		BlockID:      "block-1",
+		Authority:    terminalruntime.AuthorityHostedSidechannel,
 		SessionEpoch: "epoch-1",
 		HookSequence: sequence,
 		CommandID:    "command-1",

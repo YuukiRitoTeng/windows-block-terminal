@@ -435,8 +435,8 @@ func boolInt(v *bool) any {
 func (s *Store) insertStarted(r commandjournal.CommandRecord) error {
 	return s.withTx(func(tx *sql.Tx) error {
 		_, err := tx.Exec(`INSERT INTO command_records
-			(id,wave_block_id,session_epoch,protocol_version,start_hook_sequence,finish_hook_sequence,command,cwd,state,completion_reason,started_at_ms,visibility_generation,output_completeness,output_attribution,output_text_safety,output_state,execution_mode,output_source,runtime_host_id,runtime_runspace_id,capture_contract_version)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, r.ID, r.WaveBlockID, r.SessionEpoch, protocolVersion(r), r.StartHookSequence, 0, r.Command, r.Cwd, string(r.State), string(r.CompletionReason), r.StartedAt.UnixMilli(), r.VisibilityGeneration, outputCompleteness(r), outputAttribution(r), outputTextSafety(r), outputState(r), executionMode(r), outputSource(r), r.RuntimeHostID, r.RuntimeRunspaceID, captureContractVersion(r))
+			(id,wave_block_id,session_epoch,protocol_version,start_hook_sequence,finish_hook_sequence,command,cwd,state,completion_reason,started_at_ms,visibility_generation,output_completeness,output_attribution,output_text_safety,output_state,execution_mode,output_source,runtime_host_id,runtime_runspace_id,capture_contract_version,authority)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, r.ID, r.WaveBlockID, r.SessionEpoch, protocolVersion(r), r.StartHookSequence, 0, r.Command, r.Cwd, string(r.State), string(r.CompletionReason), r.StartedAt.UnixMilli(), r.VisibilityGeneration, outputCompleteness(r), outputAttribution(r), outputTextSafety(r), outputState(r), executionMode(r), outputSource(r), r.RuntimeHostID, r.RuntimeRunspaceID, captureContractVersion(r), authority(r))
 		return err
 	})
 }
@@ -446,6 +446,13 @@ func protocolVersion(r commandjournal.CommandRecord) int {
 		return r.ProtocolVersion
 	}
 	return 1
+}
+
+func authority(r commandjournal.CommandRecord) string {
+	if r.Authority.Valid() {
+		return string(r.Authority)
+	}
+	return string(terminalruntime.AuthorityUnknown)
 }
 
 func captureContractVersion(r commandjournal.CommandRecord) int {
@@ -746,6 +753,13 @@ func (s *Store) advanceGeneration(blockID string) (uint64, error) {
 	return generation, err
 }
 
+// AdvanceVisibilityGenerationWithActivity advances the visibility generation and reports,
+// inside the same transaction, whether the block still holds an unfinished command. The
+// sample and the advance therefore share one consistency boundary: a command that starts
+// after the transaction belongs to the new generation and is never reported as idle.
+
+// advanceGenerationWithActivity runs inside the FIFO writer.
+
 func (s *Store) DeleteHistory(blockID string) (uint64, error) {
 	if s == nil || s.db == nil {
 		return 1, nil
@@ -814,10 +828,10 @@ func (s *Store) ReadRecord(commandID string) (*commandjournal.CommandRecord, err
 	var protocol int
 	var started, finished sql.NullInt64
 	var success, exit sql.NullInt64
-	var state, reason, mode, source, hostID, runspaceID string
+	var state, reason, mode, source, hostID, runspaceID, authority string
 	var captureContract int
 	var truncated int
-	err := s.db.QueryRow(`SELECT id,wave_block_id,session_epoch,protocol_version,start_hook_sequence,finish_hook_sequence,command,cwd,state,completion_reason,started_at_ms,finished_at_ms,success,exit_code,visibility_generation,output_total_bytes,output_stored_bytes,output_truncated,output_completeness,output_attribution,output_text_safety,output_state,execution_mode,output_source,runtime_host_id,runtime_runspace_id,capture_contract_version FROM command_records WHERE id=?`, commandID).Scan(&r.ID, &r.WaveBlockID, &r.SessionEpoch, &protocol, &r.StartHookSequence, &r.FinishHookSequence, &r.Command, &r.Cwd, &state, &reason, &started, &finished, &success, &exit, &r.VisibilityGeneration, &r.OutputTotalBytes, &r.OutputStoredBytes, &truncated, &r.OutputCompleteness, &r.OutputAttribution, &r.OutputTextSafety, &r.OutputState, &mode, &source, &hostID, &runspaceID, &captureContract)
+	err := s.db.QueryRow(`SELECT id,wave_block_id,session_epoch,protocol_version,start_hook_sequence,finish_hook_sequence,command,cwd,state,completion_reason,started_at_ms,finished_at_ms,success,exit_code,visibility_generation,output_total_bytes,output_stored_bytes,output_truncated,output_completeness,output_attribution,output_text_safety,output_state,execution_mode,output_source,runtime_host_id,runtime_runspace_id,capture_contract_version,authority FROM command_records WHERE id=?`, commandID).Scan(&r.ID, &r.WaveBlockID, &r.SessionEpoch, &protocol, &r.StartHookSequence, &r.FinishHookSequence, &r.Command, &r.Cwd, &state, &reason, &started, &finished, &success, &exit, &r.VisibilityGeneration, &r.OutputTotalBytes, &r.OutputStoredBytes, &truncated, &r.OutputCompleteness, &r.OutputAttribution, &r.OutputTextSafety, &r.OutputState, &mode, &source, &hostID, &runspaceID, &captureContract, &authority)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -833,6 +847,7 @@ func (s *Store) ReadRecord(commandID string) (*commandjournal.CommandRecord, err
 	r.RuntimeHostID = hostID
 	r.RuntimeRunspaceID = runspaceID
 	r.CaptureContractVersion = captureContract
+	r.Authority = terminalruntime.Authority(authority)
 	r.StartedAt = time.UnixMilli(started.Int64)
 	if finished.Valid {
 		v := time.UnixMilli(finished.Int64)
@@ -911,7 +926,7 @@ func (s *Store) ReadVisibleRecords(blockID string) ([]commandjournal.CommandReco
 	if s == nil || s.db == nil {
 		return nil, nil
 	}
-	rows, err := s.db.Queryx(`SELECT id,wave_block_id,session_epoch,protocol_version,start_hook_sequence,finish_hook_sequence,command,cwd,state,completion_reason,started_at_ms,finished_at_ms,success,exit_code,visibility_generation,output_total_bytes,output_stored_bytes,output_truncated,output_completeness,output_attribution,output_text_safety,output_state,execution_mode,output_source,runtime_host_id,runtime_runspace_id,capture_contract_version FROM command_records WHERE wave_block_id=? AND visibility_generation=COALESCE((SELECT current_visibility_generation FROM journal_state WHERE wave_block_id=?),0) ORDER BY started_at_ms DESC, id DESC LIMIT ?`, blockID, blockID, DefaultVisibleRecordLimit)
+	rows, err := s.db.Queryx(`SELECT id,wave_block_id,session_epoch,protocol_version,start_hook_sequence,finish_hook_sequence,command,cwd,state,completion_reason,started_at_ms,finished_at_ms,success,exit_code,visibility_generation,output_total_bytes,output_stored_bytes,output_truncated,output_completeness,output_attribution,output_text_safety,output_state,execution_mode,output_source,runtime_host_id,runtime_runspace_id,capture_contract_version,authority FROM command_records WHERE wave_block_id=? AND visibility_generation=COALESCE((SELECT current_visibility_generation FROM journal_state WHERE wave_block_id=?),0) ORDER BY started_at_ms DESC, id DESC LIMIT ?`, blockID, blockID, DefaultVisibleRecordLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -922,10 +937,10 @@ func (s *Store) ReadVisibleRecords(blockID string) ([]commandjournal.CommandReco
 		var protocol int
 		var started, finished sql.NullInt64
 		var success, exit sql.NullInt64
-		var state, reason, mode, source, hostID, runspaceID string
+		var state, reason, mode, source, hostID, runspaceID, authority string
 		var captureContract int
 		var truncated int
-		if err := rows.Scan(&r.ID, &r.WaveBlockID, &r.SessionEpoch, &protocol, &r.StartHookSequence, &r.FinishHookSequence, &r.Command, &r.Cwd, &state, &reason, &started, &finished, &success, &exit, &r.VisibilityGeneration, &r.OutputTotalBytes, &r.OutputStoredBytes, &truncated, &r.OutputCompleteness, &r.OutputAttribution, &r.OutputTextSafety, &r.OutputState, &mode, &source, &hostID, &runspaceID, &captureContract); err != nil {
+		if err := rows.Scan(&r.ID, &r.WaveBlockID, &r.SessionEpoch, &protocol, &r.StartHookSequence, &r.FinishHookSequence, &r.Command, &r.Cwd, &state, &reason, &started, &finished, &success, &exit, &r.VisibilityGeneration, &r.OutputTotalBytes, &r.OutputStoredBytes, &truncated, &r.OutputCompleteness, &r.OutputAttribution, &r.OutputTextSafety, &r.OutputState, &mode, &source, &hostID, &runspaceID, &captureContract, &authority); err != nil {
 			return nil, err
 		}
 		r.OutputTruncated = truncated != 0
@@ -937,6 +952,7 @@ func (s *Store) ReadVisibleRecords(blockID string) ([]commandjournal.CommandReco
 		r.RuntimeHostID = hostID
 		r.RuntimeRunspaceID = runspaceID
 		r.CaptureContractVersion = captureContract
+		r.Authority = terminalruntime.Authority(authority)
 		r.StartedAt = time.UnixMilli(started.Int64)
 		if finished.Valid {
 			v := time.UnixMilli(finished.Int64)

@@ -164,6 +164,7 @@ func (sc *ShellController) attachCommandJournal() {
 	sc.journalMu.Unlock()
 	anchorRegistry := commandjournal.NewVisualAnchorRegistry(sc.BlockId)
 	observer := commandjournal.NewRuntimeObserver(sc.BlockId, journal, anchorRegistry)
+
 	hostedObserver := commandjournal.NewHostedRuntimeConsumer(sc.BlockId, journal, anchorRegistry)
 	unregister := RegisterOutputObserver(sc.BlockId, observer)
 	if !sc.commitCommandJournalAttachment(journal, anchorRegistry, observer, hostedObserver, unregister) {
@@ -276,6 +277,7 @@ func (sc *ShellController) SendInput(inputUnion *BlockInputUnion) error {
 	if shellInputCh == nil {
 		return fmt.Errorf("no shell input chan")
 	}
+
 	shellInputCh <- inputUnion
 	return nil
 }

@@ -94,12 +94,12 @@ func TestRecorderOverflowIsNotReportedAsComplete(t *testing.T) {
 	j := commandjournal.New()
 	j.SetDurableStore(store)
 	start := commandjournal.CommandRecord{ID: "cmd-incomplete", WaveBlockID: "block-incomplete", SessionEpoch: "epoch", StartHookSequence: 1, Command: "echo", Cwd: "C:\\", State: commandjournal.StateRunning, StartedAt: time.Now()}
-	if !j.Apply("block-incomplete", terminalruntime.StreamItem{Kind: terminalruntime.StreamIntegrationEvent, Event: terminalruntime.IntegrationEvent{Kind: terminalruntime.EventCommandStarted, SessionEpoch: start.SessionEpoch, HookSequence: 1, CommandID: start.ID, Command: start.Command, Cwd: start.Cwd}}, time.Now()) {
+	if !j.Apply("block-incomplete", terminalruntime.StreamItem{Kind: terminalruntime.StreamIntegrationEvent, Event: terminalruntime.IntegrationEvent{Kind: terminalruntime.EventCommandStarted, Authority: terminalruntime.AuthorityTerminalOSC, SessionEpoch: start.SessionEpoch, HookSequence: 1, CommandID: start.ID, Command: start.Command, Cwd: start.Cwd}}, time.Now()) {
 		t.Fatal("start not recorded")
 	}
 	j.Apply("block-incomplete", terminalruntime.StreamItem{Kind: terminalruntime.StreamOutputSegment, Output: []byte("overflow")}, time.Now())
 	success, code := true, 0
-	if !j.Apply("block-incomplete", terminalruntime.StreamItem{Kind: terminalruntime.StreamIntegrationEvent, Event: terminalruntime.IntegrationEvent{Kind: terminalruntime.EventCommandFinished, SessionEpoch: start.SessionEpoch, HookSequence: 2, CommandID: start.ID, Success: &success, ExitCode: &code}}, time.Now()) {
+	if !j.Apply("block-incomplete", terminalruntime.StreamItem{Kind: terminalruntime.StreamIntegrationEvent, Event: terminalruntime.IntegrationEvent{Kind: terminalruntime.EventCommandFinished, Authority: terminalruntime.AuthorityTerminalOSC, SessionEpoch: start.SessionEpoch, HookSequence: 2, CommandID: start.ID, Success: &success, ExitCode: &code}}, time.Now()) {
 		t.Fatal("finish not recorded")
 	}
 	if err := store.Flush(); !errors.Is(err, persistence.ErrOutputQueueOverflow) {
@@ -112,3 +112,5 @@ func TestRecorderOverflowIsNotReportedAsComplete(t *testing.T) {
 }
 
 func ptrTime(value time.Time) *time.Time { return &value }
+
+// The durable-only path (no attached journal) must not answer with the zero value: a

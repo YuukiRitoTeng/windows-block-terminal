@@ -6,9 +6,16 @@ Structured lifecycle/output events are sent over a loopback TCP sidechannel auth
 
 ## Runtime activation
 
-Packaged Windows builds and development launches behave differently.
+The hosted runtime is opt-in. The default local PowerShell is the external `pwsh` with the shell
+integration (native prompt, `terminal-osc` command authority).
 
 ### Packaged Windows build
+
+Select the hosted runtime explicitly:
+
+```text
+WBT_HOSTED_PWSH=1
+```
 
 When the packaged resource exists at:
 
@@ -16,16 +23,9 @@ When the packaged resource exists at:
 hostedpwsh/win-x64/WbtHostedPowerShell.exe
 ```
 
-`emain/emain-wavesrv.ts` automatically supplies:
-
-```text
-WBT_HOSTED_PWSH=1
-WBT_HOSTED_PWSH_EXE=<packaged executable path>
-```
-
-unless `WBT_HOSTED_PWSH` was already supplied by the environment.
-
-This packaged-resource auto-enable behavior is an implementation detail, not a permanent rollout-policy invariant.
+`emain/emain-wavesrv.ts` supplies `WBT_HOSTED_PWSH_EXE=<packaged executable path>` as the default
+executable for that opt-in, unless the environment already names one. The application never sets
+`WBT_HOSTED_PWSH` itself, so an unset variable keeps the native path.
 
 ### Development / unpackaged launch
 
@@ -37,7 +37,7 @@ $env:WBT_HOSTED_PWSH_EXE = "C:\path\to\WbtHostedPowerShell.exe"
 task dev
 ```
 
-If these variables are omitted and no packaged hosted-runtime resource is present, the launch may use the non-hosted Wave PowerShell path. Do not treat that mode as valid Product Evidence for structured Command Cards.
+If these variables are omitted the launch uses the default non-hosted PowerShell integration path. Do not treat that mode as valid Product Evidence for structured Command Cards.
 
 ## Architecture boundary
 

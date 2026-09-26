@@ -56,7 +56,7 @@ func journalEvent(kind terminalruntime.EventKind, id string, seq uint64) termina
 	success := true
 	exitCode := 0
 	return terminalruntime.StreamItem{Kind: terminalruntime.StreamIntegrationEvent, Event: terminalruntime.IntegrationEvent{
-		Kind: kind, SessionEpoch: "shell-epoch-456", HookSequence: seq, CommandID: id,
+		Kind: kind, Authority: terminalruntime.AuthorityTerminalOSC, SessionEpoch: "shell-epoch-456", HookSequence: seq, CommandID: id,
 		Command: "Write-Output one", Cwd: "C:\\tmp", Success: &success, ExitCode: &exitCode,
 	}}
 }
@@ -112,7 +112,7 @@ func TestJournalRunAExecutionAndOutputHaveSeparateCompletion(t *testing.T) {
 	if record.State != StateFinished || record.OutputState != OutputStatePending || record.OutputCompleteness != OutputCompletenessUnknown {
 		t.Fatalf("D changed output contract: %#v", record)
 	}
-	if !j.Apply(blockID, terminalruntime.StreamItem{Kind: terminalruntime.StreamIntegrationEvent, Event: terminalruntime.IntegrationEvent{Kind: terminalruntime.EventPromptReady}}, time.Now()) {
+	if !j.Apply(blockID, terminalruntime.StreamItem{Kind: terminalruntime.StreamIntegrationEvent, Event: terminalruntime.IntegrationEvent{Kind: terminalruntime.EventPromptReady, Authority: terminalruntime.AuthorityTerminalOSC}}, time.Now()) {
 		t.Fatal("prompt did not close pending output state")
 	}
 	record = j.Snapshot(blockID)[0]
@@ -127,7 +127,7 @@ func TestJournalRunBDoesNotAttributePostPromptBytes(t *testing.T) {
 	j.Apply(blockID, journalEvent(terminalruntime.EventCommandStarted, "cmd-b", 1), time.Now())
 	j.Apply(blockID, terminalruntime.StreamItem{Kind: terminalruntime.StreamOutputSegment, Output: []byte("\x1b[m")}, time.Now())
 	j.Apply(blockID, journalEvent(terminalruntime.EventCommandFinished, "cmd-b", 2), time.Now())
-	j.Apply(blockID, terminalruntime.StreamItem{Kind: terminalruntime.StreamIntegrationEvent, Event: terminalruntime.IntegrationEvent{Kind: terminalruntime.EventPromptReady}}, time.Now())
+	j.Apply(blockID, terminalruntime.StreamItem{Kind: terminalruntime.StreamIntegrationEvent, Event: terminalruntime.IntegrationEvent{Kind: terminalruntime.EventPromptReady, Authority: terminalruntime.AuthorityTerminalOSC}}, time.Now())
 	if j.Apply(blockID, terminalruntime.StreamItem{Kind: terminalruntime.StreamOutputSegment, Output: []byte("manual-success\r\nPS> ")}, time.Now()) {
 		t.Fatal("post-prompt bytes were attributed to the previous command")
 	}
@@ -295,7 +295,7 @@ func TestJournalAbortsWithoutFabricatingResult(t *testing.T) {
 		t.Fatal("output was not recorded")
 	}
 	if !j.Apply(blockID, terminalruntime.StreamItem{Kind: terminalruntime.StreamIntegrationEvent, Event: terminalruntime.IntegrationEvent{
-		Kind: terminalruntime.EventCommandAborted, CommandID: "cmd-1", SessionEpoch: "shell-epoch-456", CompletionReason: string(CompletionMissingFinish),
+		Kind: terminalruntime.EventCommandAborted, Authority: terminalruntime.AuthorityTerminalOSC, CommandID: "cmd-1", SessionEpoch: "shell-epoch-456", CompletionReason: string(CompletionMissingFinish),
 	}}, time.Now()) {
 		t.Fatal("abort was not recorded")
 	}
@@ -398,59 +398,10 @@ func TestRuntimeObserverKeepsForeignNestedLifecycleInsideOuterRecord(t *testing.
 	}
 }
 
-func TestClearDoesNotHoldJournalLockAcrossDurableAck(t *testing.T) {
-	j := New()
-	d := &blockingDurable{entered: make(chan struct{}), release: make(chan struct{})}
-	j.SetDurableStore(d)
-	done := make(chan struct{})
-	go func() { _, _ = j.ClearVisualHistory("b"); close(done) }()
-	<-d.entered
-	if !j.Apply("b", journalEvent(terminalruntime.EventCommandStarted, "c", 1), time.Now()) {
-		t.Fatal("journal lock was held during durable clear")
-	}
-	close(d.release)
-	<-done
-}
-
-func TestDeleteDoesNotHoldJournalLockAcrossDurableAck(t *testing.T) {
-	j := New()
-	d := &blockingDurable{entered: make(chan struct{}), release: make(chan struct{})}
-	j.SetDurableStore(d)
-	done := make(chan struct{})
-	go func() { _ = j.DeleteHistory("b"); close(done) }()
-	<-d.entered
-	if !j.Apply("b", journalEvent(terminalruntime.EventCommandStarted, "c", 1), time.Now()) {
-		t.Fatal("journal lock was held during durable delete")
-	}
-	close(d.release)
-	<-done
-}
-
-func TestClearFinishDuringReconciliationRetagsActiveCommand(t *testing.T) {
-	j := New()
-	d := &blockingDurable{entered: make(chan struct{}), release: make(chan struct{})}
-	j.SetDurableStore(d)
-	blockID := "clear-race"
-	j.Apply(blockID, journalEvent(terminalruntime.EventCommandStarted, "c1", 1), time.Now())
-	hookEntered, allow := make(chan struct{}), make(chan struct{})
-	j.reconcileHook = func() { close(hookEntered); <-allow }
-	done := make(chan struct{})
-	go func() { _, _ = j.ClearVisualHistory(blockID); close(done) }()
-	<-d.entered
-	close(d.release)
-	<-hookEntered
-	if !j.Apply(blockID, journalEvent(terminalruntime.EventCommandFinished, "c1", 2), time.Now()) {
-		t.Fatal("finish was not accepted during reconciliation")
-	}
-	close(allow)
-	<-done
-	records := j.VisibleSnapshot(blockID)
-	if len(records) != 1 || records[0].ID != "c1" || records[0].State != StateFinished || records[0].VisibilityGeneration != 1 {
-		t.Fatalf("clear race lost record or generation: %#v", records)
-	}
-}
-
-func TestDeleteFinishDuringReconciliationPreservesActiveCommand(t *testing.T) {
+// A delete holds the block gate for its whole transaction, so the live command's finish can
+// only land after it: the delete preserves that command, and the finish is then applied in the
+// generation the delete established.
+func TestDeletePreservesTheLiveCommandAcrossItsTransaction(t *testing.T) {
 	j := New()
 	d := &blockingDurable{entered: make(chan struct{}), release: make(chan struct{})}
 	j.SetDurableStore(d)
@@ -458,20 +409,27 @@ func TestDeleteFinishDuringReconciliationPreservesActiveCommand(t *testing.T) {
 	j.Apply(blockID, journalEvent(terminalruntime.EventCommandStarted, "old", 1), time.Now())
 	j.Apply(blockID, journalEvent(terminalruntime.EventCommandFinished, "old", 2), time.Now())
 	j.Apply(blockID, journalEvent(terminalruntime.EventCommandStarted, "c1", 3), time.Now())
-	hookEntered, allow := make(chan struct{}), make(chan struct{})
-	j.reconcileHook = func() { close(hookEntered); <-allow }
 	done := make(chan struct{})
 	go func() { _ = j.DeleteHistory(blockID); close(done) }()
 	<-d.entered
-	close(d.release)
-	<-hookEntered
-	if !j.Apply(blockID, journalEvent(terminalruntime.EventCommandFinished, "c1", 4), time.Now()) {
-		t.Fatal("finish was not accepted during delete reconciliation")
+
+	// The finish waits for the delete's gate instead of interleaving with it.
+	finished := make(chan bool, 1)
+	go func() {
+		finished <- j.Apply(blockID, journalEvent(terminalruntime.EventCommandFinished, "c1", 4), time.Now())
+	}()
+	select {
+	case <-finished:
+		t.Fatal("a finish passed the delete gate for the same block")
+	case <-time.After(50 * time.Millisecond):
 	}
-	close(allow)
+	close(d.release)
 	<-done
+	if !<-finished {
+		t.Fatal("the finish was refused after the delete completed")
+	}
 	records := j.VisibleSnapshot(blockID)
-	if len(records) != 1 || records[0].ID != "c1" || records[0].State != StateFinished || records[0].VisibilityGeneration != 1 {
-		t.Fatalf("delete race lost active completion: %#v", records)
+	if len(records) != 1 || records[0].ID != "c1" || records[0].State != StateFinished {
+		t.Fatalf("the delete lost the live command's completion: %#v", records)
 	}
 }

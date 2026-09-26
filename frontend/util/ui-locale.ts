@@ -136,6 +136,7 @@ export const uiTextDictionary = {
     "terminal.clearing": "正在清除可视历史…",
     "terminal.clearingShort": "正在清除…",
     "terminal.clearSuccess": "可视历史已清除；PowerShell 会话已保留。",
+    "terminal.clearUnsupported": "当前终端状态不支持安全清除（正在编辑的内容可能被截断），本次未进行清除。",
     "terminal.copy": "复制",
     "terminal.openUrlExternal": "在外部浏览器中打开 URL",
     "terminal.paste": "粘贴",

@@ -244,7 +244,7 @@ func TestHostedInteractiveFinishRetainsDelayedPTYOutput(t *testing.T) {
 	if record.OutputState != OutputStatePending || string(record.Output) != "delayed-output\r\n" || record.OutputCompleteness == OutputCompletenessComplete || record.OutputAttribution == OutputAttributionExclusive {
 		t.Fatalf("interactive output was finalized or overclaimed: %#v", record)
 	}
-	if !j.Apply("block-hosted", terminalruntime.StreamItem{Kind: terminalruntime.StreamIntegrationEvent, Event: terminalruntime.IntegrationEvent{Kind: terminalruntime.EventPromptReady}}, time.Now()) {
+	if !j.Apply("block-hosted", terminalruntime.StreamItem{Kind: terminalruntime.StreamIntegrationEvent, Event: terminalruntime.IntegrationEvent{Kind: terminalruntime.EventPromptReady, Authority: terminalruntime.AuthorityHostedSidechannel}}, time.Now()) {
 		t.Fatal("prompt did not close pending interactive output")
 	}
 	record = j.Snapshot("block-hosted")[0]
@@ -260,7 +260,7 @@ func TestHostedStructuredFinishIsNotPTYOutputFence(t *testing.T) {
 	c.ObserveHostedRuntimeEvent(hostedStart("cmd-1", "structured"))
 	c.ObserveHostedRuntimeEvent(hostedOutput("cmd-1", "structured-output"))
 	c.ObserveHostedRuntimeEvent(hostedFinish("cmd-1", true, 0))
-	if j.Apply("block-hosted", terminalruntime.StreamItem{Kind: terminalruntime.StreamIntegrationEvent, Event: terminalruntime.IntegrationEvent{Kind: terminalruntime.EventPromptReady}}, time.Now()) {
+	if j.Apply("block-hosted", terminalruntime.StreamItem{Kind: terminalruntime.StreamIntegrationEvent, Event: terminalruntime.IntegrationEvent{Kind: terminalruntime.EventPromptReady, Authority: terminalruntime.AuthorityHostedSidechannel}}, time.Now()) {
 		t.Fatal("prompt unexpectedly changed closed hosted output")
 	}
 	if j.Apply("block-hosted", terminalruntime.StreamItem{Kind: terminalruntime.StreamOutputSegment, Source: terminalruntime.OutputSourcePTY, Output: []byte("prompt\r\n")}, time.Now()) {

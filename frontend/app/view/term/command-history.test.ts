@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { canCopyOutput, clearProductHistory, historyInspectorClass, HistoryRequestEpoch, limitVisibleRecords, projectOutput, RefreshRequestGate, sanitizeTerminalText } from "./command-history";
 
 const record = (overrides: Partial<RecordView> = {}): RecordView => ({
-    id: "cmd-1", wave_block_id: "block-1", session_epoch: "epoch", start_hook_sequence: 1,
+    id: "cmd-1", wave_block_id: "block-1", session_epoch: "epoch", authority: "hosted-sidechannel", start_hook_sequence: 1,
     finish_hook_sequence: 2, command: "Write-Output ok", cwd: "C:\\", state: "finished",
     completion_reason: "normal", visibility_generation: 1, output_total_bytes: 3,
     output_stored_bytes: 3, output_truncated: false, output_completeness: "complete",
@@ -38,8 +38,15 @@ describe("command history product seam", () => {
 
     it("routes the retained All action through the shared Copy All operation", () => {
         const source = readFileSync(new URL("./command-history.tsx", import.meta.url), "utf8");
-        expect(source).toContain('import { copyCommandAndOutput } from "./command-copy-all"');
-        expect(source).toContain("const result = await copyCommandAndOutput(record);");
+        expect(source).toContain('import { canCopyRecordOutput, copyCommandAndOutput, copyCommandOutput } from "./command-copy-all"');
+        expect(source).toContain(
+            "const result = await copyCommandAndOutput(record, services.CommandJournalService, navigator.clipboard, terminalRegion);"
+        );
+        // The terminal authority's output comes from the terminal buffer, delimited by
+        // the integration's markers, and the copy gate follows the same source.
+        expect(source).toContain("getTerminalOutputForCommand");
+        expect(source).toContain("canCopyRecordOutput(record, terminalRegion)");
+        expect(source).toContain("copyCommandOutput(record, services.CommandJournalService, navigator.clipboard, terminalRegion)");
     });
 
     it("only starts history and health polling while the inspector is open", () => {
@@ -78,7 +85,7 @@ describe("command history product seam", () => {
 
     it("clears the rendered terminal through xterm display controls only", () => {
         const termwrap = readFileSync(new URL("./termwrap.ts", import.meta.url), "utf8");
-        expect(termwrap).toContain(String.raw`this.terminal.write("\x1b[2J\x1b[3J\x1b[H")`);
+        expect(termwrap).toContain(String.raw`this.writeParsed("\x1b[2J\x1b[3J\x1b[H")`);
         expect(termwrap).toContain("this.heldData = [];");
         expect(termwrap).not.toContain("this.sendDataHandler(\"\\x1b[2J");
         expect(termwrap).not.toContain("this.terminal.reset()");
@@ -116,14 +123,24 @@ describe("command history product seam", () => {
     });
 
     it("clears the terminal only after backend success", async () => {
-        const clearTerminal = vi.fn();
+        const applied: number[] = [];
+        const host = {
+            withProductClearBoundary: async (run: (session: unknown) => Promise<unknown>) =>
+                run({
+                    prepare: () => ({ keepStartAbs: 0, keepEndAbs: 0, cursorRowOffset: 0, cursorColumn: 1 }),
+                    apply: async () => {
+                        applied.push(1);
+                    },
+                }),
+        };
         const service = { ClearVisualHistory: vi.fn().mockResolvedValue({ generation: 2 }) };
-        await clearProductHistory("block-1", service, clearTerminal);
+        await expect(clearProductHistory("block-1", service as never, host as never)).resolves.toBe("cleared");
         expect(service.ClearVisualHistory).toHaveBeenCalledWith("block-1");
-        expect(clearTerminal).toHaveBeenCalledOnce();
+        expect(applied).toHaveLength(1);
+
         const failed = { ClearVisualHistory: vi.fn().mockRejectedValue(new Error("db")) };
-        await expect(clearProductHistory("block-1", failed, clearTerminal)).rejects.toThrow("db");
-        expect(clearTerminal).toHaveBeenCalledOnce();
+        await expect(clearProductHistory("block-1", failed as never, host as never)).rejects.toThrow("db");
+        expect(applied).toHaveLength(1);
     });
 
     it("routes the keyboard clear shortcut through the product clear operation", () => {

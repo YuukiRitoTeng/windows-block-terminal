@@ -16,6 +16,7 @@ type RecordView struct {
 	ID                     string `json:"id"`
 	WaveBlockID            string `json:"wave_block_id"`
 	SessionEpoch           string `json:"session_epoch"`
+	Authority              string `json:"authority"`
 	StartHookSequence      uint64 `json:"start_hook_sequence"`
 	FinishHookSequence     uint64 `json:"finish_hook_sequence"`
 	Command                string `json:"command"`
@@ -204,7 +205,7 @@ func (s *CommandJournalService) DeleteHistory(ctx context.Context, blockId strin
 }
 
 func recordView(record commandjournal.CommandRecord) RecordView {
-	view := RecordView{ID: record.ID, WaveBlockID: record.WaveBlockID, SessionEpoch: record.SessionEpoch, StartHookSequence: record.StartHookSequence, FinishHookSequence: record.FinishHookSequence, Command: record.Command, Cwd: record.Cwd, ExecutionMode: string(record.ExecutionMode), OutputSource: string(record.OutputSource), RuntimeHostID: record.RuntimeHostID, RuntimeRunspaceID: record.RuntimeRunspaceID, CaptureContractVersion: record.CaptureContractVersion, ProtocolVersion: record.ProtocolVersion, State: string(record.State), CompletionReason: string(record.CompletionReason), VisibilityGeneration: record.VisibilityGeneration, OutputTotalBytes: record.OutputTotalBytes, OutputStoredBytes: record.OutputStoredBytes, OutputTruncated: record.OutputTruncated, OutputCompleteness: record.OutputCompleteness, OutputAttribution: record.OutputAttribution, OutputTextSafety: record.OutputTextSafety, OutputState: string(record.OutputState), StartedAtUnixMs: record.StartedAt.UnixMilli(), Success: record.Success, ExitCode: record.ExitCode}
+	view := RecordView{ID: record.ID, WaveBlockID: record.WaveBlockID, SessionEpoch: record.SessionEpoch, Authority: string(record.Authority), StartHookSequence: record.StartHookSequence, FinishHookSequence: record.FinishHookSequence, Command: record.Command, Cwd: record.Cwd, ExecutionMode: string(record.ExecutionMode), OutputSource: string(record.OutputSource), RuntimeHostID: record.RuntimeHostID, RuntimeRunspaceID: record.RuntimeRunspaceID, CaptureContractVersion: record.CaptureContractVersion, ProtocolVersion: record.ProtocolVersion, State: string(record.State), CompletionReason: string(record.CompletionReason), VisibilityGeneration: record.VisibilityGeneration, OutputTotalBytes: record.OutputTotalBytes, OutputStoredBytes: record.OutputStoredBytes, OutputTruncated: record.OutputTruncated, OutputCompleteness: record.OutputCompleteness, OutputAttribution: record.OutputAttribution, OutputTextSafety: record.OutputTextSafety, OutputState: string(record.OutputState), StartedAtUnixMs: record.StartedAt.UnixMilli(), Success: record.Success, ExitCode: record.ExitCode}
 	if record.FinishedAt != nil {
 		finished := record.FinishedAt.UnixMilli()
 		view.FinishedAtUnixMs = &finished

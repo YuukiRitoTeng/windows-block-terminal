@@ -4,14 +4,15 @@
 import * as React from "react";
 import { uiText } from "@/util/ui-locale";
 import type { TermViewModel } from "./term-model";
-import { clearProductHistoryForModel } from "./clear-product-history";
+import { clearProductHistoryForModel, type ProductClearOutcome } from "./clear-product-history";
 
 export const TERMINAL_CLEAR_PENDING_MESSAGE = uiText("terminal.clearing");
 export const TERMINAL_CLEAR_SUCCESS_MESSAGE = uiText("terminal.clearSuccess");
+export const TERMINAL_CLEAR_UNSUPPORTED_MESSAGE = uiText("terminal.clearUnsupported");
 
 const TERMINAL_CLEAR_ERROR_PREFIX = uiText("command.clearFailedPrefix");
 
-export type TerminalClearActionRunResult = "started" | "ignored";
+export type TerminalClearActionRunResult = ProductClearOutcome | "ignored";
 
 export type TerminalClearActionRunner = {
     readonly pending: boolean;
@@ -19,7 +20,7 @@ export type TerminalClearActionRunner = {
 };
 
 /** Keeps the visible action from issuing a second clear while the Journal call is in flight. */
-export function createTerminalClearActionRunner(clear: () => Promise<void>): TerminalClearActionRunner {
+export function createTerminalClearActionRunner(clear: () => Promise<ProductClearOutcome>): TerminalClearActionRunner {
     let pending = false;
     return {
         get pending() {
@@ -31,8 +32,7 @@ export function createTerminalClearActionRunner(clear: () => Promise<void>): Ter
             }
             pending = true;
             try {
-                await clear();
-                return "started";
+                return await clear();
             } finally {
                 pending = false;
             }
@@ -65,7 +65,8 @@ export const TerminalClearAction = ({ model }: TerminalClearActionProps) => {
         return () => clearTimeout(timer);
     }, [status]);
     const runner = React.useMemo(
-        () => createTerminalClearActionRunner(() => clearProductHistoryForModel(model)),
+        () =>
+            createTerminalClearActionRunner(() => clearProductHistoryForModel(model)),
         [model]
     );
 
@@ -79,8 +80,15 @@ export const TerminalClearAction = ({ model }: TerminalClearActionProps) => {
         setStatus(TERMINAL_CLEAR_PENDING_MESSAGE);
         try {
             const result = await runner.run();
-            if (result === "started" && epoch === generation.current) {
+            if (epoch !== generation.current) {
+                return;
+            }
+            if (result === "cleared") {
                 setStatus(TERMINAL_CLEAR_SUCCESS_MESSAGE);
+            } else if (result === "unsupported") {
+                // Nothing was cleared and the backend generation did not advance: this must never
+                // look like a success.
+                setStatus(TERMINAL_CLEAR_UNSUPPORTED_MESSAGE);
             }
         } catch (error) {
             if (epoch === generation.current) { setStatus(formatTerminalClearError(error)); setFailed(true); }

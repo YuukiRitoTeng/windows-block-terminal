@@ -7,7 +7,8 @@ import { uiText } from "@/util/ui-locale";
 import * as React from "react";
 import type { TermViewModel } from "./term-model";
 import { clearProductHistory } from "./clear-product-history";
-import { copyCommandAndOutput } from "./command-copy-all";
+import { canCopyRecordOutput, copyCommandAndOutput, copyCommandOutput } from "./command-copy-all";
+import type { TerminalRegionProvider } from "./command-output-region";
 
 export { clearProductHistory } from "./clear-product-history";
 
@@ -106,6 +107,37 @@ export function projectOutput(record: RecordView, data64: string): OutputProject
     }
 }
 
+/**
+ * The journal copy of an in-band command.
+ *
+ * The terminal authority cannot prove exclusivity or completeness for the bytes it
+ * forwards - the shell may write a command's last output after the finish frame it
+ * also writes - so its gate is narrower: the command must be finished, its output
+ * closed and untruncated, and the bytes must still decode as plain text. This is the
+ * fallback used when the terminal region itself is no longer readable (a cleared
+ * buffer, evicted scrollback), which is exactly the case where the record is the only
+ * remaining evidence of what the command printed.
+ */
+export function projectTerminalAuthorityOutput(record: RecordView, data64: string): OutputProjection {
+    if (record.state === "running" || record.output_state !== "closed" || record.output_truncated) {
+        return { kind: "unsafe", reason: uiText("command.unsafeOutput") };
+    }
+    if (record.output_stored_bytes > MAX_PRESENTATION_BYTES) {
+        return { kind: "unsafe", reason: uiText("command.largeOutput") };
+    }
+    try {
+        const bytes = base64ToArray(data64 ?? "");
+        const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+        const sanitized = sanitizeTerminalText(text);
+        if (sanitized == null) {
+            return { kind: "unsafe", reason: uiText("command.controlOutput") };
+        }
+        return { kind: "safe", text: sanitized };
+    } catch {
+        return { kind: "unsafe", reason: uiText("command.invalidUtf8") };
+    }
+}
+
 export function formatDuration(record: RecordView): string {
     if (record.finished_at_unix_ms == null) {
         return "running";
@@ -150,12 +182,14 @@ const statusText = (record: RecordView) => {
 const CommandCard = ({
     record,
     output,
+    canCopyOutputText,
     onLoadOutput,
     onCopy,
     onCopyAll,
 }: {
     record: RecordView;
     output?: OutputState;
+    canCopyOutputText: boolean;
     onLoadOutput: () => void;
     onCopy: (kind: "command" | "output") => void;
     onCopyAll: () => void;
@@ -183,10 +217,10 @@ const CommandCard = ({
                 <button {...copyButtonProps} aria-label={uiText("command.copy")} title={uiText("command.copy")} onClick={() => onCopy("command")}>
                     <i className="fa-sharp fa-light fa-copy" aria-hidden="true" /> <span>{uiText("command.command")}</span>
                 </button>
-                <button {...copyButtonProps} aria-label={uiText("command.output")} title={uiText("command.output")} disabled={!canCopyOutput(record)} onClick={() => onCopy("output")}>
+                <button {...copyButtonProps} aria-label={uiText("command.output")} title={uiText("command.output")} disabled={!canCopyOutputText} onClick={() => onCopy("output")}>
                     <i className="fa-sharp fa-light fa-file-lines" aria-hidden="true" /> <span>{uiText("command.outputLabel")}</span>
                 </button>
-                <button {...copyButtonProps} aria-label={uiText("command.copyAndOutput")} title={uiText("command.copyAndOutput")} disabled={!canCopyOutput(record)} onClick={onCopyAll}>
+                <button {...copyButtonProps} aria-label={uiText("command.copyAndOutput")} title={uiText("command.copyAndOutput")} disabled={!canCopyOutputText} onClick={onCopyAll}>
                     <i className="fa-sharp fa-light fa-clipboard" aria-hidden="true" /> <span>{uiText("command.all")}</span>
                 </button>
                 <button {...copyButtonProps} aria-label={output?.projection ? uiText("command.hideOutput") : uiText("command.showOutput")} title={output?.projection ? uiText("command.hideOutput") : uiText("command.showOutput")} onClick={onLoadOutput}>
@@ -211,9 +245,16 @@ export const CommandHistory = ({ blockId, model }: CommandHistoryProps) => {
     const refreshGate = React.useRef(new RefreshRequestGate());
     const previousBlockId = React.useRef(blockId);
 
+    // The terminal authority's output lives in the terminal buffer, delimited by
+    // the integration's own markers; the journal copy cannot prove completeness
+    // for that authority.
+    const terminalRegion = React.useCallback<TerminalRegionProvider>(
+        (commandId: string) => model.termRef?.current?.getTerminalOutputForCommand?.(commandId),
+        [model]
+    );
+
     const refresh = React.useCallback(async () => {
-        const requestToken = refreshGate.current.acquire();
-        if (requestToken === null) return;
+        const requestToken = refreshGate.current.acquire();        if (requestToken === null) return;
         const capturedEpoch = requestEpoch.current.capture();
         try {
             const next = await services.CommandJournalService.ListVisibleRecords(blockId);
@@ -267,14 +308,22 @@ export const CommandHistory = ({ blockId, model }: CommandHistoryProps) => {
             setOutputs((old) => ({ ...old, [record.id]: { loading: false } }));
             return;
         }
-        if (!canCopyOutput(record)) {
+        const terminalText = record.authority === "terminal-osc" ? terminalRegion(record.id) : undefined;
+        if (terminalText !== undefined) {
+            setOutputs((old) => ({ ...old, [record.id]: { loading: false, projection: { kind: "safe", text: terminalText } } }));
+            return;
+        }
+        const terminalAuthority = record.authority === "terminal-osc";
+        if (!terminalAuthority && !canCopyOutput(record)) {
             setOutputs((old) => ({ ...old, [record.id]: { loading: false, projection: { kind: "unsafe", reason: uiText("command.unsafeOutput") } } }));
             return;
         }
         setOutputs((old) => ({ ...old, [record.id]: { loading: true } }));
         try {
             const output = await services.CommandJournalService.GetOutput(record.id);
-            const projection = projectOutput(record, output?.data ?? "");
+            const projection = terminalAuthority
+                ? projectTerminalAuthorityOutput(record, output?.data ?? "")
+                : projectOutput(record, output?.data ?? "");
             if (mounted.current) setOutputs((old) => ({ ...old, [record.id]: { loading: false, projection, data64: output?.data } }));
         } catch (error) {
             if (mounted.current) setOutputs((old) => ({ ...old, [record.id]: { loading: false, projection: { kind: "unsafe", reason: uiText("command.outputUnavailable", { detail: String(error) }) } } }));
@@ -283,23 +332,19 @@ export const CommandHistory = ({ blockId, model }: CommandHistoryProps) => {
 
     const copyRecord = React.useCallback(async (record: RecordView, kind: "command" | "output" | "all") => {
         if (kind === "all") {
-            const result = await copyCommandAndOutput(record);
+            const result = await copyCommandAndOutput(record, services.CommandJournalService, navigator.clipboard, terminalRegion);
             setMessage("reason" in result ? result.reason : uiText("command.copiedAndOutput"));
             return;
         }
         let text = record.command;
         if (kind !== "command") {
-            if (!canCopyOutput(record)) {
-            setMessage(uiText("command.copyDisabled"));
+            const result = await copyCommandOutput(record, services.CommandJournalService, navigator.clipboard, terminalRegion);
+            if ("reason" in result) {
+                setMessage(result.reason);
                 return;
             }
-            const output = await services.CommandJournalService.GetOutput(record.id);
-            const projection = projectOutput(record, output?.data ?? "");
-            if (projection.kind !== "safe") {
-                setMessage(projection.reason);
-                return;
-            }
-            text = projection.text;
+            setMessage(uiText("command.copied", { kind }));
+            return;
         }
         try {
             await navigator.clipboard.writeText(text);
@@ -312,7 +357,12 @@ export const CommandHistory = ({ blockId, model }: CommandHistoryProps) => {
     const clear = React.useCallback(async () => {
         try {
             requestEpoch.current.bump();
-            await clearProductHistory(blockId, services.CommandJournalService, () => model.termRef.current?.clearVisualBuffer());
+            const outcome = await clearProductHistory(blockId, services.CommandJournalService, model.termRef.current as never);
+            if (outcome !== "cleared") {
+                // Nothing was cleared and no generation advanced: keep the projections and say so.
+                setMessage(uiText("terminal.clearUnsupported"));
+                return;
+            }
             setOutputs({});
             refreshGate.current.invalidate();
             await refresh();
@@ -343,6 +393,7 @@ export const CommandHistory = ({ blockId, model }: CommandHistoryProps) => {
                         key={record.id}
                         record={record}
                         output={outputs[record.id]}
+                        canCopyOutputText={canCopyRecordOutput(record, terminalRegion)}
                         onLoadOutput={() => void loadOutput(record)}
                         onCopy={(kind) => void copyRecord(record, kind)}
                         onCopyAll={() => void copyRecord(record, "all")}

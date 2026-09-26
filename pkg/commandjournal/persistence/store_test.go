@@ -304,6 +304,7 @@ func TestOutputQueueBudgetReportsIncompleteHistory(t *testing.T) {
 func TestProvenanceRoundTrip(t *testing.T) {
 	s, path := openTest(t, Options{Enabled: true})
 	r := testRecord()
+	r.Authority = terminalruntime.AuthorityHostedSidechannel
 	r.ExecutionMode = terminalruntime.ExecutionModeStructured
 	r.OutputSource = terminalruntime.OutputSourceHostStructured
 	r.RuntimeHostID = "host-1"
@@ -349,6 +350,9 @@ func TestProvenanceRoundTrip(t *testing.T) {
 	}
 	if record.ExecutionMode != r.ExecutionMode || record.OutputSource != r.OutputSource || record.RuntimeHostID != r.RuntimeHostID || record.RuntimeRunspaceID != r.RuntimeRunspaceID || record.CaptureContractVersion != 1 || record.ProtocolVersion != 1 {
 		t.Fatalf("provenance was not preserved: %#v", record)
+	}
+	if record.Authority != terminalruntime.AuthorityHostedSidechannel {
+		t.Fatalf("authority was not preserved: %q", record.Authority)
 	}
 }
 

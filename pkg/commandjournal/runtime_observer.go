@@ -1,6 +1,7 @@
 package commandjournal
 
 import (
+	"sync"
 	"time"
 
 	"github.com/wavetermdev/waveterm/pkg/terminalruntime"
@@ -12,6 +13,10 @@ type RuntimeObserver struct {
 	adapter *terminalruntime.RuntimeAdapter
 	journal *Journal
 	anchor  *VisualAnchorRegistry
+	mu      sync.Mutex
+
+	inputGeneration    func() uint64
+	pendingGenerations []uint64
 }
 
 func NewRuntimeObserver(blockID string, journal *Journal, anchor ...*VisualAnchorRegistry) *RuntimeObserver {
@@ -37,7 +42,22 @@ func NewRuntimeObserver(blockID string, journal *Journal, anchor ...*VisualAncho
 			if item.Kind == terminalruntime.StreamOutputSegment && (item.Source == "" || item.Source == terminalruntime.OutputSourceUnknown) {
 				item.Source = terminalruntime.OutputSourcePTY
 			}
-			observer.journal.Apply(blockID, item, time.Now())
+			accepted := observer.journal.Apply(blockID, item, time.Now())
+			// An in-band command that carried an anchor nonce confirms its own
+			// marker. The confirmation states the in-band authority and the
+			// command identity only - never hostId/runspaceId, which belong to
+			// the hosted authority.
+			if accepted && observer.anchor != nil && item.Kind == terminalruntime.StreamIntegrationEvent && item.Event.Kind == terminalruntime.EventCommandStarted && item.Event.AnchorNonce != "" {
+				observer.anchor.ObserveConfirmation(VisualAnchorConfirmation{
+					BlockID:      blockID,
+					Authority:    item.Event.Authority,
+					SessionEpoch: item.Event.SessionEpoch,
+					HookSequence: item.Event.HookSequence,
+					CommandID:    item.Event.CommandID,
+					AnchorNonce:  item.Event.AnchorNonce,
+					Mode:         item.Event.ExecutionMode,
+				})
+			}
 		}
 	})
 	return observer
