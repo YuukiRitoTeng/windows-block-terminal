@@ -3,7 +3,6 @@ const pkg = require("./package.json");
 const fs = require("fs");
 const path = require("path");
 
-
 /**
  * @type {import('electron-builder').Configuration}
  * @see https://www.electron.build/configuration/configuration
@@ -46,6 +45,19 @@ const config = {
         {
             from: "dist/tsunamiscaffold",
             to: "tsunamiscaffold",
+        },
+        // The tray icon must be a real file on disk: the notification area is served by Explorer in
+        // another process, so it cannot read an image that only exists inside app.asar. `public/` is
+        // not packed into the asar at all (the files list only packs dist/ and package.json), which is
+        // why the tray icon first rendered blank. wbt-tray.png is the WBT-owned mark (not upstream
+        // Wave branding); icon.ico ships alongside as the multi-size Windows asset.
+        {
+            from: "build/wbt-tray.png",
+            to: "wbt-tray.png",
+        },
+        {
+            from: "build/icon.ico",
+            to: "icon.ico",
         },
         // The x64 build must still ship the Windows ARM64 wsh so this client can deploy wsh to a
         // remote Windows-ARM64 host over SSH (pkg/remote/connutil.go resolves it via

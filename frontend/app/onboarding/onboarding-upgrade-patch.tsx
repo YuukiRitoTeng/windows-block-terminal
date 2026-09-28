@@ -1,7 +1,6 @@
 // Copyright 2026, Command Line Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import Logo from "@/app/asset/logo.svg";
 import { Button } from "@/app/element/button";
 import { FlexiModal } from "@/app/modals/modal";
 import { CurrentOnboardingVersion, OnboardingGradientBg } from "@/app/onboarding/onboarding-common";
@@ -27,6 +26,7 @@ import { UpgradeOnboardingModal_v0_14_1_Content } from "./onboarding-upgrade-v01
 import { UpgradeOnboardingModal_v0_14_2_Content } from "./onboarding-upgrade-v0142";
 import { UpgradeOnboardingModal_v0_14_4_Content } from "./onboarding-upgrade-v0144";
 import { UpgradeOnboardingModal_v0_14_5_Content } from "./onboarding-upgrade-v0145";
+import appIcon from "/logos/appicon-windows.png";
 
 interface VersionConfig {
     version: string;
@@ -64,10 +64,7 @@ export function UpgradeOnboardingFooter({
                 <div className="flex-1 flex justify-start">
                     {hasPrev && (
                         <div className="text-sm text-secondary">
-                            <button
-                                onClick={onPrev}
-                                className="cursor-pointer hover:text-foreground transition-colors"
-                            >
+                            <button onClick={onPrev} className="cursor-pointer hover:text-foreground transition-colors">
                                 &lt; {prevText}
                             </button>
                         </div>
@@ -81,10 +78,7 @@ export function UpgradeOnboardingFooter({
                 <div className="flex-1 flex justify-end">
                     {hasNext && (
                         <div className="text-sm text-secondary">
-                            <button
-                                onClick={onNext}
-                                className="cursor-pointer hover:text-foreground transition-colors"
-                            >
+                            <button onClick={onNext} className="cursor-pointer hover:text-foreground transition-colors">
                                 {nextText} &gt;
                             </button>
                         </div>
@@ -242,10 +236,7 @@ const UpgradeOnboardingPatch = ({ isReleaseNotes = false }: UpgradeOnboardingPat
 
     if (showStarAsk) {
         return (
-            <FlexiModal
-                className="w-[500px] rounded-[10px] !p-[30px] relative overflow-hidden bg-panel"
-                ref={modalRef}
-            >
+            <FlexiModal className="w-[500px] rounded-[10px] !p-[30px] relative overflow-hidden bg-panel" ref={modalRef}>
                 <OnboardingGradientBg />
                 <div className="relative z-10 flex flex-col w-full h-full">
                     <StarAskPage onClose={doClose} page="upgrade" />
@@ -261,7 +252,7 @@ const UpgradeOnboardingPatch = ({ isReleaseNotes = false }: UpgradeOnboardingPat
                 <div className="flex flex-col h-full">
                     <header className="flex flex-col gap-2 border-b-0 p-0 mt-1 mb-6 w-full unselectable flex-shrink-0">
                         <div className="flex justify-center">
-                            <Logo />
+                            <img src={appIcon} alt="" width={40} height={40} className="select-none" />
                         </div>
                         <div className="text-center text-[25px] font-normal text-foreground">
                             Wave {currentVersion.version} Update

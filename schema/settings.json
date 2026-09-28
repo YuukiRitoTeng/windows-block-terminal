@@ -47,6 +47,9 @@
             "left"
           ]
         },
+        "app:alwaysadmin": {
+          "type": "boolean"
+        },
         "feature:waveappbuilder": {
           "type": "boolean"
         },
@@ -296,6 +299,9 @@
           "type": "boolean"
         },
         "window:savelastwindow": {
+          "type": "boolean"
+        },
+        "window:closetotray": {
           "type": "boolean"
         },
         "window:dimensions": {

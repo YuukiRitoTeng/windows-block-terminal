@@ -82,7 +82,7 @@
                 align-items: center;
                 gap: 8px;
                 font: var(--header-font);
-                border-bottom: 1px solid var(--border-color);
+                border-bottom: 1px solid var(--wbt-border-subtle);
                 border-radius: var(--block-border-radius) var(--block-border-radius) 0 0;
 
                 .block-frame-default-header-iconview {
@@ -440,7 +440,7 @@
             &.block-no-highlight,
             &.block-preview {
                 .block-mask {
-                    border: 2px solid rgb(from var(--border-color) r g b / 10%) !important;
+                    border: 2px solid var(--wbt-border-subtle) !important;
                 }
             }
         }

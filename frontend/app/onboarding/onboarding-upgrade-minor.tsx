@@ -1,7 +1,6 @@
 // Copyright 2026, Command Line Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import Logo from "@/app/asset/logo.svg";
 import { Button } from "@/app/element/button";
 import { FlexiModal } from "@/app/modals/modal";
 import { CurrentOnboardingVersion, OnboardingGradientBg } from "@/app/onboarding/onboarding-common";
@@ -16,6 +15,7 @@ import { TabRpcClient } from "@/app/store/wshrpcutil";
 import { OverlayScrollbarsComponent } from "overlayscrollbars-react";
 import { useEffect, useRef, useState } from "react";
 import { debounce } from "throttle-debounce";
+import appIcon from "/logos/appicon-windows.png";
 
 type UpgradeMinorWelcomePageProps = {
     onStarClick: () => void;
@@ -28,7 +28,7 @@ const UpgradeMinorWelcomePage = ({ onStarClick, onAlreadyStarred, onMaybeLater }
         <div className="flex flex-col h-full">
             <header className="flex flex-col gap-2 border-b-0 p-0 mt-1 mb-4 w-full unselectable flex-shrink-0">
                 <div className="flex justify-center">
-                    <Logo />
+                    <img src={appIcon} alt="" width={40} height={40} className="select-none" />
                 </div>
                 <div className="text-center text-[25px] font-normal text-foreground">
                     Welcome to Windows Block Terminal v0.14!

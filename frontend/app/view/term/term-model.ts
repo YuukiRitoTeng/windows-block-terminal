@@ -1255,6 +1255,39 @@ export class TermViewModel implements ViewModel {
             ],
         });
 
+        const alwaysAdmin = globalStore.get(getSettingsKeyAtom("app:alwaysadmin")) === true;
+        advancedSubmenu.push({
+            label: uiText("terminal.alwaysAdmin"),
+            submenu: [
+                {
+                    label: uiText("terminal.alwaysAdminOn"),
+                    type: "checkbox",
+                    checked: alwaysAdmin,
+                    click: () =>
+                        fireAndForget(() =>
+                            RpcApi.SetConfigCommand(TabRpcClient, { "app:alwaysadmin": true })
+                        ),
+                },
+                {
+                    label: uiText("terminal.alwaysAdminOff"),
+                    type: "checkbox",
+                    checked: !alwaysAdmin,
+                    click: () =>
+                        fireAndForget(() =>
+                            RpcApi.SetConfigCommand(TabRpcClient, { "app:alwaysadmin": false })
+                        ),
+                },
+                { type: "separator" },
+                {
+                    // A separate row rather than `sublabel`: this menu goes through the native
+                    // Electron menu path, where `sublabel` is macOS-only and would be invisible on
+                    // Windows. `header` renders as a short full-width caption.
+                    label: uiText("terminal.alwaysAdminHint"),
+                    type: "header",
+                },
+            ],
+        });
+
         const isDurable = globalStore.get(getBlockTermDurableAtom(this.blockId));
         if (isDurable) {
             advancedSubmenu.push({

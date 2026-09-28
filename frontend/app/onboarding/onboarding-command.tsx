@@ -4,7 +4,7 @@
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { FakeBlock } from "./onboarding-layout";
 import { FakeTermBlock } from "./onboarding-layout-term";
-import waveLogo from "/logos/wave-logo.png";
+import appIcon from "/logos/appicon-windows.png";
 
 export type CommandRevealProps = {
     command: string;
@@ -108,8 +108,8 @@ Use Ctrl-Shift + Number (1-9) to focus a specific block by its position.`;
 
 export const ViewLogoCommand = ({ onComplete }: { onComplete?: () => void }) => {
     return (
-        <FakeCommand command="wsh view public/wave-logo.png" onComplete={onComplete}>
-            <FakeBlock icon="image" name="wave-logo.png" imgsrc={waveLogo} />
+        <FakeCommand command="wsh view public/appicon-windows.png" onComplete={onComplete}>
+            <FakeBlock icon="image" name="appicon-windows.png" imgsrc={appIcon} />
         </FakeCommand>
     );
 };

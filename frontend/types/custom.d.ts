@@ -80,6 +80,8 @@ declare global {
     type ElectronApi = {
         getAuthKey(): string; // get-auth-key
         getIsDev(): boolean; // get-is-dev
+        getIsElevated(): boolean; // get-is-elevated
+        getIsUnpackedBuild(): boolean; // get-is-unpacked-build
         getCursorPoint: () => Electron.Point; // get-cursor-point
         getPlatform: () => NodeJS.Platform; // get-platform
         getEnv: (varName: string) => string; // get-env

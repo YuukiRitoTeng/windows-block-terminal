@@ -495,6 +495,26 @@ function isDev() {
     return cachedIsDev;
 }
 
+let cachedIsElevated: boolean = null;
+
+/** Whether this process actually holds an elevated (administrator) token. */
+function isElevated() {
+    if (cachedIsElevated == null) {
+        cachedIsElevated = getApi().getIsElevated();
+    }
+    return cachedIsElevated;
+}
+
+let cachedIsUnpackedBuild: boolean = null;
+
+/** Whether this is a development / unpacked build rather than an installed release. */
+function isUnpackedBuild() {
+    if (cachedIsUnpackedBuild == null) {
+        cachedIsUnpackedBuild = getApi().getIsUnpackedBuild();
+    }
+    return cachedIsUnpackedBuild;
+}
+
 let cachedUserName: string = null;
 
 function getUserName(): string {
@@ -686,6 +706,8 @@ export {
     initGlobal,
     initGlobalWaveEventSubs,
     isDev,
+    isElevated,
+    isUnpackedBuild,
     loadConnStatus,
     makeDefaultConnStatus,
     openLink,

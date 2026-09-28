@@ -1,7 +1,6 @@
 // Copyright 2026, Command Line Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import Logo from "@/app/asset/logo.svg";
 import { InitPage, NoTelemetryStarPage } from "@/app/onboarding/onboarding";
 import { OnboardingGradientBg } from "@/app/onboarding/onboarding-common";
 import { DurableSessionPage } from "@/app/onboarding/onboarding-durable";
@@ -9,6 +8,7 @@ import { FilesPage, MagnifyBlocksPage } from "@/app/onboarding/onboarding-featur
 import { StarAskPage } from "@/app/onboarding/onboarding-starask";
 import { UpgradeMinorWelcomePage } from "@/app/onboarding/onboarding-upgrade-minor";
 import { UpgradeOnboardingFooter, UpgradeOnboardingVersions } from "@/app/onboarding/onboarding-upgrade-patch";
+import appIcon from "/logos/appicon-windows.png";
 
 function OnboardingModalWrapper({ width, children }: { width: string; children: React.ReactNode }) {
     return (
@@ -53,7 +53,7 @@ function UpgradeOnboardingPatchV() {
                     <OnboardingModalWrapper key={version.version} width="w-[650px]">
                         <header className="flex flex-col gap-2 border-b-0 p-0 mt-1 mb-6 w-full unselectable flex-shrink-0">
                             <div className="flex justify-center">
-                                <Logo />
+                                <img src={appIcon} alt="" width={40} height={40} className="select-none" />
                             </div>
                             <div className="text-center text-[25px] font-normal text-foreground">
                                 Wave {version.version} Update

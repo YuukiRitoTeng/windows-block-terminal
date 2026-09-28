@@ -9,6 +9,7 @@ import os from "os";
 import path from "path";
 import { WaveDevVarName, WaveDevViteVarName } from "../frontend/util/isdev";
 import * as keyutil from "../frontend/util/keyutil";
+import { getProcessIsElevated } from "./emain-activity";
 
 // This is a little trick to ensure that Electron puts all its runtime data into a subdirectory to avoid conflicts with our own data.
 // On macOS, it will store to ~/Library/Application \Support/waveterm/electron
@@ -29,6 +30,59 @@ if (isDevVite) {
 const waveDirNamePrefix = "windows-block-terminal";
 const waveDirNameSuffix = isDev ? "dev" : "";
 const waveDirName = `${waveDirNamePrefix}${waveDirNameSuffix ? `-${waveDirNameSuffix}` : ""}`;
+
+/**
+ * The WBT-owned application icon, for the window and taskbar.
+ *
+ * This replaces references to `public/logos/wave-logo-dark.png` and
+ * `public/logos/appicon-windows.png`: those were upstream Wave assets *and* dead paths in a
+ * packaged build, because `public/` is not included in app.asar (the packer only takes `dist/` and
+ * `package.json`), so the window silently fell back to the icon embedded in the executable. The
+ * packaged copy now arrives through extraResources, so it exists on disk in both layouts.
+ */
+export function getAppIconPath(): string | undefined {
+    const candidates = [
+        path.join(getElectronAppResourcesPath(), "icon.ico"),
+        path.join(getElectronAppBasePath(), "build", "icon.ico"),
+    ];
+    for (const candidate of candidates) {
+        try {
+            if (existsSync(candidate)) {
+                return candidate;
+            }
+        } catch (_) {
+            // unreadable candidate: try the next one
+        }
+    }
+    return undefined;
+}
+
+/**
+ * Whether this is a development / test build rather than a release build.
+ *
+ * `app.isPackaged` cannot answer this: an `electron-builder --dir` build loads its code from
+ * app.asar, so Electron reports it as packaged, and the badge stayed hidden on exactly the build it
+ * was meant to mark. The authoritative signal is therefore the channel that the packaging step
+ * writes into the packaged manifest (`extraMetadata` in electron-builder.test.config.cjs); a
+ * release build goes through electron-builder.config.cjs, which writes no channel, so it never
+ * shows the badge. A plain `electron-vite dev` run has no manifest marker either, so it is covered
+ * by the un-packaged and renderer-URL cases.
+ */
+export function isTestBuild(): boolean {
+    if (!app.isPackaged) {
+        return true;
+    }
+    if (process.env.ELECTRON_RENDERER_URL) {
+        return true;
+    }
+    try {
+        // The packaged manifest is the only package.json that ships inside app.asar.
+        const packagedPkg = require("../../package.json");
+        return packagedPkg?.buildChannel === "test";
+    } catch (_) {
+        return false;
+    }
+}
 
 const paths = envPaths("windows-block-terminal", { suffix: waveDirNameSuffix });
 
@@ -182,6 +236,12 @@ function getWaveSrvCwd(): string {
 
 ipcMain.on("get-is-dev", (event) => {
     event.returnValue = isDev;
+});
+ipcMain.on("get-is-elevated", (event) => {
+    event.returnValue = getProcessIsElevated();
+});
+ipcMain.on("get-is-unpacked-build", (event) => {
+    event.returnValue = isTestBuild();
 });
 ipcMain.on("get-platform", (event, url) => {
     event.returnValue = unamePlatform;

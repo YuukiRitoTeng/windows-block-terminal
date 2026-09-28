@@ -1,7 +1,6 @@
 // Copyright 2026, Command Line Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import Logo from "@/app/asset/logo.svg";
 import { ErrorBoundary } from "@/app/element/errorboundary";
 import { getAtoms, initGlobalAtoms } from "@/app/store/global-atoms";
 import { GlobalModel } from "@/app/store/global-model";
@@ -15,6 +14,7 @@ import { createRoot } from "react-dom/client";
 import { makeMockWaveEnv, PreviewClientId, PreviewTabId, PreviewWindowId } from "./mock/mockwaveenv";
 import { installPreviewElectronApi } from "./mock/preview-electron-api";
 import { PreviewContextMenu } from "./preview-contextmenu";
+import appIcon from "/logos/appicon-windows.png";
 
 import "overlayscrollbars/overlayscrollbars.css";
 import "../app/app.scss";
@@ -51,7 +51,7 @@ function PreviewIndex() {
     return (
         <div className="min-h-screen bg-background text-foreground font-sans flex flex-col items-center justify-center gap-6">
             <div className="flex flex-col items-center gap-3">
-                <Logo />
+                <img src={appIcon} alt="" width={40} height={40} className="select-none" />
                 <h1 className="text-title font-semibold tracking-tight text-foreground">Wave Preview Server</h1>
             </div>
 

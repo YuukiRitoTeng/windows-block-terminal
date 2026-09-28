@@ -19,7 +19,9 @@
         left: 0;
         width: 1px;
         height: 14px;
-        background: rgb(from var(--main-text-color) r g b / 0.2);
+        // A divider that separates two tabs carries the "strong" border weight, while region
+        // dividers (tab bar, pane header) use the subtle one -- both from the product token layer.
+        background: var(--wbt-border-strong);
     }
 
     .tab-inner {
@@ -40,7 +42,9 @@
         .tab-inner {
             border-color: transparent;
             border-radius: 6px;
-            background: rgb(from var(--main-text-color) r g b / 0.1);
+            // Selected/hovered tab fill uses the shared muted-surface token instead of a hand-mixed
+            // opacity of the text colour, so it matches the terminal surfaces.
+            background: var(--wbt-surface-muted);
         }
 
         .name {
@@ -66,7 +70,9 @@
 
         &.focused {
             outline: none;
-            border: 1px solid rgb(from var(--main-text-color) r g b / 0.179);
+            // Editing a tab name is a focus state, so it uses the product border token rather than a
+            // hand-mixed opacity of the text colour.
+            border: 1px solid var(--wbt-border-strong);
             padding: 2px 6px;
             border-radius: 2px;
         }
@@ -109,7 +115,7 @@ body:not(.nohover) .tab.dragging {
 
     .tab-inner {
         border-color: transparent;
-        background: rgb(from var(--main-text-color) r g b / 0.1);
+        background: var(--wbt-surface-muted);
     }
     .close {
         visibility: visible;

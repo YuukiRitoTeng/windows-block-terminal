@@ -29,7 +29,10 @@ describe("fixed zh-CN UI text", () => {
     test("keeps the approved durable-session keys and resolves the tmux paragraph", () => {
         expect(uiTextDictionary["onboarding.durableSshSessions"]).toBe("持久 SSH 会话");
         expect(uiTextDictionary["onboarding.sshProtected"]).toBe("SSH 会话，受到保护");
-        expect(uiTextDictionary["onboarding.closeLaptop"]).toBe("合上笔记本、切换网络或重启 Wave，你的远程会话仍会继续运行。");
+        // The product self-reference was "…重启 Wave，…"; the upstream-residue cleanup replaced the
+        // upstream product name with WBT, so this pinned expectation moved with it. Only the brand
+        // word changed; the rest of the approved sentence is untouched.
+        expect(uiTextDictionary["onboarding.closeLaptop"]).toBe("合上笔记本、切换网络或重启 WBT，你的远程会话仍会继续运行。");
         expect(uiTextDictionary["onboarding.shellState"]).toBe("Shell 状态、运行中的程序和终端历史都会保留");
         expect(uiTextDictionary["onboarding.reconnect"]).toBe("连接恢复后，会话会自动重新连接");
         expect(uiTextDictionary["onboarding.bufferedOutput"]).toBe("缓冲的输出会流回，不会错过任何一行");
