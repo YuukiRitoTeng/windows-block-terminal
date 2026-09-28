@@ -139,7 +139,14 @@ const config = {
         icon: "public/logos/appicon-windows.ico",
         target: ["nsis", "msi", "zip"],
         forceCodeSigning: false,
-        signAndEditExecutable: false,
+        // Resource editing must stay enabled, otherwise win.icon above is never written into the EXE
+        // and the packaged application keeps the Electron default icon (verified: the released EXE's
+        // associated icon was byte-identical to node_modules/electron/dist/electron.exe, i.e. the
+        // atom mark, on Explorer, the taskbar and the Start Menu). The previous
+        // `signAndEditExecutable: false` disabled icon AND metadata editing together; `signExecutable:
+        // false` is the setting that skips only code signing, which is what is wanted here because no
+        // Authenticode credentials are available.
+        signExecutable: false,
     },
     appImage: {
         license: "LICENSE",
