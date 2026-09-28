@@ -1426,6 +1426,7 @@ declare global {
         "app:disablectrlshiftdisplay"?: boolean;
         "app:focusfollowscursor"?: string;
         "app:tabbar"?: string;
+        "app:alwaysadmin"?: boolean;
         "feature:waveappbuilder"?: boolean;
         "ai:*"?: boolean;
         "ai:preset"?: string;
@@ -1506,6 +1507,7 @@ declare global {
         "window:magnifiedblockblursecondarypx"?: number;
         "window:confirmclose"?: boolean;
         "window:savelastwindow"?: boolean;
+        "window:closetotray"?: boolean;
         "window:dimensions"?: string;
         "window:zoom"?: number;
         "telemetry:*"?: boolean;

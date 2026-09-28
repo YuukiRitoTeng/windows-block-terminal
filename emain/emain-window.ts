@@ -15,7 +15,6 @@ import {
     webContents,
 } from "electron";
 import { globalEvents } from "emain/emain-events";
-import path from "path";
 import { debounce } from "throttle-debounce";
 import {
     getGlobalIsQuitting,
@@ -24,11 +23,12 @@ import {
     setWasActive,
     setWasInFg,
 } from "./emain-activity";
-import { log } from "./emain-log";
 import { getAllBuilderWindows } from "./emain-builder";
+import { log } from "./emain-log";
+import { getAppIconPath, isDev, unamePlatform } from "./emain-platform";
 import { confirmApplicationQuit } from "./emain-quit";
-import { getElectronAppBasePath, isDev, unamePlatform } from "./emain-platform";
 import { getOrCreateWebViewForTab, getWaveTabViewByWebContentsId, WaveTabView } from "./emain-tabview";
+import { isTrayAvailable } from "./emain-tray";
 import { delay, ensureBoundsAreVisible, waveKeyToElectronKey } from "./emain-util";
 import { ElectronWshClient } from "./emain-wsh";
 import { updater } from "./updater";
@@ -245,7 +245,7 @@ export class WaveBrowserWindow extends BaseWindow {
                 symbolColor: "white",
                 color: "#00000000",
             };
-            winOpts.icon = path.join(getElectronAppBasePath(), "public/logos/wave-logo-dark.png");
+            winOpts.icon = getAppIconPath();
             winOpts.autoHideMenuBar = !settings?.["window:showmenubar"];
             if (isTransparent) {
                 winOpts.transparent = true;
@@ -253,7 +253,7 @@ export class WaveBrowserWindow extends BaseWindow {
                 winOpts.backgroundColor = "#222222";
             }
         } else if (opts.unamePlatform === "win32") {
-            winOpts.icon = path.join(getElectronAppBasePath(), "public/logos/appicon-windows.png");
+            winOpts.icon = getAppIconPath();
             winOpts.titleBarStyle = "hidden";
             winOpts.titleBarOverlay = {
                 color: "#222222",
@@ -395,6 +395,22 @@ export class WaveBrowserWindow extends BaseWindow {
                     const remainingWindows = [...waveWindowMap.values()].filter(
                         (win) => !win.isDestroyed() && !win.canClose
                     ).length;
+                    // Close to tray: when this is the last visible window and a tray icon exists,
+                    // hide instead of tearing the session down. The window stays alive so the
+                    // terminal sessions and the backend keep running; the tray restores it. Opt out
+                    // with window:closetotray=false, which restores the plain quit-on-X behaviour.
+                    const closeToTray = fullConfig.settings["window:closetotray"] ?? true;
+                    if (
+                        opts.unamePlatform === "win32" &&
+                        remainingWindows === 1 &&
+                        getAllBuilderWindows().length === 0 &&
+                        closeToTray &&
+                        isTrayAvailable()
+                    ) {
+                        this.hide();
+                        globalEvents.emit("windows-updated");
+                        return;
+                    }
                     if (
                         opts.unamePlatform === "win32" &&
                         remainingWindows === 1 &&

@@ -44,6 +44,7 @@ wsh editconfig
 | app:disablectrlshiftdisplay <VersionBadge version="v0.14" />         | bool     | Set to true to disable the Ctrl+Shift visual indicator display (defaults to false)                                                                                                                                                                            |
 | app:focusfollowscursor <VersionBadge version="v0.14" />              | string   | Controls whether block focus follows cursor movement: `"off"` (default), `"on"` (all blocks), or `"term"` (terminal blocks only)                                                                                                                             |
 | app:tabbar <VersionBadge version="v0.14.4" />                        | string   | Controls the position of the tab bar: `"top"` (default) for a horizontal tab bar at the top of the window, or `"left"` for a vertical tab bar on the left side of the window                                                                                |
+| app:alwaysadmin                      | bool     | Windows only. Set to true to always start Windows Block Terminal elevated, so every shell it starts runs as Administrator. For more info, see [Always Admin](#always-admin)                                                                                   |
 | ai:preset                            | string   | the default AI preset to use                                                                                                                                                                                                                                  |
 | ai:baseurl                           | string   | Set the AI Base Url (must be OpenAI compatible)                                                                                                                                                                                                               |
 | ai:apitoken                          | string   | your AI api token                                                                                                                                                                                                                                             |
@@ -112,6 +113,7 @@ wsh editconfig
 | window:disablehardwareacceleration   | bool     | set to disable Chromium hardware acceleration to resolve graphical bugs (requires app restart)                                                                                                                                                                |
 | window:fullscreenonlaunch            | bool     | set to true to launch the foreground window in fullscreen mode (defaults to false)                                                                                                                                                                            |
 | window:savelastwindow                | bool     | when `true`, the last window that is closed is preserved and is reopened the next time the app is launched (defaults to `true`)                                                                                                                               |
+| window:closetotray                   | bool     | Windows only. when `true` (default), closing the last visible window hides it to the system tray and keeps the sessions running instead of quitting; use the tray's Quit to exit. Set to `false` to quit on close as before                                        |
 | window:confirmonclose                | bool     | when `true`, a prompt will ask a user to confirm that they want to close a window if it has an unsaved workspace with more than one tab (defaults to `true`)                                                                                                  |
 | window:dimensions                    | string   | set the default dimensions for new windows using the format "WIDTHxHEIGHT" (e.g. "1920x1080"). when a new window is created, these dimensions will be automatically applied. The width and height values should be specified in pixels.                       |
 | telemetry:enabled                    | bool     | set to enable/disable telemetry                                                                                                                                                                                                                               |
@@ -125,6 +127,7 @@ For reference, this is the current default configuration (v0.14.0):
     "ai:maxtokens": 4000,
     "ai:timeoutms": 60000,
     "app:defaultnewblock": "term",
+    "app:alwaysadmin": false,
     "app:confirmquit": true,
     "app:disablectrlshiftarrows": false,
     "app:disablectrlshiftdisplay": false,
@@ -330,6 +333,44 @@ wsh editconfig termthemes.json
 | background          | CSS color |          |          | background color (default when no color code is applied), must have alpha channel (#rrggbbaa) if you want the terminal to be transparent |
 | cursorAccent        | CSS color |          |          | color for cursor                                                                                                                         |
 | selectionBackground | CSS color |          |          | background color for selected text                                                                                                       |
+
+## Always Admin
+
+Windows only. Set `"app:alwaysadmin": true` to always start Windows Block Terminal with
+administrator rights, so every shell started inside it is elevated:
+
+```json
+{
+    "app:alwaysadmin": true
+}
+```
+
+You can also switch it on from a terminal pane's context menu:
+**Settings → Advanced → Always Admin → On**.
+
+The setting is read once at startup. When it is on and the application is not already elevated, it
+re-launches itself through the Windows `runas` verb (using PowerShell 7 when installed, Windows
+PowerShell otherwise) and the unelevated instance exits once the elevated one is running. Turn the
+setting off to go back to a normal start.
+
+Things to know, all of them inherent to how Windows elevation works:
+
+- **Windows normally asks for consent on every elevated start.** An application cannot suppress the
+  UAC prompt, and a running process cannot be elevated in place, which is why the application
+  restarts itself instead. If your machine's policy is set to elevate without prompting, no prompt
+  appears. If you decline the prompt, Windows Block Terminal reports it once and keeps running
+  without administrator rights.
+- **A standard (non-administrator) account** gets a credential prompt instead of a consent prompt,
+  and a managed machine can refuse the request outright.
+- **Drag-and-drop from Explorer stops working** while elevated: Windows blocks the window messages
+  that carry it between different integrity levels. Use the file dialogs instead.
+- **Mapped network drives are not visible** from an elevated token, because drive mappings are
+  per-logon. Use the UNC path (`\\server\share`) instead.
+- Elevation applies to the whole application, not to one pane, so all tabs, panes and shells in that
+  window share the elevated token.
+- If Windows Block Terminal is already running when you start it again while this setting is on, the
+  already-running window keeps the session; quit it completely and start again to get an
+  administrator window.
 
 ## Customizable Systemwide Global Hotkey
 

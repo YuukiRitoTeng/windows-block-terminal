@@ -7,6 +7,8 @@ import { contextBridge, ipcRenderer, Rectangle, webUtils, WebviewTag } from "ele
 contextBridge.exposeInMainWorld("api", {
     getAuthKey: () => ipcRenderer.sendSync("get-auth-key"),
     getIsDev: () => ipcRenderer.sendSync("get-is-dev"),
+    getIsElevated: () => ipcRenderer.sendSync("get-is-elevated"),
+    getIsUnpackedBuild: () => ipcRenderer.sendSync("get-is-unpacked-build"),
     getPlatform: () => ipcRenderer.sendSync("get-platform"),
     getCursorPoint: () => ipcRenderer.sendSync("get-cursor-point"),
     getUserName: () => ipcRenderer.sendSync("get-user-name"),

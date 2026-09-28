@@ -17,6 +17,9 @@ function fixture(platform = "win32") {
     const builders: unknown[] = [];
     const env: Record<string, string> = {};
     let dead = false;
+    // Default false keeps every pre-existing last-window test on the quit path; the close-to-tray
+    // tests opt in explicitly.
+    let trayAvailable = false;
     let cursor = { x: 500, y: 300 };
     const primary = {
         bounds: { x: 0, y: 0, width: 3840, height: 2160 },
@@ -43,6 +46,7 @@ function fixture(platform = "win32") {
 
     class NativeWindow extends EventEmitter {
         destroyed = false;
+        visible = true;
         options: any;
         normalBounds: any;
         contentView = { removeChildView: vi.fn() };
@@ -55,6 +59,15 @@ function fixture(platform = "win32") {
         setMenu() {}
         isDestroyed() {
             return this.destroyed;
+        }
+        isVisible() {
+            return this.visible;
+        }
+        hide() {
+            this.visible = false;
+        }
+        show() {
+            this.visible = true;
         }
         getBounds() {
             return this.options;
@@ -125,12 +138,19 @@ function fixture(platform = "win32") {
         if (name === "emain/emain-events") return { globalEvents: new EventEmitter() };
         if (name === "./emain-log") return { log() {} };
         if (name === "./emain-platform")
-            return { unamePlatform: platform, isDev: false, getElectronAppBasePath: () => "/app" };
+            return {
+                unamePlatform: platform,
+                isDev: false,
+                getElectronAppBasePath: () => "/app",
+                // WBT-owned window icon resolver; the fixture only needs it to exist.
+                getAppIconPath: () => "/app/build/icon.ico",
+            };
         if (name === "./emain-tabview") return {};
         if (name === "./emain-wsh") return { ElectronWshClient: {} };
         if (name === "./updater") return { updater };
         if (name === "./emain-wavesrv") return { getIsWaveSrvDead: () => dead };
         if (name === "./emain-builder") return { getAllBuilderWindows: () => builders };
+        if (name === "./emain-tray") return { isTrayAvailable: () => trayAvailable };
         if (name === "../frontend/util/endpoints") return { getWebServerEndpoint: () => "http://unused" };
         if (!["./emain-window", "./emain-activity", "./emain-util", "./emain-quit"].includes(name)) {
             throw new Error(`Unexpected dependency: ${name}`);
@@ -193,6 +213,9 @@ function fixture(platform = "win32") {
         setDead: () => {
             dead = true;
         },
+        setTrayAvailable: (value: boolean) => {
+            trayAvailable = value;
+        },
         setCursor: (value: typeof cursor) => {
             cursor = value;
         },
@@ -221,15 +244,51 @@ describe("Windows quit/close lifecycle — real handlers with native boundaries 
         expect(f.electronApp.quit).not.toHaveBeenCalled();
         expect(f.activity.getUserConfirmedQuit()).toBe(false);
     });
-    it("confirms last-window X once, then actually quits without a tray", async () => {
+    it("hides the last window to the tray without asking to quit or to delete tabs", async () => {
+        // Deliberate product change: closing the last window keeps the session alive in the tray,
+        // so the window is hidden rather than destroyed and the app does not quit. Because nothing
+        // is destroyed, neither the quit gate nor the "existing tabs will be deleted" data-loss
+        // prompt applies -- the tray item "Quit" is the path that tears the session down.
+        const f = fixture();
+        f.setTrayAvailable(true);
+        const win = f.create();
+        win.close();
+        await f.flush();
+        expect(win.isDestroyed()).toBe(false);
+        expect(win.isVisible()).toBe(false);
+        expect(f.electronApp.quit).not.toHaveBeenCalled();
+        expect(f.closeBackend).not.toHaveBeenCalled();
+    });
+    it("still quits when no tray icon is available, so the window cannot become unreachable", async () => {
         const f = fixture();
         f.showDialog.mockReturnValue(1);
         const win = f.create();
         win.close();
         await f.flush();
-        expect(f.showDialog).toHaveBeenCalledTimes(1);
         expect(win.isDestroyed()).toBe(true);
         expect(f.electronApp.quit).toHaveBeenCalled();
+    });
+    it("quits on last-window close when close-to-tray is switched off", async () => {
+        const f = fixture();
+        f.setTrayAvailable(true);
+        f.settings["window:closetotray"] = false;
+        f.showDialog.mockReturnValue(1);
+        const win = f.create();
+        win.close();
+        await f.flush();
+        expect(win.isDestroyed()).toBe(true);
+        expect(f.electronApp.quit).toHaveBeenCalled();
+    });
+    it("hides to the tray without confirming when confirmquit is false", async () => {
+        const f = fixture();
+        f.setTrayAvailable(true);
+        f.settings["app:confirmquit"] = false;
+        const win = f.create();
+        win.close();
+        await f.flush();
+        expect(f.showDialog).not.toHaveBeenCalled();
+        expect(win.isDestroyed()).toBe(false);
+        expect(f.electronApp.quit).not.toHaveBeenCalled();
     });
     it("closes without a quit prompt when confirmquit is false", async () => {
         const f = fixture();

@@ -18,6 +18,21 @@ export function setWasActive(val: boolean) {
     wasActive = val;
 }
 
+/**
+ * Whether this process holds an elevated (administrator) token, as measured once during startup by
+ * the Always Admin gate. Cached rather than re-probed: the renderer asks for it synchronously, and
+ * the token cannot change while the process lives.
+ */
+let processIsElevated = false;
+
+export function setProcessIsElevated(val: boolean) {
+    processIsElevated = val;
+}
+
+export function getProcessIsElevated(): boolean {
+    return processIsElevated;
+}
+
 export function setWasInFg(val: boolean) {
     wasInFg = val;
 }

@@ -3,6 +3,13 @@
 
 import { RpcApi } from "@/app/store/wshclientapi";
 import * as electron from "electron";
+import {
+    isProcessElevated,
+    readAlwaysAdminSetting,
+    relaunchElevatedWithReason,
+    resolveElevatedForDisplay,
+    runElevationGate,
+} from "emain/elevation";
 import { focusedBuilderWindow, getAllBuilderWindows } from "emain/emain-builder";
 import { globalEvents } from "emain/emain-events";
 import { sprintf } from "sprintf-js";
@@ -21,12 +28,12 @@ import {
     setForceQuit,
     setGlobalIsQuitting,
     setGlobalIsStarting,
+    setProcessIsElevated,
     setUserConfirmedQuit,
     setWasActive,
     setWasInFg,
 } from "./emain-activity";
 import { initIpcHandlers } from "./emain-ipc";
-import { confirmApplicationQuit } from "./emain-quit";
 import { log } from "./emain-log";
 import { initMenuEventSubscriptions, makeAndSetAppMenu, makeDockTaskbar } from "./emain-menu";
 import {
@@ -36,10 +43,13 @@ import {
     getWaveConfigDir,
     getWaveDataDir,
     isDev,
+    isTestBuild,
     unameArch,
     unamePlatform,
 } from "./emain-platform";
+import { confirmApplicationQuit } from "./emain-quit";
 import { ensureHotSpareTab, setMaxTabCacheSize } from "./emain-tabview";
+import { createTray } from "./emain-tray";
 import { getIsWaveSrvDead, getWaveSrvProc, getWaveSrvReady, runWaveSrv } from "./emain-wavesrv";
 import {
     createBrowserWindow,
@@ -257,10 +267,7 @@ electronApp.on("window-all-closed", () => {
 electronApp.on("before-quit", (e) => {
     const allWindows = getAllWaveWindows();
     const allBuilders = getAllBuilderWindows();
-    if (
-        (allWindows.length > 0 || allBuilders.length > 0) &&
-        !confirmApplicationQuit(confirmQuit)
-    ) {
+    if ((allWindows.length > 0 || allBuilders.length > 0) && !confirmApplicationQuit(confirmQuit)) {
         e.preventDefault();
         return;
     }
@@ -346,11 +353,46 @@ globalEvents.on("windows-updated", () => {
 });
 
 async function appMain() {
+    // Logged here rather than at module load: emain-platform is evaluated before emain-log has
+    // replaced console.log, so an earlier line would never reach waveapp.log in a packaged build.
+    log(`build state: test=${isTestBuild()} packaged=${electronApp.isPackaged}`);
     // Set disableHardwareAcceleration as early as possible, if required.
     const launchSettings = getLaunchSettings();
     if (launchSettings?.["window:disablehardwareacceleration"]) {
         console.log("disabling hardware acceleration, per launch settings");
         electronApp.disableHardwareAcceleration();
+    }
+    // Always Admin, before the single-instance lock: the elevated child has to be able to take the
+    // lock itself, so this process must give it up by exiting rather than holding it.
+    //
+    // The `--wbt-elevated-relaunch` marker records where this process came from and stops the gate
+    // from relaunching again. It is NOT evidence of elevation: it is just a command-line argument,
+    // so anyone could pass it to an unelevated launch. The SUDO badge therefore always reports a
+    // measured token, never the marker.
+    const alwaysAdmin = readAlwaysAdminSetting(waveConfigDir);
+    const elevationResult = await runElevationGate(alwaysAdmin, {
+        isElevated: isProcessElevated,
+        relaunchElevated: relaunchElevatedWithReason,
+        reportFailure: (message) => {
+            electron.dialog.showErrorBox("Always Admin", message);
+        },
+    });
+    // Measure the token, never the marker: `--wbt-elevated-relaunch` is a command-line argument and
+    // anyone could pass it to an unelevated launch, so it must not be able to print an
+    // administrator badge.
+    const elevatedNow = await resolveElevatedForDisplay(elevationResult, isProcessElevated);
+    setProcessIsElevated(elevatedNow);
+    if (elevationResult === "flagged" && !elevatedNow) {
+        console.log(
+            "always-admin: relaunch marker present but the token is not elevated; " +
+                "treating this process as unelevated"
+        );
+    }
+    if (elevationResult === "relaunched") {
+        console.log("always-admin: elevated instance started, exiting the unelevated instance");
+        setUserConfirmedQuit(true);
+        electronApp.quit();
+        return;
     }
     const startTs = Date.now();
     const instanceLock = electronApp.requestSingleInstanceLock();
@@ -404,6 +446,26 @@ async function appMain() {
 
     makeAndSetAppMenu();
     makeDockTaskbar();
+    // Tray must exist before any window can be closed to it, so it is created as soon as the app is
+    // interactive. Closing the last window then hides instead of quitting (see emain-window.ts).
+    createTray({
+        showWindow: () => {
+            const allWindows = getAllWaveWindows().filter((w) => !w.isDestroyed());
+            if (allWindows.length === 0) {
+                fireAndForget(createNewWaveWindow);
+                return;
+            }
+            const target = focusedWaveWindow ?? allWindows[allWindows.length - 1];
+            if (target.isMinimized()) {
+                target.restore();
+            }
+            target.show();
+            target.focus();
+        },
+        openNewWindow: () => {
+            fireAndForget(createNewWaveWindow);
+        },
+    });
     await configureAutoUpdater();
     setGlobalIsStarting(false);
     if (fullConfig?.settings?.["window:maxtabcachesize"] != null) {

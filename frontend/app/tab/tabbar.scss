@@ -37,7 +37,9 @@
         display: block;
         height: 100%;
         margin: 2px;
-        border: 1px solid var(--border-color);
+        // Chrome borders use the product's semantic border layer (the same one the terminal
+        // surfaces use) instead of the older generic single-opacity border token.
+        border: 1px solid var(--wbt-border-subtle);
     }
 
     .add-tab {

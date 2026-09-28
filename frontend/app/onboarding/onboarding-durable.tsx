@@ -1,7 +1,6 @@
 // Copyright 2026, Command Line Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import Logo from "@/app/asset/logo.svg";
 import { EmojiButton } from "@/app/element/emojibutton";
 import { RpcApi } from "@/app/store/wshclientapi";
 import { TabRpcClient } from "@/app/store/wshrpcutil";
@@ -10,6 +9,7 @@ import { useState } from "react";
 import { CurrentOnboardingVersion } from "./onboarding-common";
 import { OnboardingFooter } from "./onboarding-features-footer";
 import { TailDeployLogCommand } from "./onboarding-layout-term";
+import appIcon from "/logos/appicon-windows.png";
 
 export const DurableSessionPage = ({
     onNext,
@@ -39,7 +39,7 @@ export const DurableSessionPage = ({
         <div className="flex flex-col h-full">
             <header className="flex items-center gap-4 mb-6 w-full unselectable flex-shrink-0">
                 <div>
-                    <Logo />
+                    <img src={appIcon} alt="" width={40} height={40} className="select-none" />
                 </div>
                 <div className="text-[25px] font-normal text-foreground">{uiText("onboarding.durableSshSessions")}</div>
             </header>
@@ -69,9 +69,7 @@ export const DurableSessionPage = ({
                                 <p>{uiText("onboarding.bufferedOutput")}</p>
                             </div>
 
-                            <p className="italic">
-                                {uiText("onboarding.tmuxDurability")}
-                            </p>
+                            <p className="italic">{uiText("onboarding.tmuxDurability")}</p>
 
                             <EmojiButton emoji="🔥" isClicked={fireClicked} onClick={handleFireClick} />
                         </div>

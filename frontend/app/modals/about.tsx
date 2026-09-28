@@ -1,18 +1,18 @@
 // Copyright 2026, Command Line Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import Logo from "@/app/asset/logo.svg";
 import { OnboardingGradientBg } from "@/app/onboarding/onboarding-common";
 import { atoms } from "@/app/store/global";
 import { modalsModel } from "@/app/store/modalmodel";
 import { RpcApi } from "@/app/store/wshclientapi";
 import { TabRpcClient } from "@/app/store/wshrpcutil";
 import { isDev } from "@/util/isdev";
-import { fireAndForget } from "@/util/util";
 import { uiText } from "@/util/ui-locale";
+import { fireAndForget } from "@/util/util";
 import { useAtomValue } from "jotai";
 import { useEffect } from "react";
 import { Modal } from "./modal";
+import appIcon from "/logos/appicon-windows.png";
 
 interface AboutModalVProps {
     versionString: string;
@@ -28,7 +28,10 @@ const AboutModalV = ({ versionString, updaterChannel, onClose }: AboutModalVProp
             <OnboardingGradientBg />
             <div className="flex flex-col gap-[26px] w-full relative z-10">
                 <div className="flex flex-col items-center justify-center gap-4 self-stretch w-full text-center">
-                    <Logo />
+                    {/* The WBT-owned mark, the same asset the tray and window/taskbar use. The
+                        previous inline logo.svg was the upstream Wave wave-mark, so the About dialog
+                        was the last product surface still showing upstream branding. */}
+                    <img src={appIcon} alt="" width={64} height={64} className="select-none" />
                     <div className="text-[25px]">Windows Block Terminal</div>
                     <div className="leading-5">
                         {uiText("onboarding.structuredTerminal")}
@@ -48,35 +51,30 @@ const AboutModalV = ({ versionString, updaterChannel, onClose }: AboutModalVProp
                         rel="noopener"
                         className="inline-flex items-center justify-center px-4 py-2 rounded border border-border hover:bg-hoverbg transition-colors duration-200"
                     >
-                        <i className="fa-brands fa-github mr-2"></i>{uiText("about.github")}
+                        <i className="fa-brands fa-github mr-2"></i>
+                        {uiText("about.github")}
                     </a>
                     <a
-                        href="https://www.waveterm.dev/?ref=about"
+                        href="https://github.com/YuukiRitoTeng/windows-block-terminal/blob/main/LICENSE"
                         target="_blank"
                         rel="noopener"
                         className="inline-flex items-center justify-center px-4 py-2 rounded border border-border hover:bg-hoverbg transition-colors duration-200"
                     >
-                        <i className="fa-sharp fa-light fa-globe mr-2"></i>{uiText("about.website")}
+                        <i className="fa-sharp fa-light fa-book mr-2"></i>
+                        {uiText("about.openSource")}
                     </a>
                     <a
-                        href="https://github.com/wavetermdev/waveterm/blob/main/ACKNOWLEDGEMENTS.md"
+                        href="https://github.com/YuukiRitoTeng/windows-block-terminal/blob/main/NOTICE"
                         target="_blank"
                         rel="noopener"
                         className="inline-flex items-center justify-center px-4 py-2 rounded border border-border hover:bg-hoverbg transition-colors duration-200"
                     >
-                        <i className="fa-sharp fa-light fa-book mr-2"></i>{uiText("about.openSource")}
-                    </a>
-                    <a
-                        href="https://github.com/sponsors/wavetermdev"
-                        target="_blank"
-                        rel="noopener"
-                        className="inline-flex items-center justify-center px-4 py-2 rounded border border-border hover:bg-hoverbg transition-colors duration-200"
-                    >
-                        <i className="fa-sharp fa-light fa-heart mr-2"></i>{uiText("about.sponsor")}
+                        <i className="fa-sharp fa-light fa-file-lines mr-2"></i>
+                        {uiText("about.thirdPartyNotices")}
                     </a>
                 </div>
                 <div className="items-center gap-4 self-stretch w-full text-center">
-                    &copy; {currentDate.getFullYear()} Command Line Inc.
+                    &copy; {currentDate.getFullYear()} Windows Block Terminal
                 </div>
             </div>
         </Modal>

@@ -1,7 +1,6 @@
 // Copyright 2025, Command Line Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import Logo from "@/app/asset/logo.svg";
 import { EmojiButton } from "@/app/element/emojibutton";
 import { MagnifyIcon } from "@/app/element/magnify";
 import { ClientModel } from "@/app/store/client-model";
@@ -16,6 +15,7 @@ import { CurrentOnboardingVersion } from "./onboarding-common";
 import { DurableSessionPage } from "./onboarding-durable";
 import { OnboardingFooter } from "./onboarding-features-footer";
 import { FakeLayout } from "./onboarding-layout";
+import appIcon from "/logos/appicon-windows.png";
 
 type FeaturePageName = "durable" | "magnify" | "files";
 
@@ -49,7 +49,7 @@ export const MagnifyBlocksPage = ({
         <div className="flex flex-col h-full">
             <header className="flex items-center gap-4 mb-6 w-full unselectable flex-shrink-0">
                 <div>
-                    <Logo />
+                    <img src={appIcon} alt="" width={40} height={40} className="select-none" />
                 </div>
                 <div className="text-[25px] font-normal text-foreground">{uiText("onboarding.magnifyBlocks")}</div>
             </header>
@@ -57,9 +57,7 @@ export const MagnifyBlocksPage = ({
                 <div className="flex-1 flex flex-col items-center justify-center gap-8 pr-6 unselectable">
                     <div className="text-6xl font-semibold text-foreground">{shortcutKey}-M</div>
                     <div className="flex flex-col items-start gap-4 text-secondary max-w-md">
-                        <p>
-                            {uiText("onboarding.magnifyIntro")}
-                        </p>
+                        <p>{uiText("onboarding.magnifyIntro")}</p>
                         <p>{uiText("onboarding.magnifyDescriptionLong")}</p>
                         <div>
                             {uiText("onboarding.magnifyClick")}{" "}
@@ -68,9 +66,7 @@ export const MagnifyBlocksPage = ({
                             </span>{" "}
                             {uiText("onboarding.magnifyClickTail")}
                         </div>
-                        <p>
-                            {uiText("onboarding.magnifyShortcut", { shortcut: shortcutKey })}
-                        </p>
+                        <p>{uiText("onboarding.magnifyShortcut", { shortcut: shortcutKey })}</p>
                         <EmojiButton emoji="🔥" isClicked={fireClicked} onClick={handleFireClick} />
                     </div>
                 </div>
@@ -118,17 +114,17 @@ export const FilesPage = ({ onFinish, onPrev }: { onFinish: () => void; onPrev?:
         <div className="flex flex-col h-full">
             <header className="flex items-center gap-4 mb-6 w-full unselectable flex-shrink-0">
                 <div>
-                    <Logo />
+                    <img src={appIcon} alt="" width={40} height={40} className="select-none" />
                 </div>
-                <div className="text-[25px] font-normal text-foreground">{uiText("onboarding.viewingEditingFiles")}</div>
+                <div className="text-[25px] font-normal text-foreground">
+                    {uiText("onboarding.viewingEditingFiles")}
+                </div>
             </header>
             <div className="flex-1 flex flex-row gap-0 min-h-0">
                 <div className="flex-1 flex flex-col items-center justify-center gap-8 pr-6 unselectable">
                     <div className="flex flex-col items-start gap-6 max-w-md">
                         <div className="flex flex-col items-start gap-4 text-secondary">
-                            <p>
-                                {uiText("onboarding.filesDescription")}
-                            </p>
+                            <p>{uiText("onboarding.filesDescription")}</p>
 
                             <div className="flex items-start gap-3 w-full">
                                 <i className="fa fa-eye text-accent text-lg mt-1 flex-shrink-0" />
@@ -156,9 +152,7 @@ export const FilesPage = ({ onFinish, onPrev }: { onFinish: () => void; onPrev?:
                                 </div>
                             </div>
 
-                            <p>
-                                {uiText("onboarding.filesClosing")}
-                            </p>
+                            <p>{uiText("onboarding.filesClosing")}</p>
 
                             <EmojiButton emoji="🔥" isClicked={fireClicked} onClick={handleFireClick} />
                         </div>

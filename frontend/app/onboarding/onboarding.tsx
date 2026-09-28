@@ -1,7 +1,6 @@
 // Copyright 2026, Command Line Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import Logo from "@/app/asset/logo.svg";
 import { Button } from "@/app/element/button";
 import { FlexiModal } from "@/app/modals/modal";
 import { OnboardingGradientBg } from "@/app/onboarding/onboarding-common";
@@ -14,12 +13,13 @@ import * as WOS from "@/app/store/wos";
 import { RpcApi } from "@/app/store/wshclientapi";
 import { TabRpcClient } from "@/app/store/wshrpcutil";
 import * as services from "@/store/services";
-import { fireAndForget } from "@/util/util";
 import { uiText } from "@/util/ui-locale";
+import { fireAndForget } from "@/util/util";
 import { atom, PrimitiveAtom, useAtom, useAtomValue, useSetAtom } from "jotai";
 import { OverlayScrollbarsComponent } from "overlayscrollbars-react";
 import { useEffect, useRef, useState } from "react";
 import { debounce } from "throttle-debounce";
+import appIcon from "/logos/appicon-windows.png";
 
 // Page flow:
 //   init -> (telemetry enabled) -> features
@@ -80,7 +80,7 @@ const InitPage = ({
                 className={`flex flex-col gap-2 border-b-0 p-0 ${isCompact ? "mt-1 mb-4" : "mb-9"} w-full unselectable flex-shrink-0`}
             >
                 <div className={`${isCompact ? "" : "mb-2.5"} flex justify-center`}>
-                    <Logo />
+                    <img src={appIcon} alt="" width={40} height={40} className="select-none" />
                 </div>
                 <div className="text-center text-[25px] font-normal text-foreground">
                     {uiText("onboarding.welcome")}
@@ -104,7 +104,9 @@ const InitPage = ({
                             </a>
                         </div>
                         <div className="flex flex-col items-start gap-1 flex-1">
-                            <div className="text-foreground text-base leading-[18px]">{uiText("onboarding.supportGithub")}</div>
+                            <div className="text-foreground text-base leading-[18px]">
+                                {uiText("onboarding.supportGithub")}
+                            </div>
                             <div className="text-secondary leading-5">
                                 {uiText("onboarding.supportDescription")}{" "}
                                 <a
@@ -131,7 +133,9 @@ const InitPage = ({
                             </a>
                         </div>
                         <div className="flex flex-col items-start gap-1 flex-1">
-                            <div className="text-foreground text-base leading-[18px]">{uiText("onboarding.joinCommunity")}</div>
+                            <div className="text-foreground text-base leading-[18px]">
+                                {uiText("onboarding.joinCommunity")}
+                            </div>
                             <div className="text-secondary leading-5">
                                 {uiText("onboarding.communityDescription")}
                                 <br />
@@ -229,9 +233,11 @@ const NoTelemetryStarPage = ({ isCompact }: { isCompact: boolean }) => {
         <div className="flex flex-col h-full">
             <header className={`flex flex-col gap-2 border-b-0 p-0 mt-1 mb-4 w-full unselectable flex-shrink-0`}>
                 <div className={`flex justify-center`}>
-                    <Logo />
+                    <img src={appIcon} alt="" width={40} height={40} className="select-none" />
                 </div>
-                <div className="text-center text-[25px] font-normal text-foreground">{uiText("onboarding.telemetryDisabled")}</div>
+                <div className="text-center text-[25px] font-normal text-foreground">
+                    {uiText("onboarding.telemetryDisabled")}
+                </div>
             </header>
             <OverlayScrollbarsComponent
                 className="flex-1 overflow-y-auto min-h-0"
@@ -240,9 +246,7 @@ const NoTelemetryStarPage = ({ isCompact }: { isCompact: boolean }) => {
                 <div className="flex flex-col items-center gap-6 w-full mb-2 unselectable">
                     <div className="text-center text-secondary leading-relaxed max-w-md">
                         <p className="mb-4">{uiText("onboarding.noProblem")}</p>
-                        <p className="mb-4">
-                            {uiText("onboarding.withoutUsage")}
-                        </p>
+                        <p className="mb-4">{uiText("onboarding.withoutUsage")}</p>
                     </div>
                 </div>
             </OverlayScrollbarsComponent>

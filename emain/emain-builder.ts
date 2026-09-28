@@ -7,7 +7,7 @@ import { randomUUID } from "crypto";
 import { BrowserWindow, webContents } from "electron";
 import { globalEvents } from "emain/emain-events";
 import path from "path";
-import { getElectronAppBasePath, isDevVite, unamePlatform } from "./emain-platform";
+import { getAppIconPath, getElectronAppBasePath, isDevVite, unamePlatform } from "./emain-platform";
 import { calculateWindowBounds, MinWindowHeight, MinWindowWidth } from "./emain-window";
 import { ElectronWshClient } from "./emain-wsh";
 
@@ -58,10 +58,9 @@ export async function createBuilderWindow(appId: string): Promise<BuilderWindowT
         minWidth: MinWindowWidth,
         minHeight: MinWindowHeight,
         titleBarStyle: unamePlatform === "darwin" ? "hiddenInset" : "default",
-        icon:
-            unamePlatform === "linux"
-                ? path.join(getElectronAppBasePath(), "public/logos/wave-logo-dark.png")
-                : undefined,
+        // WBT-owned icon; the previous reference was an upstream Wave asset on a path that does not
+        // exist inside a packaged build.
+        icon: unamePlatform === "linux" ? getAppIconPath() : undefined,
         show: false,
         backgroundColor: "#222222",
         webPreferences: {

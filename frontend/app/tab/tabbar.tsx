@@ -15,6 +15,7 @@ import { debounce } from "throttle-debounce";
 import { Tab } from "./tab";
 import "./tabbar.scss";
 import { TabBarEnv } from "./tabbarenv";
+import { ShellStatusBadges } from "./shell-badges";
 import { UpdateStatusBanner } from "./updatebanner";
 import { WorkspaceSwitcher } from "./workspaceswitcher";
 
@@ -614,6 +615,7 @@ const TabBar = memo(({ workspace, noTabs }: TabBarProps) => {
             </button>
             <div className="flex-1" />
             <div ref={rightContainerRef} className="flex flex-row gap-1 items-end">
+                <ShellStatusBadges />
                 <UpdateStatusBanner />
                 <div
                     className="h-full shrink-0 z-window-drag"

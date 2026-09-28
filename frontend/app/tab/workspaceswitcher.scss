@@ -12,10 +12,13 @@
     margin-right: 6px;
     margin-bottom: 4px;
     box-sizing: border-box;
-    background-color: rgb(from var(--main-text-color) r g b / 0.1) !important;
+    // Shared surface tokens instead of hand-mixed text-colour opacities, so this button matches the
+    // tab fill, the badges and the terminal surfaces. No border is added here: the button is exactly
+    // 22px tall to line up with the rest of the top strip, and a border would change that.
+    background-color: var(--wbt-surface-muted) !important;
 
     &:hover {
-        background-color: rgb(from var(--main-text-color) r g b / 0.14) !important;
+        background-color: var(--wbt-surface-elevated) !important;
     }
 
     .workspace-icon {
